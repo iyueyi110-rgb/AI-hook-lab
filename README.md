@@ -1,36 +1,56 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AI Hook Lab
 
-## Getting Started
+AI Hook Lab 是一个面向内容创作者的爆款 Hook 生成工具。输入主题、平台和内容类型后，应用会调用 DeepSeek 生成 10 个不同风格的开头文案，并支持历史记录与收藏。
 
-First, run the development server:
+## 功能
+
+- 支持小红书、抖音、B 站、YouTube、X 等平台
+- 支持视频、图文、产品广告、教程、观点帖等内容类型
+- 每次生成 10 条不同风格的 Hook
+- 本地保存生成历史和收藏
+- 支持一键复制单条或全部 Hook
+
+## 本地运行
+
+1. 安装依赖：
+
+```bash
+npm install
+```
+
+2. 配置环境变量：
+
+复制 `.env.local.example` 为 `.env.local`，并填入 DeepSeek API Key。
+
+```bash
+DEEPSEEK_API_KEY=your_api_key_here
+```
+
+3. 启动开发服务：
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+打开 [http://localhost:3000](http://localhost:3000) 查看应用。
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+## 常用命令
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+```bash
+npm run dev
+npm run lint
+npm run build
+```
 
-## Learn More
+## 环境变量
 
-To learn more about Next.js, take a look at the following resources:
+| 名称 | 说明 |
+| --- | --- |
+| `DEEPSEEK_API_KEY` | DeepSeek API Key，用于服务端生成 Hook |
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## 技术栈
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+- Next.js
+- React
+- TypeScript
+- Tailwind CSS
