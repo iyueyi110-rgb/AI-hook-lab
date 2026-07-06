@@ -73,11 +73,9 @@ export function useAnalytics() {
 
   const track = useCallback((type: EventType, payload?: Record<string, unknown>) => {
     const event = { type, timestamp: new Date().toISOString(), payload };
-    setEvents((prev) => {
-      const next = [...prev, event];
-      saveEvents(next);
-      return next.slice(-MAX_EVENTS);
-    });
+    const next = [...loadEvents(), event].slice(-MAX_EVENTS);
+    saveEvents(next);
+    setEvents(next);
     sendServerEvent(event);
   }, []);
 

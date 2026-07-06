@@ -24,7 +24,6 @@ export function HookCard({
 }: HookCardProps) {
   const [copied, setCopied] = useState(false);
   const overallScore = hook.overallScore ?? hook.score ?? 7;
-  const clickScore = hook.clickScore ?? Math.round(overallScore * 10);
   const finalBadcaseTags = hook.badcaseTags ?? [];
 
   const handleCopy = useCallback(async () => {
@@ -49,9 +48,9 @@ export function HookCard({
   }, [hook, onCopy]);
 
   const scoreColor =
-    clickScore >= 80
+    overallScore >= 8
       ? "text-[#111111]"
-      : clickScore >= 60
+      : overallScore >= 6
       ? "text-[#E4002B]"
       : "text-[#E4002B]";
 
@@ -64,9 +63,6 @@ export function HookCard({
           </span>
           <span className="mt-1 block text-sm font-black text-[#111111]">
             {hook.style}
-          </span>
-          <span className="mt-2 inline-flex border border-neutral-200 px-2 py-1 text-[10px] font-black uppercase tracking-wide text-neutral-500">
-            AI 生成
           </span>
         </div>
         <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:transition-opacity md:group-hover:opacity-100">
@@ -113,7 +109,7 @@ export function HookCard({
       <div className="mb-2 mt-auto flex items-center justify-between">
         <span className="text-xs font-bold text-neutral-500">点击欲望</span>
         <span className={`text-xs font-semibold ${scoreColor}`}>
-          {clickScore}/100
+          {overallScore}/10
         </span>
       </div>
 
@@ -167,21 +163,6 @@ export function HookCard({
               style={{ width: `${(overallScore / 10) * 100}%` }}
             />
           </div>
-        </div>
-      )}
-
-      {(hook.templateVersion || hook.promptVariant) && (
-        <div className="mb-3 flex flex-wrap gap-1">
-          {hook.templateVersion && (
-            <span className="border border-neutral-200 px-1.5 py-0.5 text-xs font-bold text-neutral-500">
-              Prompt {hook.templateVersion}
-            </span>
-          )}
-          {hook.promptVariant && (
-            <span className="border border-neutral-200 px-1.5 py-0.5 text-xs font-bold text-neutral-500">
-              {hook.promptVariant}
-            </span>
-          )}
         </div>
       )}
 

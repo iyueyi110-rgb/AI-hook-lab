@@ -2,7 +2,7 @@
 
 export function Header() {
   return (
-    <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-5 md:px-2 md:py-6">
+    <header className="mx-auto flex w-full max-w-6xl items-center justify-between px-4 py-6 md:px-2 md:py-8">
       <div className="flex items-center gap-3">
         <div className="grid h-9 w-9 place-items-center rounded-lg bg-[#E4002B] text-xl font-black leading-none text-white shadow-[0_10px_25px_rgba(228,0,43,0.18)]">
           H

@@ -39,7 +39,6 @@ export interface DashboardSummary {
   };
   averages: {
     avgScore: number;
-    avgClickScore: number;
     avgDurationMs: number;
     avgPlatformSatisfaction: number;
   };
@@ -173,12 +172,6 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     (sum, event) => sum + (Number(event.payload?.avgScore) || 0),
     0
   );
-  const clickScoreSum = completed.reduce(
-    (sum, event) =>
-      sum +
-      (Number(event.payload?.avgClickScore) || (Number(event.payload?.avgScore) || 0) * 10),
-    0
-  );
   const durationSum = completed.reduce(
     (sum, event) => sum + (Number(event.payload?.durationMs) || 0),
     0
@@ -272,7 +265,6 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     },
     averages: {
       avgScore: completed.length > 0 ? round(scoreSum / completed.length) : 0,
-      avgClickScore: completed.length > 0 ? round(clickScoreSum / completed.length) : 0,
       avgDurationMs: completed.length > 0 ? Math.round(durationSum / completed.length) : 0,
       avgPlatformSatisfaction:
         satisfactionEvents.length > 0 ? round(satisfactionSum / satisfactionEvents.length) : 0,

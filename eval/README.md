@@ -16,7 +16,6 @@
    `node eval/run-eval.mjs --limit 1 --platforms xiaohongshu --delay 0`
 3. 运行完整评测：`node eval/run-eval.mjs`
 4. 打开 `eval/results/for-scoring.csv` 做人工评分
-5. 汇总自动指标和人工评分：`npm run eval:summary`
 
 ## 人工评分维度
 
@@ -34,7 +33,6 @@
 - 采用率 = 标记采用 Hook 数 / 生成 Hook 数
 - 平台适配满意度 = 用户 1-5 分评分均值
 - Bad case 分布 = `too_generic`、`platform_mismatch`、`weak_reasoning`、`too_long`、`clickbait_risk`
-- Prompt 版本表现 = 按 `templateVersion` 和 `promptVariant` 对比平均点击欲望、可用率和 bad case
 
 ## 迭代方式
 

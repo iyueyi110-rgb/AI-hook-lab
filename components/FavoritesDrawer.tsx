@@ -121,8 +121,7 @@ export function FavoritesDrawer({
                   }
                   onCopyHook(hook);
                 };
-                const overallScore = hook.overallScore ?? hook.score ?? 0;
-                const clickScore = hook.clickScore ?? (overallScore ? overallScore * 10 : "?");
+                const overallScore = hook.overallScore ?? hook.score ?? "?";
 
                 return (
                   <div key={hook.id} className="px-5 py-3.5">
@@ -134,11 +133,12 @@ export function FavoritesDrawer({
                           {hook.style}
                         </span>
                         <span className="text-xs text-gray-400">
+                          {PLATFORM_CONFIG[hook.platform]?.emoji}{" "}
                           {PLATFORM_CONFIG[hook.platform]?.label}
                         </span>
                       </div>
                       <span className="text-xs font-semibold text-gray-500">
-                        {clickScore}/100
+                        {overallScore}/10
                       </span>
                     </div>
                     <p className="text-sm text-gray-700 leading-relaxed mb-2">
@@ -154,11 +154,6 @@ export function FavoritesDrawer({
                             {tag}
                           </span>
                         ))}
-                      </div>
-                    )}
-                    {hook.templateVersion && (
-                      <div className="mb-2 text-xs font-semibold text-gray-400">
-                        Prompt {hook.templateVersion}
                       </div>
                     )}
                     <div className="mb-2 flex items-center justify-between gap-3">

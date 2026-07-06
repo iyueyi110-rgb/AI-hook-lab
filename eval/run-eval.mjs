@@ -5,9 +5,6 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.env.EVAL_BASE_URL ?? "http://localhost:3000";
 const DEFAULT_PLATFORMS = ["xiaohongshu", "douyin", "bilibili"];
-const EVAL_BATCH_ID =
-  process.env.EVAL_BATCH_ID ??
-  new Date().toISOString().replace(/[:.]/g, "-").replace("T", "_").slice(0, 19);
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -77,14 +74,9 @@ async function main() {
       "category",
       "difficulty",
       "platform",
-      "eval_batch_id",
-      "model",
-      "templateVersion",
-      "promptVariant",
       "hook_index",
       "style",
       "text",
-      "clickScore",
       "overallScore",
       "impact",
       "platformFit",
@@ -123,14 +115,9 @@ async function main() {
               topic.category,
               topic.difficulty,
               platform,
-              EVAL_BATCH_ID,
-              data.model,
-              data.templateVersion,
-              data.promptVariant,
               index + 1,
               hook.style,
               hook.text,
-              hook.clickScore,
               hook.overallScore ?? hook.score,
               hook.scores?.impact,
               hook.scores?.platformFit,
@@ -163,7 +150,6 @@ async function main() {
   const elapsed = Math.round((Date.now() - startTime) / 1000);
   console.log("\n=== 评测完成 ===");
   console.log(`成功: ${successCount}, 失败: ${failCount}, 耗时: ${elapsed}s`);
-  console.log(`评测批次: ${EVAL_BATCH_ID}`);
   console.log("结果目录: eval/results/");
   console.log("评分 CSV: eval/results/for-scoring.csv");
 }

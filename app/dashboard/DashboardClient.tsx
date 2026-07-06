@@ -24,7 +24,6 @@ function emptySummary(): DashboardSummary {
     },
     averages: {
       avgScore: 0,
-      avgClickScore: 0,
       avgDurationMs: 0,
       avgPlatformSatisfaction: 0,
     },
@@ -157,7 +156,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
       },
       {
         label: "平均点击欲望",
-        value: summary.averages.avgClickScore ? `${summary.averages.avgClickScore}/100` : "暂无",
+        value: summary.averages.avgScore ? `${summary.averages.avgScore}/10` : "暂无",
         hint: "按每组平均分统计",
       },
       {
@@ -214,48 +213,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
 
         <section className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Distribution title="平台分布" items={summary.platformDistribution} />
-          <Distribution title="Prompt 版本分布" items={summary.promptVersionDistribution} />
           <Distribution title="Bad case 分布" items={summary.badcaseDistribution} />
-        </section>
-
-        <section className="mt-5 border border-gray-200 bg-white">
-          <div className="border-b border-gray-200 px-4 py-3">
-            <h2 className="text-sm font-semibold text-gray-900">平台表现对比</h2>
-          </div>
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[720px] border-collapse text-left text-sm">
-              <thead>
-                <tr className="border-b border-gray-200 text-xs text-gray-500">
-                  <th className="px-4 py-3 font-medium">平台</th>
-                  <th className="px-4 py-3 font-medium">完成组数</th>
-                  <th className="px-4 py-3 font-medium">Hook 数</th>
-                  <th className="px-4 py-3 font-medium">平均点击欲望</th>
-                  <th className="px-4 py-3 font-medium">Bad case 数</th>
-                </tr>
-              </thead>
-              <tbody>
-                {Object.keys(summary.platformMetrics).length === 0 ? (
-                  <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
-                      暂无平台表现数据
-                    </td>
-                  </tr>
-                ) : (
-                  Object.entries(summary.platformMetrics).map(([platform, metric]) => (
-                    <tr key={platform} className="border-b border-gray-100">
-                      <td className="px-4 py-3 font-medium text-gray-900">{platform}</td>
-                      <td className="px-4 py-3 text-gray-600">{metric.generations}</td>
-                      <td className="px-4 py-3 text-gray-600">{metric.hooksGenerated}</td>
-                      <td className="px-4 py-3 text-gray-600">
-                        {metric.avgClickScore ? `${metric.avgClickScore}/100` : "暂无"}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">{metric.badcaseCount}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
         </section>
 
         <section className="mt-5 border border-gray-200 bg-white">
@@ -269,7 +227,6 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
                   <th className="px-4 py-3 font-medium">时间</th>
                   <th className="px-4 py-3 font-medium">事件</th>
                   <th className="px-4 py-3 font-medium">平台</th>
-                  <th className="px-4 py-3 font-medium">Prompt</th>
                   <th className="px-4 py-3 font-medium">数量/评分</th>
                   <th className="px-4 py-3 font-medium">Hook</th>
                 </tr>
@@ -277,7 +234,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               <tbody>
                 {summary.recentEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
+                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
                       暂无服务端事件
                     </td>
                   </tr>
@@ -292,13 +249,9 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
                         {String(event.payload?.platform ?? "-")}
                       </td>
                       <td className="px-4 py-3 text-gray-600">
-                        {String(event.payload?.templateVersion ?? "-")}
-                      </td>
-                      <td className="px-4 py-3 text-gray-600">
                         {String(
                           event.payload?.hookCount ??
                             event.payload?.rating ??
-                            event.payload?.avgClickScore ??
                             event.payload?.avgScore ??
                             "-"
                         )}
