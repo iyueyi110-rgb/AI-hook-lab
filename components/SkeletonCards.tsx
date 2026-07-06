@@ -1,23 +1,23 @@
 export function SkeletonCards() {
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 md:px-0 mt-10">
-      <p className="text-center text-sm text-gray-400 mb-6 animate-pulse">
-        正在分析平台风格，生成爆款 Hook...
+    <div className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
+      <p className="border-b border-neutral-300 px-4 py-4 text-sm font-bold text-[#E4002B] animate-pulse md:px-6">
+        正在分析平台风格，生成 10 个 Hook
       </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2">
         {Array.from({ length: 6 }).map((_, i) => (
           <div
             key={i}
-            className="rounded-2xl border border-gray-100 bg-gray-50 p-5 space-y-3 animate-pulse"
+            className="space-y-4 border-b border-neutral-300 p-5 animate-pulse md:odd:border-r"
             style={{ animationDelay: `${i * 80}ms` }}
           >
-            <div className="h-5 w-20 bg-gray-200 rounded-full" />
+            <div className="h-4 w-24 bg-neutral-200" />
             <div className="space-y-2">
-              <div className="h-4 bg-gray-200 rounded w-full" />
-              <div className="h-4 bg-gray-200 rounded w-3/4" />
+              <div className="h-4 w-full bg-neutral-200" />
+              <div className="h-4 w-3/4 bg-neutral-200" />
             </div>
-            <div className="h-2 bg-gray-200 rounded w-full" />
-            <div className="h-3 bg-gray-200 rounded w-2/3" />
+            <div className="h-1.5 w-full bg-neutral-200" />
+            <div className="h-3 w-2/3 bg-neutral-200" />
           </div>
         ))}
       </div>

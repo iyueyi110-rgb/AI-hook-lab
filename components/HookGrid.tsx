@@ -43,11 +43,11 @@ export function HookGrid({
   };
 
   return (
-    <section className="w-full max-w-4xl mx-auto mt-10 px-4 md:px-0">
+    <section className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
       {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
-        <div className="mb-6 rounded-xl bg-violet-50 border border-violet-100 p-4">
-          <p className="text-xs font-semibold text-violet-700 mb-2">生成分析</p>
-          <div className="space-y-1 text-sm text-violet-800">
+        <div className="border-b border-neutral-300 p-4 md:p-6">
+          <p className="mb-3 text-xs font-bold uppercase text-[#E4002B]">生成分析</p>
+          <div className="space-y-2 text-sm leading-6 text-[#111111]">
             {analysis.bestStyle && <p>最佳风格：{analysis.bestStyle}</p>}
             {analysis.commonPattern && <p>共性规律：{analysis.commonPattern}</p>}
             {analysis.improvementTip && <p>优化建议：{analysis.improvementTip}</p>}
@@ -55,26 +55,26 @@ export function HookGrid({
         </div>
       )}
 
-      <div className="flex items-center justify-between mb-5">
-        <h2 className="text-lg font-semibold text-gray-900">
+      <div className="flex items-center justify-between border-b border-neutral-300 px-4 py-4 md:px-6">
+        <h2 className="text-lg font-black text-[#111111]">
           生成的 Hook
-          <span className="ml-2 text-sm font-normal text-gray-400">
+          <span className="ml-2 text-sm font-bold text-neutral-500">
             ({hooks.length} 个)
           </span>
         </h2>
         <button
           onClick={handleCopyAll}
-          className="text-sm text-violet-600 hover:text-violet-700 font-medium transition-colors"
+          className="text-sm font-bold text-[#E4002B] underline decoration-2 underline-offset-4 transition-colors hover:text-[#111111]"
         >
           一键复制全部
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-2">
         {hooks.map((hook, index) => (
           <div
             key={hook.id}
-            className="opacity-0 animate-[fadeIn_0.3s_ease-out_forwards]"
+            className="border-b border-neutral-300 opacity-0 animate-[fadeIn_0.3s_ease-out_forwards] md:odd:border-r"
             style={{ animationDelay: `${index * 80}ms` }}
           >
             <HookCard

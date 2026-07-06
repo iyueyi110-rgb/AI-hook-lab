@@ -2,7 +2,6 @@
 
 import { useState, useCallback } from "react";
 import type { HookResult, PlatformSatisfaction } from "@/lib/types";
-import { STYLE_COLORS } from "@/lib/constants";
 
 interface HookCardProps {
   hook: HookResult;
@@ -24,7 +23,6 @@ export function HookCard({
   onCopy,
 }: HookCardProps) {
   const [copied, setCopied] = useState(false);
-  const colorClass = STYLE_COLORS[styleIndex % STYLE_COLORS.length];
   const overallScore = hook.overallScore ?? hook.score ?? 7;
   const finalBadcaseTags = hook.badcaseTags ?? [];
 
@@ -51,53 +49,65 @@ export function HookCard({
 
   const scoreColor =
     overallScore >= 8
-      ? "text-emerald-600"
+      ? "text-[#111111]"
       : overallScore >= 6
-      ? "text-amber-600"
-      : "text-rose-600";
+      ? "text-[#E4002B]"
+      : "text-[#E4002B]";
 
   return (
-    <div className="group rounded-2xl border border-gray-100 bg-gray-50/60 p-5 transition-all hover:shadow-md hover:border-gray-200">
-      {/* Top row: style badge + copy */}
-      <div className="flex items-center justify-between mb-3">
-        <span
-          className={`inline-block rounded-full px-2.5 py-0.5 text-xs font-medium ${colorClass}`}
-        >
-          {hook.style}
-        </span>
-        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity md:opacity-100">
+    <div className="group flex h-full flex-col bg-white p-5 transition-colors hover:bg-neutral-50">
+      <div className="mb-4 flex items-start justify-between gap-4">
+        <div>
+          <span className="block text-xs font-bold uppercase text-[#E4002B]">
+            {String(styleIndex + 1).padStart(2, "0")}
+          </span>
+          <span className="mt-1 block text-sm font-black text-[#111111]">
+            {hook.style}
+          </span>
+        </div>
+        <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:transition-opacity md:group-hover:opacity-100">
           <button
             onClick={handleCopy}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
+            className={`border px-2.5 py-1.5 text-xs font-bold transition-colors ${
               copied
-                ? "bg-emerald-50 text-emerald-600"
-                : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                ? "border-[#111111] bg-[#111111] text-white"
+                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
             }`}
             aria-label={copied ? "已复制" : "复制"}
           >
-            {copied ? "✓ 已复制" : "复制"}
+            {copied ? "已复制" : "复制"}
           </button>
           <button
             onClick={() => onToggleFavorite(hook.id)}
-            className={`rounded-lg px-2 py-1.5 text-sm transition-all ${
+            className={`grid h-8 w-8 place-items-center border transition-colors ${
               isFavorited
-                ? "text-rose-500"
-                : "text-gray-400 hover:text-rose-400"
+                ? "border-[#E4002B] bg-[#E4002B] text-white"
+                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
             }`}
             aria-label={isFavorited ? "取消收藏" : "收藏"}
           >
-            {isFavorited ? "♥" : "♡"}
+            <svg
+              className="h-4 w-4"
+              viewBox="0 0 24 24"
+              fill={isFavorited ? "currentColor" : "none"}
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              aria-hidden="true"
+            >
+              <path d="M20.8 4.6c-1.6-1.5-4.1-1.5-5.7 0L12 7.7 8.9 4.6c-1.6-1.5-4.1-1.5-5.7 0-1.6 1.6-1.6 4.1 0 5.7L12 19l8.8-8.7c1.6-1.6 1.6-4.1 0-5.7Z" />
+            </svg>
           </button>
         </div>
       </div>
 
-      {/* Hook text */}
-      <p className="text-sm text-gray-800 leading-relaxed mb-3">
+      <p className="mb-4 text-base font-semibold leading-7 text-[#111111]">
         {hook.text}
       </p>
 
-      <div className="mb-2 flex items-center justify-between">
-        <span className="text-xs text-gray-400">点击欲望</span>
+      <div className="mb-2 mt-auto flex items-center justify-between">
+        <span className="text-xs font-bold text-neutral-500">点击欲望</span>
         <span className={`text-xs font-semibold ${scoreColor}`}>
           {overallScore}/10
         </span>
@@ -112,15 +122,15 @@ export function HookCard({
             { key: "shareability", label: "传播力", value: hook.scores.shareability },
           ].map((dim) => (
             <div key={dim.key} className="flex items-center gap-2">
-              <span className="text-xs text-gray-400 w-14 shrink-0">{dim.label}</span>
-              <div className="flex-1 h-1 bg-gray-200 rounded-full overflow-hidden">
+              <span className="w-14 shrink-0 text-xs text-neutral-500">{dim.label}</span>
+              <div className="h-1 flex-1 overflow-hidden bg-neutral-200">
                 <div
-                  className={`h-full rounded-full transition-all duration-500 ${
+                  className={`h-full transition-all duration-500 ${
                     dim.value >= 8
-                      ? "bg-emerald-500"
+                      ? "bg-[#111111]"
                       : dim.value >= 6
-                      ? "bg-amber-500"
-                      : "bg-rose-500"
+                      ? "bg-[#E4002B]"
+                      : "bg-[#E4002B]"
                   }`}
                   style={{ width: `${(dim.value / 10) * 100}%` }}
                 />
@@ -128,10 +138,10 @@ export function HookCard({
               <span
                 className={`text-xs font-semibold w-7 text-right ${
                   dim.value >= 8
-                    ? "text-emerald-600"
+                    ? "text-[#111111]"
                     : dim.value >= 6
-                    ? "text-amber-600"
-                    : "text-rose-600"
+                    ? "text-[#E4002B]"
+                    : "text-[#E4002B]"
                 }`}
               >
                 {dim.value}
@@ -141,14 +151,14 @@ export function HookCard({
         </div>
       ) : (
         <div className="flex items-center gap-2 mb-3">
-          <div className="flex-1 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+          <div className="h-1.5 flex-1 overflow-hidden bg-neutral-200">
             <div
-              className={`h-full rounded-full transition-all duration-500 ${
+              className={`h-full transition-all duration-500 ${
                 overallScore >= 8
-                  ? "bg-emerald-500"
+                  ? "bg-[#111111]"
                   : overallScore >= 6
-                  ? "bg-amber-500"
-                  : "bg-rose-500"
+                  ? "bg-[#E4002B]"
+                  : "bg-[#E4002B]"
               }`}
               style={{ width: `${(overallScore / 10) * 100}%` }}
             />
@@ -161,7 +171,7 @@ export function HookCard({
           {finalBadcaseTags.map((tag) => (
             <span
               key={tag}
-              className="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+              className="border border-[#E4002B] bg-white px-1.5 py-0.5 text-xs font-bold text-[#E4002B]"
             >
               {tag}
             </span>
@@ -170,18 +180,18 @@ export function HookCard({
       )}
 
       {/* Reasoning */}
-      <p className="text-xs text-gray-400 leading-relaxed mb-4">{hook.reasoning}</p>
+      <p className="mb-4 text-xs leading-5 text-neutral-500">{hook.reasoning}</p>
 
-      <div className="border-t border-gray-100 pt-3 flex flex-col gap-3">
+      <div className="flex flex-col gap-3 border-t border-neutral-300 pt-3">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-gray-400">创作复用</span>
+          <span className="text-xs font-bold text-neutral-500">创作复用</span>
           <button
             type="button"
             onClick={() => onToggleAdopted(hook.id)}
-            className={`rounded-lg px-2.5 py-1.5 text-xs font-medium transition-all ${
+            className={`border px-2.5 py-1.5 text-xs font-bold transition-colors ${
               hook.adopted
-                ? "bg-violet-600 text-white"
-                : "bg-white text-gray-500 border border-gray-200 hover:border-violet-200 hover:text-violet-600"
+                ? "border-[#111111] bg-[#111111] text-white"
+                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
             }`}
           >
             {hook.adopted ? "已采用" : "标记采用"}
@@ -189,17 +199,17 @@ export function HookCard({
         </div>
 
         <div className="flex items-center justify-between gap-3">
-          <span className="text-xs text-gray-400">平台适配</span>
+          <span className="text-xs font-bold text-neutral-500">平台适配</span>
           <div className="flex items-center gap-1">
             {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
               <button
                 key={rating}
                 type="button"
                 onClick={() => onSetSatisfaction(hook.id, rating)}
-                className={`h-6 w-6 rounded-md text-xs font-semibold transition-all ${
+                className={`h-7 w-7 border text-xs font-bold transition-colors ${
                   hook.platformSatisfaction === rating
-                    ? "bg-violet-600 text-white"
-                    : "bg-white text-gray-400 border border-gray-200 hover:text-violet-600 hover:border-violet-200"
+                    ? "border-[#E4002B] bg-[#E4002B] text-white"
+                    : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
                 }`}
                 aria-label={`平台适配满意度 ${rating} 分`}
               >

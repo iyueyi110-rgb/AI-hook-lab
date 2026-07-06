@@ -151,7 +151,7 @@ export default function Home() {
   );
 
   return (
-    <div className="min-h-screen bg-white">
+    <div className="min-h-screen">
       <Header />
 
       <main className="pb-20">
@@ -177,26 +177,24 @@ export default function Home() {
 
         {/* Error */}
         {status === "error" && error && (
-          <div className="w-full max-w-2xl mx-auto mt-10 px-4 md:px-0">
-            <div className="rounded-2xl border border-rose-100 bg-rose-50 p-5">
-              <div className="flex items-start gap-3">
-                <span className="text-2xl shrink-0">⚠️</span>
-                <div>
-                  <h3 className="text-sm font-semibold text-rose-800">
-                    {error.title}
-                  </h3>
-                  <p className="mt-1 text-sm text-rose-600 whitespace-pre-wrap">
-                    {error.message}
-                  </p>
-                  <button
-                    onClick={handleGenerate}
-                    className="mt-3 inline-flex items-center gap-1.5 rounded-lg bg-white border border-rose-200 px-3.5 py-1.5 text-xs font-medium text-rose-700 hover:bg-rose-50 transition-colors"
-                  >
-                    重试
-                  </button>
-                </div>
+          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
+            <div className="border-b border-[#E4002B] p-4 md:p-6">
+              <p className="mb-2 text-xs font-bold uppercase text-[#E4002B]">
+                生成失败
+              </p>
+              <h3 className="text-lg font-black text-[#111111]">
+                {error.title}
+              </h3>
+              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
+                {error.message}
+              </p>
+              <button
+                onClick={handleGenerate}
+                className="mt-4 border border-[#111111] bg-white px-4 py-2 text-xs font-bold text-[#111111] transition-colors hover:border-[#E4002B] hover:text-[#E4002B]"
+              >
+                重试
+              </button>
               </div>
-            </div>
           </div>
         )}
 
@@ -215,8 +213,8 @@ export default function Home() {
 
         {/* Bottom action bar */}
         {status === "done" && (
-          <div className="w-full max-w-4xl mx-auto mt-8 px-4 md:px-0">
-            <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+          <div className="mx-auto mt-8 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
+            <div className="grid grid-cols-2 md:grid-cols-4">
               {[
                 { label: "生成完成率", value: `${stats.completionRate}%` },
                 { label: "收藏率", value: `${stats.favoriteRate}%` },
@@ -228,33 +226,35 @@ export default function Home() {
                     : "暂无",
                 },
               ].map((item) => (
-                <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
-                  <p className="text-xs text-gray-400">{item.label}</p>
-                  <p className="mt-1 text-lg font-semibold text-gray-900">{item.value}</p>
+                <div key={item.label} className="border-b border-neutral-300 p-4 md:border-r md:last:border-r-0">
+                  <p className="text-xs font-bold text-neutral-500">{item.label}</p>
+                  <p className="mt-1 text-2xl font-black text-[#111111]">{item.value}</p>
                 </div>
               ))}
             </div>
-            <div className="flex items-center justify-center gap-3">
+            <div className="flex flex-wrap items-center justify-center gap-px bg-neutral-300">
             <button
               onClick={() => setHistoryOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+              className="inline-flex min-h-12 items-center gap-2 bg-white px-4 py-2 text-sm font-bold text-[#111111] transition-colors hover:text-[#E4002B]"
             >
-              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
               </svg>
               历史记录
               {history.length > 0 && (
-                <span className="text-xs text-gray-400 ml-0.5">({history.length})</span>
+                <span className="ml-0.5 text-xs text-neutral-500">({history.length})</span>
               )}
             </button>
             <button
               onClick={() => setFavoritesOpen(true)}
-              className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
+              className="inline-flex min-h-12 items-center gap-2 bg-white px-4 py-2 text-sm font-bold text-[#111111] transition-colors hover:text-[#E4002B]"
             >
-              <span className="text-sm">💜</span>
+              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M20.8 4.6c-1.6-1.5-4.1-1.5-5.7 0L12 7.7 8.9 4.6c-1.6-1.5-4.1-1.5-5.7 0-1.6 1.6-1.6 4.1 0 5.7L12 19l8.8-8.7c1.6-1.6 1.6-4.1 0-5.7Z" />
+              </svg>
               收藏夹
               {favorites.length > 0 && (
-                <span className="text-xs text-gray-400 ml-0.5">({favorites.length})</span>
+                <span className="ml-0.5 text-xs text-neutral-500">({favorites.length})</span>
               )}
             </button>
             </div>
@@ -263,10 +263,12 @@ export default function Home() {
 
         {/* Empty state */}
         {status === "idle" && (
-          <div className="w-full max-w-2xl mx-auto mt-16 px-4 md:px-0 text-center">
-            <p className="text-5xl mb-4">🎣</p>
-            <p className="text-sm text-gray-400">
-              输入主题，选择平台和内容类型，AI 为你生成 10 个爆款 Hook
+          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-b border-neutral-300 bg-white px-4 py-8 md:px-6">
+            <p className="text-xs font-bold uppercase text-neutral-500">
+              等待输入
+            </p>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-600">
+              输入主题后即可生成。平台、内容类型和高级选项会共同影响 Hook 的语气、结构和长度。
             </p>
           </div>
         )}
