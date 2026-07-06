@@ -39,11 +39,22 @@ export interface DashboardSummary {
   };
   averages: {
     avgScore: number;
+    avgClickScore: number;
     avgDurationMs: number;
     avgPlatformSatisfaction: number;
   };
   platformDistribution: Record<string, number>;
+  promptVersionDistribution: Record<string, number>;
   badcaseDistribution: Record<string, number>;
+  platformMetrics: Record<
+    string,
+    {
+      generations: number;
+      hooksGenerated: number;
+      avgClickScore: number;
+      badcaseCount: number;
+    }
+  >;
   recentEvents: DashboardEvent[];
 }
 
@@ -162,6 +173,12 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     (sum, event) => sum + (Number(event.payload?.avgScore) || 0),
     0
   );
+  const clickScoreSum = completed.reduce(
+    (sum, event) =>
+      sum +
+      (Number(event.payload?.avgClickScore) || (Number(event.payload?.avgScore) || 0) * 10),
+    0
+  );
   const durationSum = completed.reduce(
     (sum, event) => sum + (Number(event.payload?.durationMs) || 0),
     0
@@ -172,20 +189,65 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
   );
 
   const platformDistribution: Record<string, number> = {};
+  const promptVersionDistribution: Record<string, number> = {};
   const badcaseDistribution: Record<string, number> = {};
+  const platformMetricDraft: Record<
+    string,
+    {
+      generations: number;
+      hooksGenerated: number;
+      clickScoreSum: number;
+      badcaseCount: number;
+    }
+  > = {};
 
   completed.forEach((event) => {
     const platform = String(event.payload?.platform ?? "unknown");
-    platformDistribution[platform] = (platformDistribution[platform] ?? 0) + 1;
-
+    const templateVersion = String(event.payload?.templateVersion ?? "unknown");
+    const hookCount = Number(event.payload?.hookCount) || 0;
+    const avgClickScore =
+      Number(event.payload?.avgClickScore) || (Number(event.payload?.avgScore) || 0) * 10;
     const badcaseTags = event.payload?.badcaseTags;
+
+    platformDistribution[platform] = (platformDistribution[platform] ?? 0) + 1;
+    promptVersionDistribution[templateVersion] =
+      (promptVersionDistribution[templateVersion] ?? 0) + 1;
+
+    const draft =
+      platformMetricDraft[platform] ??
+      {
+        generations: 0,
+        hooksGenerated: 0,
+        clickScoreSum: 0,
+        badcaseCount: 0,
+      };
+    draft.generations += 1;
+    draft.hooksGenerated += hookCount;
+    draft.clickScoreSum += avgClickScore;
+
     if (Array.isArray(badcaseTags)) {
       badcaseTags.forEach((tag) => {
         const key = String(tag);
         badcaseDistribution[key] = (badcaseDistribution[key] ?? 0) + 1;
+        draft.badcaseCount += 1;
       });
     }
+
+    platformMetricDraft[platform] = draft;
   });
+
+  const platformMetrics = Object.fromEntries(
+    Object.entries(platformMetricDraft).map(([platform, metric]) => [
+      platform,
+      {
+        generations: metric.generations,
+        hooksGenerated: metric.hooksGenerated,
+        avgClickScore:
+          metric.generations > 0 ? round(metric.clickScoreSum / metric.generations) : 0,
+        badcaseCount: metric.badcaseCount,
+      },
+    ])
+  );
 
   const hooksFavorited = Math.max(0, favs - unfavs);
   const hooksAdopted = Math.max(0, adopted - unadopted);
@@ -210,12 +272,15 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     },
     averages: {
       avgScore: completed.length > 0 ? round(scoreSum / completed.length) : 0,
+      avgClickScore: completed.length > 0 ? round(clickScoreSum / completed.length) : 0,
       avgDurationMs: completed.length > 0 ? Math.round(durationSum / completed.length) : 0,
       avgPlatformSatisfaction:
         satisfactionEvents.length > 0 ? round(satisfactionSum / satisfactionEvents.length) : 0,
     },
     platformDistribution,
+    promptVersionDistribution,
     badcaseDistribution,
+    platformMetrics,
     recentEvents: events.slice(-20).reverse(),
   };
 }

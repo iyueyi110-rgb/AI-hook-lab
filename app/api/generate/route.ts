@@ -1,102 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
 import type {
-  EmotionTone,
   GenerateRequest,
   GenerateResponse,
   HookResult,
   HookScores,
 } from "@/lib/types";
 import {
-  CONTENT_TYPE_CONFIG,
-  EMOTION_TONE_CONFIG,
-  PLATFORM_CONFIG,
-  PLATFORM_STYLES,
-} from "@/lib/constants";
+  buildPromptBundle,
+  calculateClickScore,
+  DEFAULT_WORD_LIMIT,
+  detectBadcases,
+  findSensitiveInputHints,
+  MAX_TARGET_AUDIENCE_LENGTH,
+  MAX_TOPIC_LENGTH,
+} from "@/lib/promptTemplates";
 
 const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
-const DEFAULT_WORD_LIMIT = 80;
-
-function buildSystemPrompt(): string {
-  return `你是一位社交媒体文案策略师，专门帮助短视频/图文创作者解决开头 3 秒吸引力不足、平台语气难迁移、灵感难复用的问题。
-
-你的任务：根据输入变量，为指定平台生成 10 个不同风格的 Hook 开头，并给出可比较、可解释的评分。
-
-好 Hook 的四条标准：
-1. 前 3 秒钩子：开头 15 字内制造好奇心缺口、认知冲突或情绪共振。
-2. 平台原生感：读起来像该平台创作者的真实表达，不是翻译腔或通用广告文案。
-3. 可操作性：读者能清晰预期后续内容会提供什么价值。
-4. 传播基因：包含适合截图、引用、复用的表达。
-
-四维评分标准（每维 1-10 分）：
-- impact：开头是否有足够冲击力、信息差或情绪张力。
-- platformFit：语气、节奏、词汇是否贴合平台。
-- actionability：用户是否能判断后续内容价值。
-- shareability：是否有可被收藏、转发、截图的表达。
-
-输出要求：
-- 只返回纯 JSON，不要 Markdown，不要解释性前后缀。
-- reasoning 必须引用具体词句，例如“开头‘做了3年’用数字建立信任，‘才明白’制造反转预期”。
-- 禁止使用“运用了悬念手法吸引用户”“抓住用户痛点”这类模板化套话。
-- 不要编造违法、医疗诊断、金融收益承诺或侵犯隐私的内容。`;
-}
-
-function buildUserPrompt(
-  req: GenerateRequest,
-  platformLabel: string,
-  platformDesc: string,
-  contentTypeLabel: string,
-  styles: string[]
-): string {
-  const { topic, targetAudience, emotionTone, wordLimit } = req;
-  const toneInstruction = emotionTone
-    ? `\n**情绪风格：** ${EMOTION_TONE_CONFIG[emotionTone as EmotionTone]?.label ?? emotionTone} - ${
-        EMOTION_TONE_CONFIG[emotionTone as EmotionTone]?.description ?? ""
-      }`
-    : "";
-
-  return `## 输入变量
-
-**主题：** ${topic}
-**平台：** ${platformLabel}（${platformDesc}）
-**内容类型：** ${contentTypeLabel}
-**目标用户：** ${targetAudience?.trim() || "该平台泛用户群体"}${toneInstruction}
-**字数限制：** 每条 Hook 不超过 ${wordLimit ?? DEFAULT_WORD_LIMIT} 字
-
-## 平台风格池
-每种风格生成 1 个 Hook，共 10 个：
-${styles.map((style, index) => `${index + 1}. ${style}`).join("\n")}
-
-## 输出 JSON 格式
-{
-  "hooks": [
-    {
-      "text": "Hook 文案",
-      "style": "风格名称（必须从风格池中取）",
-      "reasoning": "具体到词句的推荐理由，30-60字",
-      "scores": {
-        "impact": 8,
-        "platformFit": 7,
-        "actionability": 7,
-        "shareability": 6
-      },
-      "overallScore": 7
-    }
-  ],
-  "analysis": {
-    "bestStyle": "这批中最值得优先采用的风格",
-    "commonPattern": "这批 Hook 的共性规律，一句话",
-    "improvementTip": "如果效果不理想，下一轮应该调整的输入变量"
-  }
-}
-
-## 硬约束
-- hooks 必须恰好 10 个，每个风格只用一次。
-- text 必须控制在字数限制内。
-- overallScore 是四维评分的综合分，整数 1-10。
-- 平台语气要明显区分，不能把同一句话换平台名复用。
-- reasoning 必须引用 Hook 中的具体词句，禁止空泛套话。
-- 只返回 JSON。`;
-}
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -129,42 +48,6 @@ function calculateOverallScore(scores: HookScores): number {
   );
 }
 
-function countChineseChars(value: string): number {
-  return value.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
-}
-
-function detectBadcases(hook: {
-  text: string;
-  reasoning: string;
-  scores: HookScores;
-  wordLimit: number;
-}): string[] {
-  const tags: string[] = [];
-
-  if (hook.text.length > hook.wordLimit * 1.2) tags.push("too_long");
-  if (hook.text.length < 8) tags.push("too_short");
-
-  if (/震惊|不看后悔|全网都在|炸裂|颠覆认知|彻底改变|速看|必看/.test(hook.text)) {
-    tags.push("clickbait_risk");
-  }
-
-  const genericWords =
-    /干货满满|值得收藏|快速提升|太绝了|绝绝子|yyds|一定要看|超级好用|建议收藏|看完就会/gi;
-  const matches = hook.text.match(genericWords);
-  if (matches && matches.length >= 2) tags.push("too_generic");
-
-  if (
-    countChineseChars(hook.reasoning) < 12 ||
-    /运用.*手法|吸引用户|抓住痛点|制造悬念/.test(hook.reasoning)
-  ) {
-    tags.push("weak_reasoning");
-  }
-
-  if (hook.scores.platformFit <= 5) tags.push("platform_mismatch");
-
-  return [...new Set(tags)];
-}
-
 function normalizeWordLimit(value: unknown): number {
   const parsed = Number(value);
   if (Number.isNaN(parsed)) return DEFAULT_WORD_LIMIT;
@@ -173,7 +56,9 @@ function normalizeWordLimit(value: unknown): number {
 
 function validateAndCleanHooks(
   raw: unknown,
-  wordLimit: number
+  wordLimit: number,
+  templateVersion: string,
+  promptVariant: string
 ): { hooks: HookResult[]; analysis?: GenerateResponse["analysis"] } {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid JSON response from AI");
@@ -213,6 +98,9 @@ function validateAndCleanHooks(
       text,
       style: String(h.style ?? "未知风格").trim(),
       reasoning,
+      clickScore: calculateClickScore(overallScore),
+      templateVersion,
+      promptVariant,
       scores,
       overallScore,
       badcaseTags: detectBadcases({ text, reasoning, scores, wordLimit }),
@@ -256,49 +144,69 @@ export async function POST(request: NextRequest) {
   }
 
   const { topic, platform, contentType } = body;
+  const trimmedTopic = topic?.trim() ?? "";
+  const trimmedTargetAudience = body.targetAudience?.trim() ?? "";
 
-  if (!topic?.trim()) {
+  if (!trimmedTopic) {
     return NextResponse.json(
       { error: "主题为空", message: "请输入一个主题" },
       { status: 400 }
     );
   }
 
-  const platformInfo = PLATFORM_CONFIG[platform];
-  const styles = PLATFORM_STYLES[platform];
-  const contentTypeInfo = CONTENT_TYPE_CONFIG[contentType];
-
-  if (!platformInfo || !styles) {
+  if (trimmedTopic.length > MAX_TOPIC_LENGTH) {
     return NextResponse.json(
-      { error: "平台不支持", message: `不支持的平台：${platform}` },
+      {
+        error: "主题过长",
+        message: `主题最多 ${MAX_TOPIC_LENGTH} 个字符，请缩短后重试`,
+      },
       { status: 400 }
     );
   }
 
-  if (!contentTypeInfo) {
+  if (trimmedTargetAudience.length > MAX_TARGET_AUDIENCE_LENGTH) {
     return NextResponse.json(
-      { error: "内容类型不支持", message: `不支持的内容类型：${contentType}` },
+      {
+        error: "目标用户描述过长",
+        message: `目标用户最多 ${MAX_TARGET_AUDIENCE_LENGTH} 个字符，请缩短后重试`,
+      },
+      { status: 400 }
+    );
+  }
+
+  const sensitiveHints = findSensitiveInputHints(`${trimmedTopic}\n${trimmedTargetAudience}`);
+  if (sensitiveHints.length > 0) {
+    return NextResponse.json(
+      {
+        error: "输入包含疑似个人信息",
+        message: `请移除或改写以下信息后再生成：${sensitiveHints.join("、")}`,
+      },
       { status: 400 }
     );
   }
 
   const wordLimit = normalizeWordLimit(body.wordLimit);
   const requestBody: GenerateRequest = {
-    topic: topic.trim(),
+    topic: trimmedTopic,
     platform,
     contentType,
-    targetAudience: body.targetAudience?.trim() || undefined,
+    targetAudience: trimmedTargetAudience || undefined,
     emotionTone: body.emotionTone || undefined,
     wordLimit,
   };
 
-  const userPrompt = buildUserPrompt(
-    requestBody,
-    platformInfo.label,
-    platformInfo.description,
-    contentTypeInfo.label,
-    styles
-  );
+  let promptBundle: ReturnType<typeof buildPromptBundle>;
+  try {
+    promptBundle = buildPromptBundle(requestBody);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error && error.message.includes("平台") ? "平台不支持" : "内容类型不支持",
+        message: error instanceof Error ? error.message : "请求参数不支持",
+      },
+      { status: 400 }
+    );
+  }
 
   try {
     const controller = new AbortController();
@@ -311,10 +219,10 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: promptBundle.model,
         messages: [
-          { role: "system", content: buildSystemPrompt() },
-          { role: "user", content: userPrompt },
+          { role: "system", content: promptBundle.systemPrompt },
+          { role: "user", content: promptBundle.userPrompt },
         ],
         temperature: 0.95,
         max_tokens: 8192,
@@ -396,14 +304,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const { hooks, analysis } = validateAndCleanHooks(parsed, wordLimit);
+    const { hooks, analysis } = validateAndCleanHooks(
+      parsed,
+      wordLimit,
+      promptBundle.templateVersion,
+      promptBundle.promptVariant
+    );
 
     const response: GenerateResponse = {
       hooks,
       generatedAt: new Date().toISOString(),
-      topic: topic.trim(),
+      topic: trimmedTopic,
       platform,
       contentType,
+      model: promptBundle.model,
+      templateVersion: promptBundle.templateVersion,
+      promptVariant: promptBundle.promptVariant,
       targetAudience: requestBody.targetAudience,
       emotionTone: requestBody.emotionTone,
       wordLimit,

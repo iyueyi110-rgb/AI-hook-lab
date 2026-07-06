@@ -27,6 +27,7 @@ interface AnalyticsStats {
   copiedCount: number;
   adoptedCount: number;
   avgScore: number;
+  avgClickScore: number;
   completionRate: number;
   favoriteRate: number;
   adoptionRate: number;
@@ -98,6 +99,13 @@ export function useAnalytics() {
       (sum, event) => sum + (Number(event.payload?.avgScore) || 0),
       0
     );
+    const clickScoreSum = completes.reduce(
+      (sum, event) =>
+        sum +
+        (Number(event.payload?.avgClickScore) ||
+          (Number(event.payload?.avgScore) || 0) * 10),
+      0
+    );
     const satisfactionSum = satisfactionEvents.reduce(
       (sum, event) => sum + (Number(event.payload?.rating) || 0),
       0
@@ -110,6 +118,8 @@ export function useAnalytics() {
       copiedCount: copies,
       adoptedCount: Math.max(0, adopted - unadopted),
       avgScore: completes.length > 0 ? Math.round((scoreSum / completes.length) * 10) / 10 : 0,
+      avgClickScore:
+        completes.length > 0 ? Math.round((clickScoreSum / completes.length) * 10) / 10 : 0,
       completionRate: starts > 0 ? Math.round((completes.length / starts) * 100) : 0,
       favoriteRate: totalHooks > 0 ? Math.round((Math.max(0, favs - unfavs) / totalHooks) * 100) : 0,
       adoptionRate:
@@ -122,8 +132,8 @@ export function useAnalytics() {
   }, [events]);
 
   const trackSatisfaction = useCallback(
-    (hookId: string, rating: PlatformSatisfaction) => {
-      track("platform_satisfaction", { hookId, rating });
+    (hookId: string, rating: PlatformSatisfaction, payload?: Record<string, unknown>) => {
+      track("platform_satisfaction", { ...payload, hookId, rating });
     },
     [track]
   );

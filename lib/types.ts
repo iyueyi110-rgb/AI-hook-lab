@@ -26,6 +26,9 @@ export interface HookResult {
   text: string;
   style: string;
   reasoning: string;
+  clickScore?: number;
+  templateVersion?: string;
+  promptVariant?: string;
   overallScore?: number;
   scores?: HookScores;
   badcaseTags?: string[];
@@ -40,6 +43,9 @@ export interface GenerateResponse {
   topic: string;
   platform: Platform;
   contentType: ContentType;
+  model?: string;
+  templateVersion?: string;
+  promptVariant?: string;
   targetAudience?: string;
   emotionTone?: EmotionTone | "";
   wordLimit?: number;

@@ -19,6 +19,11 @@ import { SkeletonCards } from "@/components/SkeletonCards";
 import { HookGrid } from "@/components/HookGrid";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { FavoritesDrawer } from "@/components/FavoritesDrawer";
+import {
+  DEFAULT_PROMPT_VARIANT,
+  GENERATION_MODEL,
+  PROMPT_TEMPLATE_VERSION,
+} from "@/lib/promptTemplates";
 
 export default function Home() {
   const [topic, setTopic] = React.useState("");
@@ -38,6 +43,29 @@ export default function Home() {
   const { favorites, toggleFavorite } = useFavorites();
   const { track, trackSatisfaction, stats } = useAnalytics();
 
+  const findHookContext = React.useCallback(
+    (id: string) => {
+      const currentHook = hooks.find((hook) => hook.id === id);
+      if (currentHook) {
+        return { hook: currentHook, platform, contentType };
+      }
+
+      for (const item of history) {
+        const historyHook = item.hooks.find((hook) => hook.id === id);
+        if (historyHook) {
+          return {
+            hook: historyHook,
+            platform: item.platform,
+            contentType: item.contentType,
+          };
+        }
+      }
+
+      return null;
+    },
+    [contentType, history, hooks, platform]
+  );
+
   const handleGenerate = React.useCallback(async () => {
     if (!topic.trim() || status === "loading") return;
 
@@ -46,7 +74,14 @@ export default function Home() {
     setHooks([]);
     setAnalysis(null);
     const startedAt = Date.now();
-    track("generation_start", { topic: topic.trim(), platform, contentType });
+    track("generation_start", {
+      topic: topic.trim(),
+      platform,
+      contentType,
+      model: GENERATION_MODEL,
+      templateVersion: PROMPT_TEMPLATE_VERSION,
+      promptVariant: DEFAULT_PROMPT_VARIANT,
+    });
 
     try {
       const res = await fetch("/api/generate", {
@@ -67,7 +102,14 @@ export default function Home() {
       if (!res.ok) {
         setError({ title: data.error ?? "生成失败", message: data.message ?? "未知错误" });
         setStatus("error");
-        track("generation_error", { error: data.error ?? "生成失败" });
+        track("generation_error", {
+          error: data.error ?? "生成失败",
+          platform,
+          contentType,
+          model: GENERATION_MODEL,
+          templateVersion: PROMPT_TEMPLATE_VERSION,
+          promptVariant: DEFAULT_PROMPT_VARIANT,
+        });
         return;
       }
 
@@ -81,11 +123,20 @@ export default function Home() {
           ? response.hooks.reduce((sum, hook) => sum + (hook.overallScore ?? hook.score ?? 0), 0) /
             response.hooks.length
           : 0;
+      const avgClickScore =
+        response.hooks.length > 0
+          ? response.hooks.reduce((sum, hook) => sum + (hook.clickScore ?? 0), 0) /
+            response.hooks.length
+          : 0;
       track("generation_complete", {
         platform,
         contentType,
+        model: response.model,
+        templateVersion: response.templateVersion,
+        promptVariant: response.promptVariant,
         hookCount: response.hooks.length,
         avgScore,
+        avgClickScore,
         durationMs: Date.now() - startedAt,
         badcaseTags: response.hooks.flatMap((hook) => hook.badcaseTags ?? []),
       });
@@ -95,7 +146,14 @@ export default function Home() {
         message: "无法连接到服务器，请检查网络后重试",
       });
       setStatus("error");
-      track("generation_error", { error: "网络错误" });
+      track("generation_error", {
+        error: "网络错误",
+        platform,
+        contentType,
+        model: GENERATION_MODEL,
+        templateVersion: PROMPT_TEMPLATE_VERSION,
+        promptVariant: DEFAULT_PROMPT_VARIANT,
+      });
     }
   }, [
     topic,
@@ -112,42 +170,74 @@ export default function Home() {
   const handleToggleFavorite = React.useCallback(
     (id: string) => {
       const willFavorite = !favorites.includes(id);
+      const context = findHookContext(id);
       toggleFavorite(id);
       toggleHistoryFavorite(id);
-      track(willFavorite ? "hook_favorited" : "hook_unfavorited", { hookId: id });
+      track(willFavorite ? "hook_favorited" : "hook_unfavorited", {
+        hookId: id,
+        platform: context?.platform,
+        contentType: context?.contentType,
+        templateVersion: context?.hook.templateVersion,
+        promptVariant: context?.hook.promptVariant,
+        clickScore: context?.hook.clickScore,
+      });
     },
-    [favorites, toggleFavorite, toggleHistoryFavorite, track]
+    [favorites, findHookContext, toggleFavorite, toggleHistoryFavorite, track]
   );
 
   const handleToggleAdopted = React.useCallback(
     (id: string) => {
-      const current = hooks.find((hook) => hook.id === id);
+      const context = findHookContext(id);
+      const current = context?.hook;
       const adopted = !current?.adopted;
       const update = (hook: HookResult): HookResult =>
         hook.id === id ? { ...hook, adopted } : hook;
       setHooks((prev) => prev.map(update));
       updateHook(id, (hook) => ({ ...hook, adopted }));
-      track(adopted ? "hook_adopted" : "hook_unadopted", { hookId: id });
+      track(adopted ? "hook_adopted" : "hook_unadopted", {
+        hookId: id,
+        platform: context?.platform,
+        contentType: context?.contentType,
+        templateVersion: context?.hook.templateVersion,
+        promptVariant: context?.hook.promptVariant,
+        clickScore: context?.hook.clickScore,
+      });
     },
-    [hooks, track, updateHook]
+    [findHookContext, track, updateHook]
   );
 
   const handleSetSatisfaction = React.useCallback(
     (id: string, rating: PlatformSatisfaction) => {
       const update = (hook: HookResult): HookResult =>
         hook.id === id ? { ...hook, platformSatisfaction: rating } : hook;
+      const context = findHookContext(id);
       setHooks((prev) => prev.map(update));
       updateHook(id, (hook) => ({ ...hook, platformSatisfaction: rating }));
-      trackSatisfaction(id, rating);
+      trackSatisfaction(id, rating, {
+        platform: context?.platform,
+        contentType: context?.contentType,
+        templateVersion: context?.hook.templateVersion,
+        promptVariant: context?.hook.promptVariant,
+        clickScore: context?.hook.clickScore,
+      });
     },
-    [trackSatisfaction, updateHook]
+    [findHookContext, trackSatisfaction, updateHook]
   );
 
   const handleCopyHook = React.useCallback(
     (hook: HookResult) => {
-      track("hook_copied", { hookId: hook.id, style: hook.style });
+      const context = findHookContext(hook.id);
+      track("hook_copied", {
+        hookId: hook.id,
+        style: hook.style,
+        platform: context?.platform,
+        contentType: context?.contentType,
+        templateVersion: hook.templateVersion,
+        promptVariant: hook.promptVariant,
+        clickScore: hook.clickScore,
+      });
     },
-    [track]
+    [findHookContext, track]
   );
 
   return (
@@ -177,7 +267,7 @@ export default function Home() {
 
         {/* Error */}
         {status === "error" && error && (
-          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
+          <div className="mx-auto mt-10 w-full max-w-6xl rounded-[18px] border border-neutral-200 bg-white shadow-[0_18px_60px_rgba(17,17,17,0.08)]">
             <div className="border-b border-[#E4002B] p-4 md:p-6">
               <p className="mb-2 text-xs font-bold uppercase text-[#E4002B]">
                 生成失败
@@ -213,12 +303,16 @@ export default function Home() {
 
         {/* Bottom action bar */}
         {status === "done" && (
-          <div className="mx-auto mt-8 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
-            <div className="grid grid-cols-2 md:grid-cols-4">
+          <div className="mx-auto mt-8 w-full max-w-6xl overflow-hidden rounded-[18px] border border-neutral-200 bg-white shadow-[0_18px_60px_rgba(17,17,17,0.08)]">
+            <div className="grid grid-cols-2 md:grid-cols-5">
               {[
                 { label: "生成完成率", value: `${stats.completionRate}%` },
                 { label: "收藏率", value: `${stats.favoriteRate}%` },
                 { label: "采用率", value: `${stats.adoptionRate}%` },
+                {
+                  label: "平均点击欲望",
+                  value: stats.avgClickScore ? `${stats.avgClickScore}/100` : "暂无",
+                },
                 {
                   label: "平台适配满意度",
                   value: stats.avgPlatformSatisfaction
@@ -263,13 +357,18 @@ export default function Home() {
 
         {/* Empty state */}
         {status === "idle" && (
-          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-b border-neutral-300 bg-white px-4 py-8 md:px-6">
-            <p className="text-xs font-bold uppercase text-neutral-500">
+          <div className="mx-auto mt-8 flex w-full max-w-6xl items-center justify-between overflow-hidden rounded-[18px] border border-neutral-200 bg-white px-5 py-6 shadow-[0_18px_60px_rgba(17,17,17,0.08)] md:px-8">
+            <div>
+            <p className="text-lg font-black text-[#111111]">
               等待输入
             </p>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-600">
               输入主题后即可生成。平台、内容类型和高级选项会共同影响 Hook 的语气、结构和长度。
             </p>
+            </div>
+            <div className="hidden rounded-2xl border border-neutral-200 bg-neutral-50 px-4 py-3 text-sm font-black text-[#E4002B] md:block">
+              Hook 1 · Hook 2 · Hook 3
+            </div>
           </div>
         )}
       </main>

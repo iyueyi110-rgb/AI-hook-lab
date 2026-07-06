@@ -120,10 +120,7 @@ export function HistoryDrawer({
                         {item.topic}
                       </p>
                       <p className="text-xs text-gray-400 mt-0.5 flex items-center gap-3">
-                        <span>
-                          {PLATFORM_CONFIG[item.platform]?.emoji}{" "}
-                          {PLATFORM_CONFIG[item.platform]?.label}
-                        </span>
+                        <span>{PLATFORM_CONFIG[item.platform]?.label}</span>
                         <span>
                           {CONTENT_TYPE_CONFIG[item.contentType]?.label}
                         </span>
@@ -160,7 +157,8 @@ export function HistoryDrawer({
                   {expandedId === item.id && (
                     <div className="mt-3 space-y-2">
                       {item.hooks.map((hook) => {
-                        const overallScore = hook.overallScore ?? hook.score ?? "?";
+                        const overallScore = hook.overallScore ?? hook.score ?? 0;
+                        const clickScore = hook.clickScore ?? (overallScore ? overallScore * 10 : "?");
                         return (
                           <div
                             key={hook.id}
@@ -171,13 +169,16 @@ export function HistoryDrawer({
                                 {hook.style}
                               </span>
                               <span className="text-xs text-gray-400">
-                                评分 {overallScore}/10
+                                点击欲望 {clickScore}/100
                               </span>
                             </div>
                             <p className="text-gray-700 leading-relaxed">
                               {hook.text}
                             </p>
-                            {(hook.badcaseTags?.length || hook.adopted || hook.platformSatisfaction) && (
+                            {(hook.badcaseTags?.length ||
+                              hook.adopted ||
+                              hook.platformSatisfaction ||
+                              hook.templateVersion) && (
                               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                                 {hook.adopted && (
                                   <span className="text-xs px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-100">
@@ -197,6 +198,11 @@ export function HistoryDrawer({
                                     {tag}
                                   </span>
                                 ))}
+                                {hook.templateVersion && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                                    Prompt {hook.templateVersion}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>

@@ -43,7 +43,7 @@ export function HookGrid({
   };
 
   return (
-    <section className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
+    <section className="mx-auto mt-10 w-full max-w-6xl overflow-hidden rounded-[18px] border border-neutral-200 bg-white shadow-[0_18px_60px_rgba(17,17,17,0.08)]">
       {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
         <div className="border-b border-neutral-300 p-4 md:p-6">
           <p className="mb-3 text-xs font-bold uppercase text-[#E4002B]">生成分析</p>
