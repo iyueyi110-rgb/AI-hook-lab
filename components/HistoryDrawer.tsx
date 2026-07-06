@@ -159,24 +159,49 @@ export function HistoryDrawer({
                   {/* Expanded detail */}
                   {expandedId === item.id && (
                     <div className="mt-3 space-y-2">
-                      {item.hooks.map((hook) => (
-                        <div
-                          key={hook.id}
-                          className="rounded-lg bg-gray-50 p-3 text-sm"
-                        >
-                          <div className="flex items-center justify-between mb-1">
-                            <span className="text-xs font-medium text-violet-600">
-                              {hook.style}
-                            </span>
-                            <span className="text-xs text-gray-400">
-                              评分 {hook.score}/10
-                            </span>
+                      {item.hooks.map((hook) => {
+                        const overallScore = hook.overallScore ?? hook.score ?? "?";
+                        return (
+                          <div
+                            key={hook.id}
+                            className="rounded-lg bg-gray-50 p-3 text-sm"
+                          >
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-xs font-medium text-violet-600">
+                                {hook.style}
+                              </span>
+                              <span className="text-xs text-gray-400">
+                                评分 {overallScore}/10
+                              </span>
+                            </div>
+                            <p className="text-gray-700 leading-relaxed">
+                              {hook.text}
+                            </p>
+                            {(hook.badcaseTags?.length || hook.adopted || hook.platformSatisfaction) && (
+                              <div className="mt-2 flex flex-wrap items-center gap-1.5">
+                                {hook.adopted && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-violet-50 text-violet-700 border border-violet-100">
+                                    已采用
+                                  </span>
+                                )}
+                                {hook.platformSatisfaction && (
+                                  <span className="text-xs px-1.5 py-0.5 rounded bg-gray-100 text-gray-500">
+                                    平台适配 {hook.platformSatisfaction}/5
+                                  </span>
+                                )}
+                                {hook.badcaseTags?.map((tag) => (
+                                  <span
+                                    key={tag}
+                                    className="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+                                  >
+                                    {tag}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <p className="text-gray-700 leading-relaxed">
-                            {hook.text}
-                          </p>
-                        </div>
-                      ))}
+                        );
+                      })}
                       <div className="flex items-center justify-between pt-2">
                         <button
                           onClick={() => onToggleFavorite(item.id)}

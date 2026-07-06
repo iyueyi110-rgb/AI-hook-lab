@@ -1,65 +1,101 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { GenerateRequest, GenerateResponse, HookResult } from "@/lib/types";
-import { PLATFORM_CONFIG, PLATFORM_STYLES } from "@/lib/constants";
+import type {
+  EmotionTone,
+  GenerateRequest,
+  GenerateResponse,
+  HookResult,
+  HookScores,
+} from "@/lib/types";
+import {
+  CONTENT_TYPE_CONFIG,
+  EMOTION_TONE_CONFIG,
+  PLATFORM_CONFIG,
+  PLATFORM_STYLES,
+} from "@/lib/constants";
 
 const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
+const DEFAULT_WORD_LIMIT = 80;
 
 function buildSystemPrompt(): string {
-  return `你是一位世界级社交媒体文案专家，精通各大平台的爆款内容创作。
+  return `你是一位社交媒体文案策略师，专门帮助短视频/图文创作者解决开头 3 秒吸引力不足、平台语气难迁移、灵感难复用的问题。
 
-你的任务：根据用户提供的信息，生成 10 个不同风格的爆款 Hook。
+你的任务：根据输入变量，为指定平台生成 10 个不同风格的 Hook 开头，并给出可比较、可解释的评分。
 
-核心要求：
-- 每个 Hook 必须精彩、引人入胜，让读者忍不住点击
-- 严格匹配对应风格的写作特征
-- scores 评分要真实客观（基于文本冲击力、好奇心缺口、情绪张力打分）
-- reasoning 要具体，不能用套话，要说清楚这个 hook 为什么能引爆
+好 Hook 的四条标准：
+1. 前 3 秒钩子：开头 15 字内制造好奇心缺口、认知冲突或情绪共振。
+2. 平台原生感：读起来像该平台创作者的真实表达，不是翻译腔或通用广告文案。
+3. 可操作性：读者能清晰预期后续内容会提供什么价值。
+4. 传播基因：包含适合截图、引用、复用的表达。
 
-输出格式：纯 JSON，不要 Markdown 包裹，不要额外文字。`;
+四维评分标准（每维 1-10 分）：
+- impact：开头是否有足够冲击力、信息差或情绪张力。
+- platformFit：语气、节奏、词汇是否贴合平台。
+- actionability：用户是否能判断后续内容价值。
+- shareability：是否有可被收藏、转发、截图的表达。
+
+输出要求：
+- 只返回纯 JSON，不要 Markdown，不要解释性前后缀。
+- reasoning 必须引用具体词句，例如“开头‘做了3年’用数字建立信任，‘才明白’制造反转预期”。
+- 禁止使用“运用了悬念手法吸引用户”“抓住用户痛点”这类模板化套话。
+- 不要编造违法、医疗诊断、金融收益承诺或侵犯隐私的内容。`;
 }
 
 function buildUserPrompt(
-  topic: string,
-  platform: string,
+  req: GenerateRequest,
+  platformLabel: string,
   platformDesc: string,
-  contentType: string,
+  contentTypeLabel: string,
   styles: string[]
 ): string {
-  const styleInstructions = styles
-    .map((style, i) => `${i + 1}. ${style}`)
-    .join("\n");
+  const { topic, targetAudience, emotionTone, wordLimit } = req;
+  const toneInstruction = emotionTone
+    ? `\n**情绪风格：** ${EMOTION_TONE_CONFIG[emotionTone as EmotionTone]?.label ?? emotionTone} - ${
+        EMOTION_TONE_CONFIG[emotionTone as EmotionTone]?.description ?? ""
+      }`
+    : "";
 
-  return `## 任务信息
+  return `## 输入变量
 
 **主题：** ${topic}
-**平台：** ${platform}（${platformDesc}）
-**内容类型：** ${contentType}
+**平台：** ${platformLabel}（${platformDesc}）
+**内容类型：** ${contentTypeLabel}
+**目标用户：** ${targetAudience?.trim() || "该平台泛用户群体"}${toneInstruction}
+**字数限制：** 每条 Hook 不超过 ${wordLimit ?? DEFAULT_WORD_LIMIT} 字
 
-## 平台风格池（必须每种风格各生成一个 Hook）
+## 平台风格池
+每种风格生成 1 个 Hook，共 10 个：
+${styles.map((style, index) => `${index + 1}. ${style}`).join("\n")}
 
-${styleInstructions}
-
-## 输出格式
-
-返回严格 JSON：
+## 输出 JSON 格式
 {
   "hooks": [
     {
       "text": "Hook 文案",
-      "style": "风格名称（必须从风格池中选取）",
-      "score": 8,
-      "reasoning": "这个 hook 运用了XX手法，关键词XX制造了XX钩子，能吸引这个平台的XX人群"
+      "style": "风格名称（必须从风格池中取）",
+      "reasoning": "具体到词句的推荐理由，30-60字",
+      "scores": {
+        "impact": 8,
+        "platformFit": 7,
+        "actionability": 7,
+        "shareability": 6
+      },
+      "overallScore": 7
     }
-  ]
+  ],
+  "analysis": {
+    "bestStyle": "这批中最值得优先采用的风格",
+    "commonPattern": "这批 Hook 的共性规律，一句话",
+    "improvementTip": "如果效果不理想，下一轮应该调整的输入变量"
+  }
 }
 
-关键约束：
-- hooks 数组必须恰好 10 个
-- 每个风格只用一次，不要重复
-- text 长度控制在 15-80 字之间
-- score 是整数 1-10
-- reasoning 30-60 字，具体说明引爆原理
-- 只返回 JSON，不要任何额外说明文字`;
+## 硬约束
+- hooks 必须恰好 10 个，每个风格只用一次。
+- text 必须控制在字数限制内。
+- overallScore 是四维评分的综合分，整数 1-10。
+- 平台语气要明显区分，不能把同一句话换平台名复用。
+- reasoning 必须引用 Hook 中的具体词句，禁止空泛套话。
+- 只返回 JSON。`;
 }
 
 function generateId(): string {
@@ -69,36 +105,130 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function validateAndCleanHooks(raw: unknown): HookResult[] {
+function clampScore(value: unknown, fallback = 7): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+function normalizeScores(raw: Record<string, unknown>): HookScores {
+  return {
+    impact: clampScore(raw.impact),
+    platformFit: clampScore(raw.platformFit),
+    actionability: clampScore(raw.actionability),
+    shareability: clampScore(raw.shareability),
+  };
+}
+
+function calculateOverallScore(scores: HookScores): number {
+  return clampScore(
+    scores.impact * 0.35 +
+      scores.platformFit * 0.3 +
+      scores.actionability * 0.2 +
+      scores.shareability * 0.15
+  );
+}
+
+function countChineseChars(value: string): number {
+  return value.match(/[\u4e00-\u9fff]/g)?.length ?? 0;
+}
+
+function detectBadcases(hook: {
+  text: string;
+  reasoning: string;
+  scores: HookScores;
+  wordLimit: number;
+}): string[] {
+  const tags: string[] = [];
+
+  if (hook.text.length > hook.wordLimit * 1.2) tags.push("too_long");
+  if (hook.text.length < 8) tags.push("too_short");
+
+  if (/震惊|不看后悔|全网都在|炸裂|颠覆认知|彻底改变|速看|必看/.test(hook.text)) {
+    tags.push("clickbait_risk");
+  }
+
+  const genericWords =
+    /干货满满|值得收藏|快速提升|太绝了|绝绝子|yyds|一定要看|超级好用|建议收藏|看完就会/gi;
+  const matches = hook.text.match(genericWords);
+  if (matches && matches.length >= 2) tags.push("too_generic");
+
+  if (
+    countChineseChars(hook.reasoning) < 12 ||
+    /运用.*手法|吸引用户|抓住痛点|制造悬念/.test(hook.reasoning)
+  ) {
+    tags.push("weak_reasoning");
+  }
+
+  if (hook.scores.platformFit <= 5) tags.push("platform_mismatch");
+
+  return [...new Set(tags)];
+}
+
+function normalizeWordLimit(value: unknown): number {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) return DEFAULT_WORD_LIMIT;
+  return Math.max(30, Math.min(150, Math.round(parsed)));
+}
+
+function validateAndCleanHooks(
+  raw: unknown,
+  wordLimit: number
+): { hooks: HookResult[]; analysis?: GenerateResponse["analysis"] } {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid JSON response from AI");
   }
 
   const obj = raw as Record<string, unknown>;
-  const hooks = obj.hooks;
+  const rawHooks = obj.hooks;
 
-  if (!Array.isArray(hooks) || hooks.length === 0) {
+  if (!Array.isArray(rawHooks) || rawHooks.length === 0) {
     throw new Error("AI 返回的 hooks 为空或格式错误");
   }
 
-  return hooks.slice(0, 10).map((h: Record<string, unknown>, index: number) => {
+  const hooks: HookResult[] = rawHooks.slice(0, 10).map((item, index) => {
+    const h = item as Record<string, unknown>;
     const text = String(h.text ?? "").trim();
     if (!text) {
       throw new Error(`第 ${index + 1} 个 Hook 文案为空`);
     }
 
-    let score = Number(h.score ?? 0);
-    if (isNaN(score)) score = 7;
-    score = Math.max(1, Math.min(10, Math.round(score)));
+    const rawOverall = h.overallScore ?? h.score;
+    const fallbackOverall = clampScore(rawOverall);
+    const scores =
+      h.scores && typeof h.scores === "object"
+        ? normalizeScores(h.scores as Record<string, unknown>)
+        : {
+            impact: fallbackOverall,
+            platformFit: fallbackOverall,
+            actionability: fallbackOverall,
+            shareability: fallbackOverall,
+          };
+    const overallScore =
+      rawOverall === undefined ? calculateOverallScore(scores) : clampScore(rawOverall);
+    const reasoning = String(h.reasoning ?? "").trim();
 
     return {
       id: generateId(),
       text,
       style: String(h.style ?? "未知风格").trim(),
-      score,
-      reasoning: String(h.reasoning ?? "").trim(),
+      reasoning,
+      scores,
+      overallScore,
+      badcaseTags: detectBadcases({ text, reasoning, scores, wordLimit }),
     };
   });
+
+  const analysis =
+    obj.analysis && typeof obj.analysis === "object"
+      ? {
+          bestStyle: String((obj.analysis as Record<string, unknown>).bestStyle ?? ""),
+          commonPattern: String((obj.analysis as Record<string, unknown>).commonPattern ?? ""),
+          improvementTip: String((obj.analysis as Record<string, unknown>).improvementTip ?? ""),
+        }
+      : undefined;
+
+  return { hooks, analysis };
 }
 
 export async function POST(request: NextRequest) {
@@ -136,6 +266,7 @@ export async function POST(request: NextRequest) {
 
   const platformInfo = PLATFORM_CONFIG[platform];
   const styles = PLATFORM_STYLES[platform];
+  const contentTypeInfo = CONTENT_TYPE_CONFIG[contentType];
 
   if (!platformInfo || !styles) {
     return NextResponse.json(
@@ -144,11 +275,28 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  if (!contentTypeInfo) {
+    return NextResponse.json(
+      { error: "内容类型不支持", message: `不支持的内容类型：${contentType}` },
+      { status: 400 }
+    );
+  }
+
+  const wordLimit = normalizeWordLimit(body.wordLimit);
+  const requestBody: GenerateRequest = {
+    topic: topic.trim(),
+    platform,
+    contentType,
+    targetAudience: body.targetAudience?.trim() || undefined,
+    emotionTone: body.emotionTone || undefined,
+    wordLimit,
+  };
+
   const userPrompt = buildUserPrompt(
-    topic.trim(),
+    requestBody,
     platformInfo.label,
     platformInfo.description,
-    contentType,
+    contentTypeInfo.label,
     styles
   );
 
@@ -168,8 +316,8 @@ export async function POST(request: NextRequest) {
           { role: "system", content: buildSystemPrompt() },
           { role: "user", content: userPrompt },
         ],
-        temperature: 1.0,
-        max_tokens: 4096,
+        temperature: 0.95,
+        max_tokens: 8192,
         response_format: { type: "json_object" },
       }),
       signal: controller.signal,
@@ -224,7 +372,6 @@ export async function POST(request: NextRequest) {
     try {
       parsed = JSON.parse(choice);
     } catch {
-      // Try to extract JSON from markdown code blocks
       const jsonMatch = choice.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
       if (jsonMatch) {
         try {
@@ -249,7 +396,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const hooks = validateAndCleanHooks(parsed);
+    const { hooks, analysis } = validateAndCleanHooks(parsed, wordLimit);
 
     const response: GenerateResponse = {
       hooks,
@@ -257,6 +404,10 @@ export async function POST(request: NextRequest) {
       topic: topic.trim(),
       platform,
       contentType,
+      targetAudience: requestBody.targetAudience,
+      emotionTone: requestBody.emotionTone,
+      wordLimit,
+      analysis,
     };
 
     return NextResponse.json(response);

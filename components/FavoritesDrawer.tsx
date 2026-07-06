@@ -1,6 +1,6 @@
 "use client";
 
-import type { HistoryItem } from "@/lib/types";
+import type { HistoryItem, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { PLATFORM_CONFIG } from "@/lib/constants";
 import { STYLE_COLORS } from "@/lib/constants";
 
@@ -10,6 +10,9 @@ interface FavoritesDrawerProps {
   history: HistoryItem[];
   favoritedIds: string[];
   onToggleFavorite: (id: string) => void;
+  onToggleAdopted: (id: string) => void;
+  onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
+  onCopyHook: (hook: HookResult) => void;
 }
 
 export function FavoritesDrawer({
@@ -18,6 +21,9 @@ export function FavoritesDrawer({
   history,
   favoritedIds,
   onToggleFavorite,
+  onToggleAdopted,
+  onSetSatisfaction,
+  onCopyHook,
 }: FavoritesDrawerProps) {
   if (!open) return null;
 
@@ -113,7 +119,9 @@ export function FavoritesDrawer({
                     document.execCommand("copy");
                     document.body.removeChild(textarea);
                   }
+                  onCopyHook(hook);
                 };
+                const overallScore = hook.overallScore ?? hook.score ?? "?";
 
                 return (
                   <div key={hook.id} className="px-5 py-3.5">
@@ -130,12 +138,52 @@ export function FavoritesDrawer({
                         </span>
                       </div>
                       <span className="text-xs font-semibold text-gray-500">
-                        {hook.score}/10
+                        {overallScore}/10
                       </span>
                     </div>
                     <p className="text-sm text-gray-700 leading-relaxed mb-2">
                       {hook.text}
                     </p>
+                    {hook.badcaseTags && hook.badcaseTags.length > 0 && (
+                      <div className="mb-2 flex flex-wrap gap-1">
+                        {hook.badcaseTags.map((tag) => (
+                          <span
+                            key={tag}
+                            className="text-xs px-1.5 py-0.5 rounded bg-amber-50 text-amber-700 border border-amber-200"
+                          >
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                    <div className="mb-2 flex items-center justify-between gap-3">
+                      <button
+                        onClick={() => onToggleAdopted(hook.id)}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-medium transition-all ${
+                          hook.adopted
+                            ? "bg-violet-600 text-white"
+                            : "border border-gray-200 text-gray-500 hover:text-violet-600"
+                        }`}
+                      >
+                        {hook.adopted ? "已采用" : "标记采用"}
+                      </button>
+                      <div className="flex items-center gap-1">
+                        {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
+                          <button
+                            key={rating}
+                            onClick={() => onSetSatisfaction(hook.id, rating)}
+                            className={`h-6 w-6 rounded-md text-xs font-semibold transition-all ${
+                              hook.platformSatisfaction === rating
+                                ? "bg-violet-600 text-white"
+                                : "border border-gray-200 text-gray-400 hover:text-violet-600"
+                            }`}
+                            aria-label={`平台适配满意度 ${rating} 分`}
+                          >
+                            {rating}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                     <div className="flex items-center justify-between">
                       <span className="text-xs text-gray-300">
                         主题：{hook.topic}

@@ -1,9 +1,18 @@
 "use client";
 
 import React from "react";
-import type { Platform, ContentType, GenerateStatus, HookResult, GenerateResponse } from "@/lib/types";
+import type {
+  Platform,
+  ContentType,
+  EmotionTone,
+  GenerateStatus,
+  HookResult,
+  GenerateResponse,
+  PlatformSatisfaction,
+} from "@/lib/types";
 import { useHistory } from "@/hooks/useHistory";
 import { useFavorites } from "@/hooks/useFavorites";
+import { useAnalytics } from "@/hooks/useAnalytics";
 import { Header } from "@/components/Header";
 import { InputPanel } from "@/components/InputPanel";
 import { SkeletonCards } from "@/components/SkeletonCards";
@@ -17,12 +26,17 @@ export default function Home() {
   const [contentType, setContentType] = React.useState<ContentType>("video");
   const [status, setStatus] = React.useState<GenerateStatus>("idle");
   const [hooks, setHooks] = React.useState<HookResult[]>([]);
+  const [targetAudience, setTargetAudience] = React.useState("");
+  const [emotionTone, setEmotionTone] = React.useState<EmotionTone | "">("");
+  const [wordLimit, setWordLimit] = React.useState(80);
+  const [analysis, setAnalysis] = React.useState<GenerateResponse["analysis"] | null>(null);
   const [error, setError] = React.useState<{ title: string; message: string } | null>(null);
   const [historyOpen, setHistoryOpen] = React.useState(false);
   const [favoritesOpen, setFavoritesOpen] = React.useState(false);
 
-  const { history, loaded: historyLoaded, addToHistory, deleteHistory, clearAll, toggleFavorite: toggleHistoryFavorite } = useHistory();
+  const { history, loaded: historyLoaded, addToHistory, deleteHistory, clearAll, toggleFavorite: toggleHistoryFavorite, updateHook } = useHistory();
   const { favorites, toggleFavorite } = useFavorites();
+  const { track, trackSatisfaction, stats } = useAnalytics();
 
   const handleGenerate = React.useCallback(async () => {
     if (!topic.trim() || status === "loading") return;
@@ -30,12 +44,22 @@ export default function Home() {
     setStatus("loading");
     setError(null);
     setHooks([]);
+    setAnalysis(null);
+    const startedAt = Date.now();
+    track("generation_start", { topic: topic.trim(), platform, contentType });
 
     try {
       const res = await fetch("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ topic: topic.trim(), platform, contentType }),
+        body: JSON.stringify({
+          topic: topic.trim(),
+          platform,
+          contentType,
+          targetAudience: targetAudience.trim() || undefined,
+          emotionTone: emotionTone || undefined,
+          wordLimit,
+        }),
       });
 
       const data = await res.json();
@@ -43,28 +67,86 @@ export default function Home() {
       if (!res.ok) {
         setError({ title: data.error ?? "生成失败", message: data.message ?? "未知错误" });
         setStatus("error");
+        track("generation_error", { error: data.error ?? "生成失败" });
         return;
       }
 
       const response = data as GenerateResponse;
       setHooks(response.hooks);
+      setAnalysis(response.analysis ?? null);
       setStatus("done");
       addToHistory(response);
+      const avgScore =
+        response.hooks.length > 0
+          ? response.hooks.reduce((sum, hook) => sum + (hook.overallScore ?? hook.score ?? 0), 0) /
+            response.hooks.length
+          : 0;
+      track("generation_complete", {
+        platform,
+        contentType,
+        hookCount: response.hooks.length,
+        avgScore,
+        durationMs: Date.now() - startedAt,
+      });
     } catch {
       setError({
         title: "网络错误",
         message: "无法连接到服务器，请检查网络后重试",
       });
       setStatus("error");
+      track("generation_error", { error: "网络错误" });
     }
-  }, [topic, platform, contentType, status, addToHistory]);
+  }, [
+    topic,
+    platform,
+    contentType,
+    targetAudience,
+    emotionTone,
+    wordLimit,
+    status,
+    addToHistory,
+    track,
+  ]);
 
   const handleToggleFavorite = React.useCallback(
     (id: string) => {
+      const willFavorite = !favorites.includes(id);
       toggleFavorite(id);
       toggleHistoryFavorite(id);
+      track(willFavorite ? "hook_favorited" : "hook_unfavorited", { hookId: id });
     },
-    [toggleFavorite, toggleHistoryFavorite]
+    [favorites, toggleFavorite, toggleHistoryFavorite, track]
+  );
+
+  const handleToggleAdopted = React.useCallback(
+    (id: string) => {
+      const current = hooks.find((hook) => hook.id === id);
+      const adopted = !current?.adopted;
+      const update = (hook: HookResult): HookResult =>
+        hook.id === id ? { ...hook, adopted } : hook;
+      setHooks((prev) => prev.map(update));
+      updateHook(id, (hook) => ({ ...hook, adopted }));
+      track(adopted ? "hook_adopted" : "hook_unadopted", { hookId: id });
+    },
+    [hooks, track, updateHook]
+  );
+
+  const handleSetSatisfaction = React.useCallback(
+    (id: string, rating: PlatformSatisfaction) => {
+      const update = (hook: HookResult): HookResult =>
+        hook.id === id ? { ...hook, platformSatisfaction: rating } : hook;
+      setHooks((prev) => prev.map(update));
+      updateHook(id, (hook) => ({ ...hook, platformSatisfaction: rating }));
+      trackSatisfaction(id, rating);
+    },
+    [trackSatisfaction, updateHook]
+  );
+
+  const handleCopyHook = React.useCallback(
+    (hook: HookResult) => {
+      track("hook_copied", { hookId: hook.id, style: hook.style });
+    },
+    [track]
   );
 
   return (
@@ -79,6 +161,12 @@ export default function Home() {
           setPlatform={setPlatform}
           contentType={contentType}
           setContentType={setContentType}
+          targetAudience={targetAudience}
+          setTargetAudience={setTargetAudience}
+          emotionTone={emotionTone}
+          setEmotionTone={setEmotionTone}
+          wordLimit={wordLimit}
+          setWordLimit={setWordLimit}
           status={status}
           onGenerate={handleGenerate}
         />
@@ -117,12 +205,35 @@ export default function Home() {
             hooks={hooks}
             favoritedIds={favorites}
             onToggleFavorite={handleToggleFavorite}
+            onToggleAdopted={handleToggleAdopted}
+            onSetSatisfaction={handleSetSatisfaction}
+            onCopyHook={handleCopyHook}
+            analysis={analysis}
           />
         )}
 
         {/* Bottom action bar */}
         {status === "done" && (
-          <div className="w-full max-w-4xl mx-auto mt-8 px-4 md:px-0 flex items-center justify-center gap-3">
+          <div className="w-full max-w-4xl mx-auto mt-8 px-4 md:px-0">
+            <div className="mb-5 grid grid-cols-2 md:grid-cols-4 gap-3">
+              {[
+                { label: "生成完成率", value: `${stats.completionRate}%` },
+                { label: "收藏率", value: `${stats.favoriteRate}%` },
+                { label: "采用率", value: `${stats.adoptionRate}%` },
+                {
+                  label: "平台适配满意度",
+                  value: stats.avgPlatformSatisfaction
+                    ? `${stats.avgPlatformSatisfaction}/5`
+                    : "暂无",
+                },
+              ].map((item) => (
+                <div key={item.label} className="rounded-xl border border-gray-100 bg-gray-50 p-3">
+                  <p className="text-xs text-gray-400">{item.label}</p>
+                  <p className="mt-1 text-lg font-semibold text-gray-900">{item.value}</p>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-center gap-3">
             <button
               onClick={() => setHistoryOpen(true)}
               className="inline-flex items-center gap-1.5 rounded-full border border-gray-200 bg-white px-4 py-2 text-sm font-medium text-gray-600 hover:bg-gray-50 hover:border-gray-300 transition-all shadow-sm"
@@ -145,6 +256,7 @@ export default function Home() {
                 <span className="text-xs text-gray-400 ml-0.5">({favorites.length})</span>
               )}
             </button>
+            </div>
           </div>
         )}
 
@@ -175,6 +287,9 @@ export default function Home() {
         history={history}
         favoritedIds={favorites}
         onToggleFavorite={handleToggleFavorite}
+        onToggleAdopted={handleToggleAdopted}
+        onSetSatisfaction={handleSetSatisfaction}
+        onCopyHook={handleCopyHook}
       />
     </div>
   );

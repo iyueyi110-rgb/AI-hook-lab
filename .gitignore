@@ -12,6 +12,8 @@
 
 # testing
 /coverage
+/eval/results/*
+!/eval/results/.gitkeep
 
 # next.js
 /.next/

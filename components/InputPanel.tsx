@@ -1,7 +1,12 @@
 "use client";
 
-import type { Platform, ContentType, GenerateStatus } from "@/lib/types";
-import { PLATFORM_CONFIG, CONTENT_TYPE_CONFIG } from "@/lib/constants";
+import { useState } from "react";
+import type { Platform, ContentType, EmotionTone, GenerateStatus } from "@/lib/types";
+import {
+  CONTENT_TYPE_CONFIG,
+  EMOTION_TONE_CONFIG,
+  PLATFORM_CONFIG,
+} from "@/lib/constants";
 
 interface InputPanelProps {
   topic: string;
@@ -10,6 +15,12 @@ interface InputPanelProps {
   setPlatform: (p: Platform) => void;
   contentType: ContentType;
   setContentType: (c: ContentType) => void;
+  targetAudience: string;
+  setTargetAudience: (v: string) => void;
+  emotionTone: EmotionTone | "";
+  setEmotionTone: (e: EmotionTone | "") => void;
+  wordLimit: number;
+  setWordLimit: (n: number) => void;
   status: GenerateStatus;
   onGenerate: () => void;
 }
@@ -21,9 +32,16 @@ export function InputPanel({
   setPlatform,
   contentType,
   setContentType,
+  targetAudience,
+  setTargetAudience,
+  emotionTone,
+  setEmotionTone,
+  wordLimit,
+  setWordLimit,
   status,
   onGenerate,
 }: InputPanelProps) {
+  const [advancedOpen, setAdvancedOpen] = useState(false);
   const loading = status === "loading";
 
   return (
@@ -99,6 +117,103 @@ export function InputPanel({
             </button>
           ))}
         </div>
+      </div>
+
+      {/* Advanced options */}
+      <div className="border-t border-gray-100 pt-4">
+        <button
+          type="button"
+          onClick={() => setAdvancedOpen((open) => !open)}
+          className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 transition-colors cursor-pointer"
+          disabled={loading}
+        >
+          <span aria-hidden>{advancedOpen ? "▼" : "▶"}</span>
+          <span>高级选项</span>
+        </button>
+
+        {advancedOpen && (
+          <div className="mt-4 space-y-4">
+            <div>
+              <label
+                htmlFor="target-audience"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                目标用户
+              </label>
+              <input
+                id="target-audience"
+                type="text"
+                value={targetAudience}
+                onChange={(e) => setTargetAudience(e.target.value)}
+                placeholder="例如：25-35岁职场女性、大学生、新手宝妈"
+                className="w-full rounded-xl border border-gray-200 bg-white px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none transition focus:border-violet-400 focus:ring-2 focus:ring-violet-100"
+                disabled={loading}
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-2">
+                情绪风格
+              </label>
+              <div className="flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={() => setEmotionTone("")}
+                  disabled={loading}
+                  className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                    emotionTone === ""
+                      ? "bg-violet-600 text-white"
+                      : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                  } ${loading ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                >
+                  自动
+                </button>
+                {(Object.keys(EMOTION_TONE_CONFIG) as EmotionTone[]).map((tone) => (
+                  <button
+                    key={tone}
+                    type="button"
+                    onClick={() => setEmotionTone(tone)}
+                    disabled={loading}
+                    title={EMOTION_TONE_CONFIG[tone].description}
+                    className={`inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-all ${
+                      emotionTone === tone
+                        ? "bg-violet-600 text-white"
+                        : "bg-gray-50 text-gray-600 hover:bg-gray-100"
+                    } ${loading ? "opacity-50 cursor-not-allowed" : "cursor-pointer"}`}
+                  >
+                    <span>{EMOTION_TONE_CONFIG[tone].icon}</span>
+                    <span>{EMOTION_TONE_CONFIG[tone].label}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="word-limit"
+                className="block text-sm font-medium text-gray-700 mb-2"
+              >
+                字数限制：
+                <span className="text-violet-600 font-semibold">{wordLimit}</span> 字
+              </label>
+              <input
+                id="word-limit"
+                type="range"
+                min={30}
+                max={150}
+                step={10}
+                value={wordLimit}
+                onChange={(e) => setWordLimit(Number(e.target.value))}
+                disabled={loading}
+                className="w-full accent-violet-600"
+              />
+              <div className="flex justify-between text-xs text-gray-400 mt-1">
+                <span>30</span>
+                <span>150</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Generate button */}

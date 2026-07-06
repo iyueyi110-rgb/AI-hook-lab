@@ -1,18 +1,26 @@
 "use client";
 
-import type { HookResult } from "@/lib/types";
+import type { GenerateResponse, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { HookCard } from "./HookCard";
 
 interface HookGridProps {
   hooks: HookResult[];
   favoritedIds: string[];
   onToggleFavorite: (id: string) => void;
+  onToggleAdopted: (id: string) => void;
+  onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
+  onCopyHook: (hook: HookResult) => void;
+  analysis?: GenerateResponse["analysis"] | null;
 }
 
 export function HookGrid({
   hooks,
   favoritedIds,
   onToggleFavorite,
+  onToggleAdopted,
+  onSetSatisfaction,
+  onCopyHook,
+  analysis,
 }: HookGridProps) {
   if (hooks.length === 0) return null;
 
@@ -36,6 +44,17 @@ export function HookGrid({
 
   return (
     <section className="w-full max-w-4xl mx-auto mt-10 px-4 md:px-0">
+      {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
+        <div className="mb-6 rounded-xl bg-violet-50 border border-violet-100 p-4">
+          <p className="text-xs font-semibold text-violet-700 mb-2">生成分析</p>
+          <div className="space-y-1 text-sm text-violet-800">
+            {analysis.bestStyle && <p>最佳风格：{analysis.bestStyle}</p>}
+            {analysis.commonPattern && <p>共性规律：{analysis.commonPattern}</p>}
+            {analysis.improvementTip && <p>优化建议：{analysis.improvementTip}</p>}
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between mb-5">
         <h2 className="text-lg font-semibold text-gray-900">
           生成的 Hook
@@ -63,6 +82,9 @@ export function HookGrid({
               styleIndex={index}
               isFavorited={favoritedIds.includes(hook.id)}
               onToggleFavorite={onToggleFavorite}
+              onToggleAdopted={onToggleAdopted}
+              onSetSatisfaction={onSetSatisfaction}
+              onCopy={onCopyHook}
             />
           </div>
         ))}

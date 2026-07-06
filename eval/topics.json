@@ -1,0 +1,22 @@
+[
+  { "id": 1, "topic": "AI 写周报", "category": "AI工具", "difficulty": "low", "targetAudience": "职场新人" },
+  { "id": 2, "topic": "早起打卡", "category": "习惯养成", "difficulty": "low", "targetAudience": "大学生" },
+  { "id": 3, "topic": "二手车避坑", "category": "消费决策", "difficulty": "mid", "targetAudience": "首次购车者" },
+  { "id": 4, "topic": "35岁转行", "category": "职场成长", "difficulty": "high", "targetAudience": "30-40岁职场人" },
+  { "id": 5, "topic": "平价护肤好物", "category": "生活方式", "difficulty": "low", "targetAudience": "学生党" },
+  { "id": 6, "topic": "Python 入门", "category": "知识科普", "difficulty": "mid", "targetAudience": "编程零基础" },
+  { "id": 7, "topic": "租房合同陷阱", "category": "消费决策", "difficulty": "mid", "targetAudience": "应届毕业生" },
+  { "id": 8, "topic": "副业搞钱", "category": "职场成长", "difficulty": "high", "targetAudience": "25-35岁上班族" },
+  { "id": 9, "topic": "孕期饮食指南", "category": "生活方式", "difficulty": "high", "targetAudience": "准妈妈" },
+  { "id": 10, "topic": "面试谈薪技巧", "category": "职场成长", "difficulty": "mid", "targetAudience": "求职者" },
+  { "id": 11, "topic": "露营装备清单", "category": "生活方式", "difficulty": "low", "targetAudience": "户外新手" },
+  { "id": 12, "topic": "通勤穿搭", "category": "生活方式", "difficulty": "low", "targetAudience": "一线城市上班族" },
+  { "id": 13, "topic": "ESG 投资入门", "category": "知识科普", "difficulty": "high", "targetAudience": "理财小白" },
+  { "id": 14, "topic": "咖啡新手入门", "category": "生活方式", "difficulty": "mid", "targetAudience": "咖啡爱好者" },
+  { "id": 15, "topic": "考研政治复习", "category": "学习效率", "difficulty": "mid", "targetAudience": "考研党" },
+  { "id": 16, "topic": "新房装修流程", "category": "消费决策", "difficulty": "mid", "targetAudience": "首次购房者" },
+  { "id": 17, "topic": "ChatGPT 插件推荐", "category": "AI工具", "difficulty": "low", "targetAudience": "效率工具爱好者" },
+  { "id": 18, "topic": "冥想入门指南", "category": "情绪共鸣", "difficulty": "mid", "targetAudience": "压力大人群" },
+  { "id": 19, "topic": "跨境电商选品", "category": "知识科普", "difficulty": "high", "targetAudience": "电商创业者" },
+  { "id": 20, "topic": "字体设计教程", "category": "知识科普", "difficulty": "mid", "targetAudience": "设计初学者" }
+]

@@ -1,4 +1,4 @@
-import type { Platform, ContentType } from "./types";
+import type { Platform, ContentType, EmotionTone } from "./types";
 
 export const PLATFORM_CONFIG: Record<
   Platform,
@@ -119,3 +119,39 @@ export const STYLE_COLORS = [
   "bg-emerald-100 text-emerald-800",
   "bg-fuchsia-100 text-fuchsia-800",
 ];
+
+export const EMOTION_TONE_CONFIG: Record<
+  EmotionTone,
+  { label: string; icon: string; description: string }
+> = {
+  urgent: {
+    label: "紧迫感",
+    icon: "⚡",
+    description: "制造立即行动的时间压力，但避免夸张恐吓",
+  },
+  curious: {
+    label: "好奇心",
+    icon: "🔍",
+    description: "制造信息缺口，引导继续阅读或观看",
+  },
+  humorous: {
+    label: "幽默",
+    icon: "😄",
+    description: "用轻松反差降低阅读门槛，适合生活化表达",
+  },
+  emotional: {
+    label: "情绪共鸣",
+    icon: "💭",
+    description: "强调用户身份、处境和真实感受",
+  },
+  authoritative: {
+    label: "权威",
+    icon: "📌",
+    description: "突出经验、方法论、案例和可信度",
+  },
+  rebellious: {
+    label: "反常识",
+    icon: "🔥",
+    description: "通过反直觉观点制造讨论欲和停留欲",
+  },
+};
