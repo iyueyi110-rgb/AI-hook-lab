@@ -56,15 +56,28 @@ function saveEvents(events: AnalyticsEvent[]): void {
   }
 }
 
+function sendServerEvent(event: AnalyticsEvent): void {
+  if (typeof window === "undefined") return;
+  fetch("/api/dashboard/events", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(event),
+  }).catch(() => {
+    // Dashboard persistence should never block the creator workflow.
+  });
+}
+
 export function useAnalytics() {
   const [events, setEvents] = useState<AnalyticsEvent[]>(loadEvents);
 
   const track = useCallback((type: EventType, payload?: Record<string, unknown>) => {
+    const event = { type, timestamp: new Date().toISOString(), payload };
     setEvents((prev) => {
-      const next = [...prev, { type, timestamp: new Date().toISOString(), payload }];
+      const next = [...prev, event];
       saveEvents(next);
       return next.slice(-MAX_EVENTS);
     });
+    sendServerEvent(event);
   }, []);
 
   const stats = useMemo((): AnalyticsStats => {

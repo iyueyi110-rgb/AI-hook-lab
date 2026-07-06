@@ -87,6 +87,7 @@ export default function Home() {
         hookCount: response.hooks.length,
         avgScore,
         durationMs: Date.now() - startedAt,
+        badcaseTags: response.hooks.flatMap((hook) => hook.badcaseTags ?? []),
       });
     } catch {
       setError({

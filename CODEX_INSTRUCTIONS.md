@@ -1061,3 +1061,34 @@ node eval/run-eval.mjs
 - 实施完成后只创建本地 commit：`Enhance AI Hook Lab creator workflow`
 - 不 push。
 - 不 stage `.env.local`，API Key 只保留在本地环境文件。
+
+---
+
+## v5 实施补充：后端数据看板
+
+### 目标
+
+新增真正服务端文件存储的数据看板，用于本地 Demo 演示创作者工作台的运营指标。前台继续使用 3000，后台看板使用 3001 端口和 `/dashboard` 路径。
+
+### 数据存储
+
+- 事件写入 `data/dashboard-events.json`。
+- `data/*.json` 必须被 `.gitignore` 忽略。
+- 只提交 `data` 目录以外的代码与脚本，不提交真实运行数据。
+
+### API
+
+- `POST /api/dashboard/events`：写入 analytics 事件。
+- `GET /api/dashboard/summary`：返回聚合后的 totals、rates、averages、platformDistribution、badcaseDistribution、recentEvents。
+- Route Handler 必须使用 Node.js runtime，以支持本地文件系统读写。
+
+### 页面与启动
+
+- `/dashboard` 展示后端聚合数据，不读取浏览器 localStorage。
+- `start-ai-hook-dashboard.bat` 使用 `npm run dev -- -p 3001` 启动后台端口，并打开 `http://localhost:3001/dashboard`。
+- 保留 `start-ai-hook-lab.bat` 不动。
+
+### 提交约束
+
+- 实施完成后只创建本地 commit：`Add backend analytics dashboard`
+- 不 push。
