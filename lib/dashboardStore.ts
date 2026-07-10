@@ -1,5 +1,8 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { Pool } from "pg";
+
+export type DashboardDataOrigin = "real_operation" | "evaluation" | "simulated";
 
 export type DashboardEventType =
   | "generation_start"
@@ -16,6 +19,7 @@ export interface DashboardEvent {
   id: string;
   type: DashboardEventType;
   timestamp: string;
+  dataOrigin: DashboardDataOrigin;
   payload?: Record<string, unknown>;
 }
 
@@ -44,6 +48,7 @@ export interface DashboardSummary {
   };
   platformDistribution: Record<string, number>;
   promptVersionDistribution: Record<string, number>;
+  dataOriginDistribution: Record<DashboardDataOrigin, number>;
   badcaseDistribution: Record<string, number>;
   platformMetrics: Record<
     string,
@@ -60,6 +65,8 @@ export interface DashboardSummary {
 const DATA_DIR = path.join(process.cwd(), "data");
 const EVENTS_FILE = path.join(DATA_DIR, "dashboard-events.json");
 const MAX_EVENTS = 5000;
+const DATA_ORIGINS = new Set<DashboardDataOrigin>(["real_operation", "evaluation", "simulated"]);
+const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) : null;
 const EVENT_TYPES = new Set<DashboardEventType>([
   "generation_start",
   "generation_complete",
@@ -109,11 +116,23 @@ function parseEvent(raw: unknown): DashboardEvent | null {
     id: String(item.id ?? createId()),
     type: item.type,
     timestamp: String(item.timestamp ?? new Date().toISOString()),
+    dataOrigin: DATA_ORIGINS.has(item.dataOrigin as DashboardDataOrigin)
+      ? (item.dataOrigin as DashboardDataOrigin)
+      : "real_operation",
     payload,
   };
 }
 
 export async function readDashboardEvents(): Promise<DashboardEvent[]> {
+  if (pool) {
+    await ensurePostgresStore();
+    const result = await pool.query<DashboardEvent>(
+      `SELECT id, type, timestamp::text, data_origin AS "dataOrigin", payload
+       FROM dashboard_event ORDER BY timestamp DESC LIMIT $1`,
+      [MAX_EVENTS]
+    );
+    return result.rows.reverse().map(parseEvent).filter((event): event is DashboardEvent => Boolean(event));
+  }
   await ensureStore();
   try {
     const raw = await readFile(EVENTS_FILE, "utf8");
@@ -129,6 +148,7 @@ export async function appendDashboardEvent(input: {
   type: unknown;
   timestamp?: unknown;
   payload?: unknown;
+  dataOrigin?: unknown;
 }): Promise<DashboardEvent> {
   if (!isDashboardEventType(input.type)) {
     throw new Error("Unsupported dashboard event type");
@@ -141,16 +161,44 @@ export async function appendDashboardEvent(input: {
       typeof input.timestamp === "string" && input.timestamp
         ? input.timestamp
         : new Date().toISOString(),
+    dataOrigin: DATA_ORIGINS.has(input.dataOrigin as DashboardDataOrigin)
+      ? (input.dataOrigin as DashboardDataOrigin)
+      : "real_operation",
     payload:
       input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
         ? (input.payload as Record<string, unknown>)
         : undefined,
   };
 
+  if (pool) {
+    await ensurePostgresStore();
+    await pool.query(
+      `INSERT INTO dashboard_event (id, type, timestamp, data_origin, payload)
+       VALUES ($1, $2, $3, $4, $5::jsonb)`,
+      [event.id, event.type, event.timestamp, event.dataOrigin, JSON.stringify(event.payload ?? {})]
+    );
+    return event;
+  }
+
   const events = await readDashboardEvents();
   const next = [...events, event].slice(-MAX_EVENTS);
   await writeFile(EVENTS_FILE, JSON.stringify(next, null, 2), "utf8");
   return event;
+}
+
+async function ensurePostgresStore(): Promise<void> {
+  if (!pool) return;
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS dashboard_event (
+      id TEXT PRIMARY KEY,
+      type TEXT NOT NULL,
+      timestamp TIMESTAMPTZ NOT NULL,
+      data_origin TEXT NOT NULL,
+      payload JSONB NOT NULL DEFAULT '{}'::jsonb
+    );
+    CREATE INDEX IF NOT EXISTS dashboard_event_timestamp_idx ON dashboard_event(timestamp);
+    CREATE INDEX IF NOT EXISTS dashboard_event_origin_idx ON dashboard_event(data_origin, timestamp);
+  `);
 }
 
 export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSummary {
@@ -183,6 +231,11 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
 
   const platformDistribution: Record<string, number> = {};
   const promptVersionDistribution: Record<string, number> = {};
+  const dataOriginDistribution: Record<DashboardDataOrigin, number> = {
+    real_operation: 0,
+    evaluation: 0,
+    simulated: 0,
+  };
   const badcaseDistribution: Record<string, number> = {};
   const platformMetricDraft: Record<
     string,
@@ -229,6 +282,10 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     platformMetricDraft[platform] = draft;
   });
 
+  events.forEach((event) => {
+    dataOriginDistribution[event.dataOrigin] += 1;
+  });
+
   const platformMetrics = Object.fromEntries(
     Object.entries(platformMetricDraft).map(([platform, metric]) => [
       platform,
@@ -271,6 +328,7 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     },
     platformDistribution,
     promptVersionDistribution,
+    dataOriginDistribution,
     badcaseDistribution,
     platformMetrics,
     recentEvents: events.slice(-20).reverse(),

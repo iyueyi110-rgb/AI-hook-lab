@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const BASE_URL = process.env.EVAL_BASE_URL ?? "http://localhost:3000";
 const DEFAULT_PLATFORMS = ["xiaohongshu", "douyin", "bilibili"];
+const DEFAULT_VARIANTS = ["baseline", "candidate"];
 
 function parseArgs() {
   const args = process.argv.slice(2);
@@ -12,6 +13,7 @@ function parseArgs() {
     limit: undefined,
     platforms: DEFAULT_PLATFORMS,
     delay: 2000,
+    variants: DEFAULT_VARIANTS,
   };
 
   for (let i = 0; i < args.length; i += 1) {
@@ -25,6 +27,9 @@ function parseArgs() {
       i += 1;
     } else if (arg === "--delay" && next) {
       options.delay = Number(next);
+      i += 1;
+    } else if (arg === "--variants" && next) {
+      options.variants = next.split(",").map((item) => item.trim()).filter(Boolean);
       i += 1;
     }
   }
@@ -41,7 +46,7 @@ function csvCell(value) {
   return `"${text.replace(/"/g, '""')}"`;
 }
 
-async function generate(topic, platform) {
+async function generate(topic, platform, promptVariant) {
   const res = await fetch(`${BASE_URL}/api/generate`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -51,6 +56,7 @@ async function generate(topic, platform) {
       contentType: "video",
       targetAudience: topic.targetAudience,
       wordLimit: 80,
+      promptVariant,
     }),
   });
 
@@ -74,10 +80,11 @@ async function main() {
       "category",
       "difficulty",
       "platform",
+      "prompt_variant",
       "hook_index",
       "style",
       "text",
-      "overallScore",
+      "model_self_score",
       "impact",
       "platformFit",
       "actionability",
@@ -98,12 +105,18 @@ async function main() {
 
   for (const topic of selectedTopics) {
     for (const platform of options.platforms) {
-      const label = `[${topic.id}] ${topic.topic} @ ${platform}`;
+      for (const promptVariant of options.variants) {
+      const label = `[${topic.id}] ${topic.topic} @ ${platform} / ${promptVariant}`;
       process.stdout.write(`${label} ... `);
       try {
-        const data = await generate(topic, platform);
+        await fetch(`${BASE_URL}/api/dashboard/events`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", "X-Eval-Token": process.env.EVAL_INGEST_TOKEN ?? "" },
+          body: JSON.stringify({ type: "generation_start", dataOrigin: "evaluation", payload: { platform, promptVariant, topicId: topic.id } }),
+        }).catch(() => undefined);
+        const data = await generate(topic, platform, promptVariant);
         fs.writeFileSync(
-          path.join(resultsDir, `${topic.id}-${platform}.json`),
+          path.join(resultsDir, `${topic.id}-${platform}-${promptVariant}.json`),
           JSON.stringify(data, null, 2),
           "utf8"
         );
@@ -115,6 +128,7 @@ async function main() {
               topic.category,
               topic.difficulty,
               platform,
+              promptVariant,
               index + 1,
               hook.style,
               hook.text,
@@ -135,6 +149,7 @@ async function main() {
         });
 
         console.log(`OK (${data.hooks?.length ?? 0} hooks)`);
+        await fetch(`${BASE_URL}/api/dashboard/events`, { method: "POST", headers: { "Content-Type": "application/json", "X-Eval-Token": process.env.EVAL_INGEST_TOKEN ?? "" }, body: JSON.stringify({ type: "generation_complete", dataOrigin: "evaluation", payload: { platform, templateVersion: data.templateVersion, promptVariant, hookCount: data.hooks?.length ?? 0, avgScore: data.hooks?.reduce((sum, hook) => sum + Number(hook.overallScore ?? 0), 0) / Math.max(1, data.hooks?.length ?? 0), badcaseTags: data.hooks?.flatMap((hook) => hook.badcaseTags ?? []) ?? [] } }) }).catch(() => undefined);
         successCount += 1;
       } catch (error) {
         console.log(`FAIL (${error.message})`);
@@ -142,6 +157,7 @@ async function main() {
       }
 
       if (options.delay > 0) await sleep(options.delay);
+      }
     }
   }
 

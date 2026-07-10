@@ -68,4 +68,5 @@ export interface GenerateRequest {
   targetAudience?: string;
   emotionTone?: EmotionTone | "";
   wordLimit?: number;
+  promptVariant?: "baseline" | "candidate";
 }

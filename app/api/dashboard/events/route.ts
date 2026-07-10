@@ -6,10 +6,19 @@ export const runtime = "nodejs";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const serializedPayload = JSON.stringify(body?.payload ?? {});
+    if (serializedPayload.length > 10_000) {
+      return NextResponse.json({ ok: false, error: "事件 payload 过大" }, { status: 413 });
+    }
+    const evalToken = request.headers.get("x-eval-token");
+    const canWriteEvaluation = Boolean(
+      process.env.EVAL_INGEST_TOKEN && evalToken === process.env.EVAL_INGEST_TOKEN
+    );
     const event = await appendDashboardEvent({
       type: body?.type,
       timestamp: body?.timestamp,
       payload: body?.payload,
+      dataOrigin: canWriteEvaluation ? body?.dataOrigin : "real_operation",
     });
     return NextResponse.json({ ok: true, event });
   } catch (error) {

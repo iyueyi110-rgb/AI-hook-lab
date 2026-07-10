@@ -8,7 +8,7 @@ import {
 
 export const GENERATION_MODEL = "deepseek-chat";
 export const PROMPT_TEMPLATE_VERSION = "v1.0.0";
-export const DEFAULT_PROMPT_VARIANT = "baseline";
+export const DEFAULT_PROMPT_VARIANT = "candidate";
 export const DEFAULT_WORD_LIMIT = 80;
 export const MAX_TOPIC_LENGTH = 120;
 export const MAX_TARGET_AUDIENCE_LENGTH = 200;
@@ -22,13 +22,13 @@ export interface PromptBundle {
   styles: string[];
 }
 
-export function buildSystemPrompt(): string {
+export function buildSystemPrompt(promptVariant = DEFAULT_PROMPT_VARIANT): string {
   return `你是一位社交媒体文案策略师，专门帮助短视频/图文创作者解决开头 3 秒吸引力不足、平台语气难迁移、灵感难复用的问题。
 
 你的任务：根据输入变量，为指定平台生成 10 个不同风格的 Hook 开头，并给出可比较、可解释的评分。
 
 当前 Prompt 模板版本：${PROMPT_TEMPLATE_VERSION}
-当前 Prompt 变体：${DEFAULT_PROMPT_VARIANT}
+当前 Prompt 变体：${promptVariant}
 
 好 Hook 的四条标准：
 1. 前 3 秒钩子：开头 15 字内制造好奇心缺口、认知冲突或情绪共振。
@@ -54,7 +54,8 @@ export function buildUserPrompt(
   platformLabel: string,
   platformDesc: string,
   contentTypeLabel: string,
-  styles: string[]
+  styles: string[],
+  promptVariant = DEFAULT_PROMPT_VARIANT
 ): string {
   const { topic, targetAudience, emotionTone, wordLimit } = req;
   const toneInstruction = emotionTone
@@ -104,13 +105,19 @@ ${styles.map((style, index) => `${index + 1}. ${style}`).join("\n")}
 - overallScore 是四维评分的综合分，整数 1-10。
 - 平台语气要明显区分，不能把同一句话换平台名复用。
 - reasoning 必须引用 Hook 中的具体词句，禁止空泛套话。
-- 只返回 JSON。`;
+- 只返回 JSON。
+${
+  promptVariant === "candidate"
+    ? "- candidate 变体额外要求：前 15 字必须出现具体对象、数字、反差或明确情绪之一；reasoning 必须逐字引用 Hook；避免同一开头句式重复超过 2 次。"
+    : ""
+}`;
 }
 
 export function buildPromptBundle(req: GenerateRequest): PromptBundle {
   const platformInfo = PLATFORM_CONFIG[req.platform];
   const styles = PLATFORM_STYLES[req.platform];
   const contentTypeInfo = CONTENT_TYPE_CONFIG[req.contentType];
+  const promptVariant = req.promptVariant === "baseline" ? "baseline" : "candidate";
 
   if (!platformInfo || !styles) {
     throw new Error(`不支持的平台：${req.platform}`);
@@ -123,14 +130,15 @@ export function buildPromptBundle(req: GenerateRequest): PromptBundle {
   return {
     model: GENERATION_MODEL,
     templateVersion: PROMPT_TEMPLATE_VERSION,
-    promptVariant: DEFAULT_PROMPT_VARIANT,
-    systemPrompt: buildSystemPrompt(),
+    promptVariant,
+    systemPrompt: buildSystemPrompt(promptVariant),
     userPrompt: buildUserPrompt(
       req,
       platformInfo.label,
       platformInfo.description,
       contentTypeInfo.label,
-      styles
+      styles,
+      promptVariant
     ),
     styles,
   };

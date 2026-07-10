@@ -37,7 +37,7 @@ DEEPSEEK_API_KEY=your_api_key_here
 http://localhost:3001/dashboard
 ```
 
-看板数据来自服务端文件 `data/dashboard-events.json`。该文件由 `/api/dashboard/events` 写入，用于统计生成完成率、收藏率、采用率、复制率、平台适配满意度、平台分布和 bad case 分布。运行数据已被 `.gitignore` 忽略，不会进入提交。
+看板事件优先写入 `DATABASE_URL` 指向的 PostgreSQL；本地未配置数据库时才降级到 `data/dashboard-events.json`。看板区分真实操作、评测集和模拟数据来源，并将模型自评分与人工平台满意度分开，模型分不代表真实点击效果。
 
 ### 手动启动
 
@@ -87,10 +87,11 @@ npm run build
 node eval/run-eval.mjs --limit 1 --platforms xiaohongshu --delay 0
 ```
 
-完整评测会调用 60 组生成请求：
+默认评测用同一主题和平台成对运行 `baseline/candidate`，共 120 组生成请求：
 
 ```bash
 node eval/run-eval.mjs
+npm run eval:summarize
 ```
 
 ## 环境变量
@@ -98,6 +99,8 @@ node eval/run-eval.mjs
 | 名称 | 说明 |
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key，用于服务端生成 Hook |
+| `DATABASE_URL` | PostgreSQL 连接串；生产环境用于持久化事件 |
+| `EVAL_INGEST_TOKEN` | 评测脚本写入 `evaluation` 来源事件的共享令牌 |
 
 ## 技术栈
 

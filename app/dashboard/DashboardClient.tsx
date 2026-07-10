@@ -29,6 +29,7 @@ function emptySummary(): DashboardSummary {
     },
     platformDistribution: {},
     promptVersionDistribution: {},
+    dataOriginDistribution: { real_operation: 0, evaluation: 0, simulated: 0 },
     badcaseDistribution: {},
     platformMetrics: {},
     recentEvents: [],
@@ -155,9 +156,9 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
         hint: `${summary.totals.hooksCopied} 次复制`,
       },
       {
-        label: "平均点击欲望",
+        label: "模型自评分均值",
         value: summary.averages.avgScore ? `${summary.averages.avgScore}/10` : "暂无",
-        hint: "按每组平均分统计",
+        hint: "仅用于候选排序，不代表真实点击效果",
       },
       {
         label: "平台适配满意度",
@@ -186,7 +187,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               <p className="text-xs font-semibold text-[#002FA7]">AI Hook Lab</p>
               <h1 className="mt-2 text-3xl font-semibold tracking-tight">后端数据看板</h1>
               <p className="mt-2 text-sm text-gray-500">
-                服务端文件数据：生成、收藏、采用、满意度和 bad case。
+                持久化事件数据：区分真实操作、评测集和模拟事件；模型自评分与人工反馈分开展示。
               </p>
             </div>
             <button
@@ -214,6 +215,8 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
         <section className="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
           <Distribution title="平台分布" items={summary.platformDistribution} />
           <Distribution title="Bad case 分布" items={summary.badcaseDistribution} />
+          <Distribution title="数据来源" items={summary.dataOriginDistribution} />
+          <Distribution title="Prompt 版本" items={summary.promptVersionDistribution} />
         </section>
 
         <section className="mt-5 border border-gray-200 bg-white">
@@ -226,6 +229,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
                 <tr className="border-b border-gray-200 text-xs text-gray-500">
                   <th className="px-4 py-3 font-medium">时间</th>
                   <th className="px-4 py-3 font-medium">事件</th>
+                  <th className="px-4 py-3 font-medium">数据来源</th>
                   <th className="px-4 py-3 font-medium">平台</th>
                   <th className="px-4 py-3 font-medium">数量/评分</th>
                   <th className="px-4 py-3 font-medium">Hook</th>
@@ -234,7 +238,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               <tbody>
                 {summary.recentEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-gray-400">
+                    <td colSpan={6} className="px-4 py-8 text-center text-gray-400">
                       暂无服务端事件
                     </td>
                   </tr>
@@ -245,6 +249,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
                       <td className="px-4 py-3 font-medium text-gray-900">
                         {formatEventType(event.type)}
                       </td>
+                      <td className="px-4 py-3 text-gray-600">{event.dataOrigin}</td>
                       <td className="px-4 py-3 text-gray-600">
                         {String(event.payload?.platform ?? "-")}
                       </td>
