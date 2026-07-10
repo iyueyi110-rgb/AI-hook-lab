@@ -7,7 +7,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types lib/dashboardStore.test.ts",
+    "test": "node --test --experimental-strip-types lib/*.test.ts",
     "eval:run": "node eval/run-eval.mjs",
     "eval:summarize": "node eval/summarize-results.mjs"
   },
