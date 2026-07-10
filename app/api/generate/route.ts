@@ -193,6 +193,7 @@ export async function POST(request: NextRequest) {
     targetAudience: trimmedTargetAudience || undefined,
     emotionTone: body.emotionTone || undefined,
     wordLimit,
+    promptVariant: body.promptVariant === "baseline" ? "baseline" : "candidate",
   };
 
   let promptBundle: ReturnType<typeof buildPromptBundle>;
