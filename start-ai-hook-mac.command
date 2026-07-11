@@ -8,6 +8,7 @@ DEFAULT_PORT_CANDIDATES="3000 3010 3011 3012 3020"
 PORT_CANDIDATES="${AI_HOOK_PORT_CANDIDATES:-$DEFAULT_PORT_CANDIDATES}"
 SERVER_PID=""
 PORT=""
+REUSED_EXISTING=0
 
 fail() {
   echo
@@ -32,12 +33,31 @@ cleanup() {
     wait "$SERVER_PID" >/dev/null 2>&1 || true
   fi
 
-  echo "AI Hook Lab 已停止。"
+  if [[ "$REUSED_EXISTING" == "1" ]]; then
+    echo "已保留原有 AI Hook Lab 服务。"
+  else
+    echo "AI Hook Lab 已停止。"
+  fi
   exit "$exit_code"
 }
 
 port_in_use() {
   lsof -nP -iTCP:"$1" -sTCP:LISTEN >/dev/null 2>&1
+}
+
+find_existing_ai_hook_port() {
+  local candidate
+  for candidate in $PORT_CANDIDATES; do
+    if [[ ! "$candidate" =~ ^[0-9]+$ ]] || ((candidate < 1 || candidate > 65535)); then
+      continue
+    fi
+    if port_in_use "$candidate" &&
+      curl --silent --fail --max-time 2 "http://localhost:$candidate" | grep -q "AI Hook Lab"; then
+      PORT="$candidate"
+      return 0
+    fi
+  done
+  return 1
 }
 
 choose_port() {
@@ -106,6 +126,18 @@ main() {
     if [[ "${AI_HOOK_SKIP_OPEN:-0}" != "1" ]]; then
       open -a TextEdit ".env.local"
     fi
+  fi
+
+  if find_existing_ai_hook_port; then
+    REUSED_EXISTING=1
+    HOME_URL="http://localhost:$PORT"
+    DASHBOARD_URL="$HOME_URL/dashboard"
+    echo "复用已运行的 AI Hook Lab：$HOME_URL"
+    if [[ "${AI_HOOK_SKIP_OPEN:-0}" != "1" ]]; then
+      open "$HOME_URL"
+      open "$DASHBOARD_URL"
+    fi
+    return 0
   fi
 
   choose_port || fail "端口均被占用，已检查：$PORT_CANDIDATES"

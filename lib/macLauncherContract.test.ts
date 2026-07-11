@@ -18,6 +18,8 @@ test("macOS launcher covers setup, port selection, readiness and cleanup", async
   assert.match(source, /3000 3010 3011 3012 3020/);
   assert.match(source, /lsof/);
   assert.match(source, /curl/);
+  assert.match(source, /find_existing_ai_hook_port/);
+  assert.match(source, /复用已运行的 AI Hook Lab/);
   assert.match(source, /npm run dev -- -p/);
   assert.match(source, /open .*HOME_URL/);
   assert.match(source, /open .*DASHBOARD_URL/);
