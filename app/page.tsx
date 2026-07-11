@@ -13,12 +13,19 @@ import type {
 import { useHistory } from "@/hooks/useHistory";
 import { useFavorites } from "@/hooks/useFavorites";
 import { useAnalytics } from "@/hooks/useAnalytics";
-import { Header } from "@/components/Header";
+import { AppHeader } from "@/components/AppHeader";
 import { InputPanel } from "@/components/InputPanel";
 import { SkeletonCards } from "@/components/SkeletonCards";
 import { HookGrid } from "@/components/HookGrid";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { FavoritesDrawer } from "@/components/FavoritesDrawer";
+import {
+  ArrowClockwise,
+  CheckCircle,
+  Copy,
+  Heart,
+  WarningCircle,
+} from "@phosphor-icons/react";
 
 export default function Home() {
   const [topic, setTopic] = React.useState("");
@@ -216,147 +223,126 @@ export default function Home() {
 
   return (
     <div className="min-h-screen">
-      <Header />
+      <AppHeader
+        favoritesCount={favorites.length}
+        historyCount={history.length}
+        onOpenFavorites={() => setFavoritesOpen(true)}
+        onOpenHistory={() => setHistoryOpen(true)}
+      />
 
-      <main className="pb-20">
+      <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 pb-20 md:px-6 md:py-8 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
         <InputPanel
-          topic={topic}
-          setTopic={setTopic}
-          platform={platform}
-          setPlatform={setPlatform}
           contentType={contentType}
-          setContentType={setContentType}
-          targetAudience={targetAudience}
-          setTargetAudience={setTargetAudience}
           emotionTone={emotionTone}
+          onGenerate={handleGenerate}
+          platform={platform}
+          setContentType={setContentType}
           setEmotionTone={setEmotionTone}
-          wordLimit={wordLimit}
+          setPlatform={setPlatform}
+          setTargetAudience={setTargetAudience}
+          setTopic={setTopic}
           setWordLimit={setWordLimit}
           status={status}
-          onGenerate={handleGenerate}
+          targetAudience={targetAudience}
+          topic={topic}
+          wordLimit={wordLimit}
         />
 
-        {/* Loading */}
-        {status === "loading" && <SkeletonCards />}
+        <div aria-live="polite" className="min-w-0 space-y-4">
+          {status === "idle" && (
+            <section className="editorial-panel overflow-hidden">
+              <div className="grid min-h-[430px] content-between p-5 sm:p-7">
+                <div>
+                  <p className="text-xs font-extrabold text-[var(--color-accent)]">你的候选区</p>
+                  <h2 className="mt-4 max-w-[14ch] text-3xl font-black leading-[1.05] tracking-[-0.035em] sm:text-4xl">
+                    从十个角度里，选出真正能用的一个。
+                  </h2>
+                  <p className="mt-4 max-w-[58ch] text-sm leading-6 text-[var(--color-graphite)]">
+                    生成后，这里会先突出最佳候选，再列出其余版本。模型评分负责解释差异，收藏和采用记录由你决定。
+                  </p>
+                </div>
+                <div className="mt-12 grid gap-px overflow-hidden rounded-[10px] border border-[var(--color-line)] bg-[var(--color-line)] sm:grid-cols-3">
+                  {[
+                    { icon: Copy, title: "快速比较", text: "同一主题一次查看 10 种表达。" },
+                    { icon: Heart, title: "沉淀收藏", text: "把高价值 Hook 留作复用资产。" },
+                    { icon: CheckCircle, title: "记录采用", text: "将真实选择反馈到运营复盘。" },
+                  ].map(({ icon: Icon, title, text }) => (
+                    <div className="bg-[var(--color-surface)] p-4" key={title}>
+                      <Icon aria-hidden="true" className="text-[var(--color-accent)]" size={19} weight="bold" />
+                      <h3 className="mt-3 text-sm font-extrabold">{title}</h3>
+                      <p className="mt-1 text-xs leading-5 text-[var(--color-muted)]">{text}</p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </section>
+          )}
 
-        {/* Error */}
-        {status === "error" && error && (
-          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
-            <div className="border-b border-[#E4002B] p-4 md:p-6">
-              <p className="mb-2 text-xs font-bold uppercase text-[#E4002B]">
-                生成失败
-              </p>
-              <h3 className="text-lg font-black text-[#111111]">
-                {error.title}
-              </h3>
-              <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-neutral-600">
+          {status === "loading" && <SkeletonCards />}
+
+          {status === "error" && error && (
+            <section className="editorial-panel p-5 sm:p-6" role="alert">
+              <WarningCircle aria-hidden="true" className="text-[var(--color-danger)]" size={28} weight="fill" />
+              <p className="mt-4 text-xs font-extrabold text-[var(--color-danger)]">生成未完成</p>
+              <h2 className="mt-2 text-xl font-black">{error.title}</h2>
+              <p className="mt-2 max-w-[62ch] whitespace-pre-wrap text-sm leading-6 text-[var(--color-graphite)]">
                 {error.message}
               </p>
-              <button
-                onClick={handleGenerate}
-                className="mt-4 border border-[#111111] bg-white px-4 py-2 text-xs font-bold text-[#111111] transition-colors hover:border-[#E4002B] hover:text-[#E4002B]"
-              >
-                重试
+              <button className="button-secondary mt-5" onClick={handleGenerate} type="button">
+                <ArrowClockwise aria-hidden="true" size={16} weight="bold" />
+                重试生成
               </button>
-              </div>
-          </div>
-        )}
+            </section>
+          )}
 
-        {/* Results */}
-        {status === "done" && hooks.length > 0 && (
-          <HookGrid
-            hooks={hooks}
-            favoritedIds={favorites}
-            onToggleFavorite={handleToggleFavorite}
-            onToggleAdopted={handleToggleAdopted}
-            onSetSatisfaction={handleSetSatisfaction}
-            onCopyHook={handleCopyHook}
-            analysis={analysis}
-          />
-        )}
+          {status === "done" && hooks.length > 0 && (
+            <HookGrid
+              analysis={analysis}
+              favoritedIds={favorites}
+              hooks={hooks}
+              onCopyHook={handleCopyHook}
+              onSetSatisfaction={handleSetSatisfaction}
+              onToggleAdopted={handleToggleAdopted}
+              onToggleFavorite={handleToggleFavorite}
+            />
+          )}
 
-        {/* Bottom action bar */}
-        {status === "done" && (
-          <div className="mx-auto mt-8 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
-            <div className="grid grid-cols-2 md:grid-cols-4">
+          {status === "done" && (
+            <section aria-label="本地使用指标" className="editorial-panel grid grid-cols-2 overflow-hidden sm:grid-cols-4">
               {[
                 { label: "生成完成率", value: `${stats.completionRate}%` },
                 { label: "收藏率", value: `${stats.favoriteRate}%` },
                 { label: "采用率", value: `${stats.adoptionRate}%` },
-                {
-                  label: "平台适配满意度",
-                  value: stats.avgPlatformSatisfaction
-                    ? `${stats.avgPlatformSatisfaction}/5`
-                    : "暂无",
-                },
+                { label: "平台适配", value: stats.avgPlatformSatisfaction ? `${stats.avgPlatformSatisfaction}/5` : "暂无" },
               ].map((item) => (
-                <div key={item.label} className="border-b border-neutral-300 p-4 md:border-r md:last:border-r-0">
-                  <p className="text-xs font-bold text-neutral-500">{item.label}</p>
-                  <p className="mt-1 text-2xl font-black text-[#111111]">{item.value}</p>
+                <div className="border-b border-r border-[var(--color-line)] p-3.5 last:border-r-0 sm:border-b-0" key={item.label}>
+                  <p className="text-[11px] font-bold text-[var(--color-muted)]">{item.label}</p>
+                  <p className="mt-1 text-xl font-black tabular-nums">{item.value}</p>
                 </div>
               ))}
-            </div>
-            <div className="flex flex-wrap items-center justify-center gap-px bg-neutral-300">
-            <button
-              onClick={() => setHistoryOpen(true)}
-              className="inline-flex min-h-12 items-center gap-2 bg-white px-4 py-2 text-sm font-bold text-[#111111] transition-colors hover:text-[#E4002B]"
-            >
-              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2} aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-              </svg>
-              历史记录
-              {history.length > 0 && (
-                <span className="ml-0.5 text-xs text-neutral-500">({history.length})</span>
-              )}
-            </button>
-            <button
-              onClick={() => setFavoritesOpen(true)}
-              className="inline-flex min-h-12 items-center gap-2 bg-white px-4 py-2 text-sm font-bold text-[#111111] transition-colors hover:text-[#E4002B]"
-            >
-              <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M20.8 4.6c-1.6-1.5-4.1-1.5-5.7 0L12 7.7 8.9 4.6c-1.6-1.5-4.1-1.5-5.7 0-1.6 1.6-1.6 4.1 0 5.7L12 19l8.8-8.7c1.6-1.6 1.6-4.1 0-5.7Z" />
-              </svg>
-              收藏夹
-              {favorites.length > 0 && (
-                <span className="ml-0.5 text-xs text-neutral-500">({favorites.length})</span>
-              )}
-            </button>
-            </div>
-          </div>
-        )}
-
-        {/* Empty state */}
-        {status === "idle" && (
-          <div className="mx-auto mt-10 w-full max-w-5xl border-x border-b border-neutral-300 bg-white px-4 py-8 md:px-6">
-            <p className="text-xs font-bold uppercase text-neutral-500">
-              等待输入
-            </p>
-            <p className="mt-2 max-w-2xl text-sm leading-6 text-neutral-600">
-              输入主题后即可生成。平台、内容类型和高级选项会共同影响 Hook 的语气、结构和长度。
-            </p>
-          </div>
-        )}
+            </section>
+          )}
+        </div>
       </main>
 
-      {/* Drawers */}
       <HistoryDrawer
-        open={historyOpen}
-        onClose={() => setHistoryOpen(false)}
         history={history}
         loaded={historyLoaded}
+        onClearAll={clearAll}
+        onClose={() => setHistoryOpen(false)}
         onDelete={deleteHistory}
         onToggleFavorite={toggleHistoryFavorite}
-        onClearAll={clearAll}
+        open={historyOpen}
       />
       <FavoritesDrawer
-        open={favoritesOpen}
-        onClose={() => setFavoritesOpen(false)}
-        history={history}
         favoritedIds={favorites}
-        onToggleFavorite={handleToggleFavorite}
-        onToggleAdopted={handleToggleAdopted}
-        onSetSatisfaction={handleSetSatisfaction}
+        history={history}
+        onClose={() => setFavoritesOpen(false)}
         onCopyHook={handleCopyHook}
+        onSetSatisfaction={handleSetSatisfaction}
+        onToggleAdopted={handleToggleAdopted}
+        onToggleFavorite={handleToggleFavorite}
+        open={favoritesOpen}
       />
     </div>
   );

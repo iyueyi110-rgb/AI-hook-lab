@@ -1,38 +1,58 @@
 "use client";
 
-import { useState, useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Check,
+  CheckCircle,
+  Copy,
+  Heart,
+  Medal,
+} from "@phosphor-icons/react";
 import type { HookResult, PlatformSatisfaction } from "@/lib/types";
 
 interface HookCardProps {
   hook: HookResult;
   styleIndex: number;
   isFavorited: boolean;
+  featured?: boolean;
   onToggleFavorite: (id: string) => void;
   onToggleAdopted: (id: string) => void;
   onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
   onCopy?: (hook: HookResult) => void;
 }
 
+const scoreLabels: Array<{ key: keyof NonNullable<HookResult["scores"]>; label: string }> = [
+  { key: "impact", label: "冲击力" },
+  { key: "platformFit", label: "平台匹配" },
+  { key: "actionability", label: "可操作性" },
+  { key: "shareability", label: "传播力" },
+];
+
 export function HookCard({
   hook,
   styleIndex,
   isFavorited,
+  featured = false,
   onToggleFavorite,
   onToggleAdopted,
   onSetSatisfaction,
   onCopy,
 }: HookCardProps) {
   const [copied, setCopied] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const overallScore = hook.overallScore ?? hook.score ?? 7;
-  const finalBadcaseTags = hook.badcaseTags ?? [];
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
 
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(hook.text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     } catch {
-      // fallback for older browsers
       const textarea = document.createElement("textarea");
       textarea.value = hook.text;
       textarea.style.position = "fixed";
@@ -41,184 +61,135 @@ export function HookCard({
       textarea.select();
       document.execCommand("copy");
       document.body.removeChild(textarea);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
     }
+
+    setCopied(true);
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopied(false), 1600);
     onCopy?.(hook);
   }, [hook, onCopy]);
 
-  const scoreColor =
-    overallScore >= 8
-      ? "text-[#111111]"
-      : overallScore >= 6
-      ? "text-[#E4002B]"
-      : "text-[#E4002B]";
-
   return (
-    <div className="group flex h-full flex-col bg-white p-5 transition-colors hover:bg-neutral-50">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <span className="block text-xs font-bold uppercase text-[#E4002B]">
-            {String(styleIndex + 1).padStart(2, "0")}
-          </span>
-          <span className="mt-1 block text-sm font-black text-[#111111]">
-            {hook.style}
-          </span>
-        </div>
-        <div className="flex items-center gap-2 opacity-100 md:opacity-0 md:transition-opacity md:group-hover:opacity-100">
-          <button
-            onClick={handleCopy}
-            className={`border px-2.5 py-1.5 text-xs font-bold transition-colors ${
-              copied
-                ? "border-[#111111] bg-[#111111] text-white"
-                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
-            }`}
-            aria-label={copied ? "已复制" : "复制"}
-          >
-            {copied ? "已复制" : "复制"}
-          </button>
-          <button
-            onClick={() => onToggleFavorite(hook.id)}
-            className={`grid h-8 w-8 place-items-center border transition-colors ${
-              isFavorited
-                ? "border-[#E4002B] bg-[#E4002B] text-white"
-                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
-            }`}
-            aria-label={isFavorited ? "取消收藏" : "收藏"}
-          >
-            <svg
-              className="h-4 w-4"
-              viewBox="0 0 24 24"
-              fill={isFavorited ? "currentColor" : "none"}
-              stroke="currentColor"
-              strokeWidth="2"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M20.8 4.6c-1.6-1.5-4.1-1.5-5.7 0L12 7.7 8.9 4.6c-1.6-1.5-4.1-1.5-5.7 0-1.6 1.6-1.6 4.1 0 5.7L12 19l8.8-8.7c1.6-1.6 1.6-4.1 0-5.7Z" />
-            </svg>
-          </button>
-        </div>
-      </div>
-
-      <p className="mb-4 text-base font-semibold leading-7 text-[#111111]">
-        {hook.text}
-      </p>
-
-      <div className="mb-2 mt-auto flex items-center justify-between">
-        <span className="text-xs font-bold text-neutral-500">点击欲望</span>
-        <span className={`text-xs font-semibold ${scoreColor}`}>
-          {overallScore}/10
-        </span>
-      </div>
-
-      {hook.scores ? (
-        <div className="space-y-1.5 mb-3">
-          {[
-            { key: "impact", label: "冲击力", value: hook.scores.impact },
-            { key: "platformFit", label: "平台匹配", value: hook.scores.platformFit },
-            { key: "actionability", label: "可操作性", value: hook.scores.actionability },
-            { key: "shareability", label: "传播力", value: hook.scores.shareability },
-          ].map((dim) => (
-            <div key={dim.key} className="flex items-center gap-2">
-              <span className="w-14 shrink-0 text-xs text-neutral-500">{dim.label}</span>
-              <div className="h-1 flex-1 overflow-hidden bg-neutral-200">
-                <div
-                  className={`h-full transition-all duration-500 ${
-                    dim.value >= 8
-                      ? "bg-[#111111]"
-                      : dim.value >= 6
-                      ? "bg-[#E4002B]"
-                      : "bg-[#E4002B]"
-                  }`}
-                  style={{ width: `${(dim.value / 10) * 100}%` }}
-                />
-              </div>
-              <span
-                className={`text-xs font-semibold w-7 text-right ${
-                  dim.value >= 8
-                    ? "text-[#111111]"
-                    : dim.value >= 6
-                    ? "text-[#E4002B]"
-                    : "text-[#E4002B]"
-                }`}
-              >
-                {dim.value}
+    <article
+      className={`border-b border-[var(--color-line)] bg-[var(--color-surface)] p-4 transition-colors last:border-b-0 sm:p-5 ${
+        featured ? "border-t-2 border-t-[var(--color-accent)]" : "hover:bg-[#fafaf8]"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            {featured ? (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-accent)] px-2.5 py-1 text-[11px] font-extrabold text-white">
+                <Medal aria-hidden="true" size={14} weight="fill" />
+                最佳候选
               </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="flex items-center gap-2 mb-3">
-          <div className="h-1.5 flex-1 overflow-hidden bg-neutral-200">
-            <div
-              className={`h-full transition-all duration-500 ${
-                overallScore >= 8
-                  ? "bg-[#111111]"
-                  : overallScore >= 6
-                  ? "bg-[#E4002B]"
-                  : "bg-[#E4002B]"
-              }`}
-              style={{ width: `${(overallScore / 10) * 100}%` }}
-            />
+            ) : (
+              <span className="text-xs font-black tabular-nums text-[var(--color-muted)]">
+                {String(styleIndex + 1).padStart(2, "0")}
+              </span>
+            )}
+            <span className="text-xs font-extrabold text-[var(--color-accent)]">{hook.style}</span>
+            {hook.adopted && (
+              <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-soft)] px-2 py-1 text-[11px] font-bold text-[var(--color-success)]">
+                <CheckCircle aria-hidden="true" size={13} weight="fill" />
+                已采用
+              </span>
+            )}
           </div>
+          <p className={`mt-3 max-w-[68ch] font-semibold text-[var(--color-ink)] text-pretty ${featured ? "text-lg leading-8" : "text-[15px] leading-7"}`}>
+            {hook.text}
+          </p>
         </div>
-      )}
-
-      {finalBadcaseTags.length > 0 && (
-        <div className="flex flex-wrap gap-1 mb-3">
-          {finalBadcaseTags.map((tag) => (
-            <span
-              key={tag}
-              className="border border-[#E4002B] bg-white px-1.5 py-0.5 text-xs font-bold text-[#E4002B]"
-            >
-              {tag}
-            </span>
-          ))}
-        </div>
-      )}
-
-      {/* Reasoning */}
-      <p className="mb-4 text-xs leading-5 text-neutral-500">{hook.reasoning}</p>
-
-      <div className="flex flex-col gap-3 border-t border-neutral-300 pt-3">
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-bold text-neutral-500">创作复用</span>
-          <button
-            type="button"
-            onClick={() => onToggleAdopted(hook.id)}
-            className={`border px-2.5 py-1.5 text-xs font-bold transition-colors ${
-              hook.adopted
-                ? "border-[#111111] bg-[#111111] text-white"
-                : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
-            }`}
-          >
-            {hook.adopted ? "已采用" : "标记采用"}
-          </button>
-        </div>
-
-        <div className="flex items-center justify-between gap-3">
-          <span className="text-xs font-bold text-neutral-500">平台适配</span>
-          <div className="flex items-center gap-1">
-            {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
-              <button
-                key={rating}
-                type="button"
-                onClick={() => onSetSatisfaction(hook.id, rating)}
-                className={`h-7 w-7 border text-xs font-bold transition-colors ${
-                  hook.platformSatisfaction === rating
-                    ? "border-[#E4002B] bg-[#E4002B] text-white"
-                    : "border-neutral-300 bg-white text-[#111111] hover:border-[#E4002B] hover:text-[#E4002B]"
-                }`}
-                aria-label={`平台适配满意度 ${rating} 分`}
-              >
-                {rating}
-              </button>
-            ))}
+        <div className="shrink-0 text-right">
+          <div className="text-2xl font-black leading-none tabular-nums tracking-[-0.04em]">
+            {overallScore}
           </div>
+          <div className="mt-1 text-[10px] font-bold text-[var(--color-muted)]">模型分 / 10</div>
         </div>
       </div>
-    </div>
+
+      <div className="mt-4 flex flex-wrap items-center gap-2">
+        <button className="button-secondary" onClick={handleCopy} type="button">
+          {copied ? <Check aria-hidden="true" size={16} weight="bold" /> : <Copy aria-hidden="true" size={16} weight="bold" />}
+          {copied ? "已复制" : "复制"}
+        </button>
+        <button
+          aria-pressed={isFavorited}
+          className={`button-secondary ${isFavorited ? "border-[var(--color-accent)] text-[var(--color-accent)]" : ""}`}
+          onClick={() => onToggleFavorite(hook.id)}
+          type="button"
+        >
+          <Heart aria-hidden="true" size={16} weight={isFavorited ? "fill" : "bold"} />
+          {isFavorited ? "已收藏" : "收藏"}
+        </button>
+        <button
+          aria-pressed={Boolean(hook.adopted)}
+          className={`button-secondary ${hook.adopted ? "border-[var(--color-success)] text-[var(--color-success)]" : ""}`}
+          onClick={() => onToggleAdopted(hook.id)}
+          type="button"
+        >
+          <CheckCircle aria-hidden="true" size={16} weight={hook.adopted ? "fill" : "bold"} />
+          {hook.adopted ? "取消采用" : "标记采用"}
+        </button>
+      </div>
+
+      {(hook.scores || hook.reasoning || hook.badcaseTags?.length) && (
+        <details className="group mt-4 border-t border-[var(--color-line)] pt-3">
+          <summary className="cursor-pointer list-none text-xs font-bold text-[var(--color-graphite)] hover:text-[var(--color-ink)]">
+            查看评分与理由
+            <span aria-hidden="true" className="ml-1 inline-block transition-transform group-open:rotate-45">+</span>
+          </summary>
+          <div className="mt-3 grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto]">
+            <div>
+              {hook.scores && (
+                <dl className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  {scoreLabels.map(({ key, label }) => (
+                    <div className="rounded-[8px] bg-[var(--color-surface-subtle)] px-3 py-2" key={key}>
+                      <dt className="text-[11px] font-semibold text-[var(--color-muted)]">{label}</dt>
+                      <dd className="mt-1 text-base font-black tabular-nums">{hook.scores?.[key]}</dd>
+                    </div>
+                  ))}
+                </dl>
+              )}
+              {hook.reasoning && (
+                <p className="mt-3 max-w-[70ch] text-xs leading-5 text-[var(--color-graphite)]">
+                  {hook.reasoning}
+                </p>
+              )}
+              {Boolean(hook.badcaseTags?.length) && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {hook.badcaseTags?.map((tag) => (
+                    <span className="rounded-full bg-[var(--color-warning-soft)] px-2 py-1 text-[11px] font-bold text-[var(--color-warning)]" key={tag}>
+                      {tag}
+                    </span>
+                  ))}
+                </div>
+              )}
+            </div>
+            <fieldset>
+              <legend className="text-[11px] font-bold text-[var(--color-muted)]">人工平台适配</legend>
+              <div className="mt-2 flex gap-1">
+                {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
+                  <button
+                    aria-label={`平台适配满意度 ${rating} 分`}
+                    aria-pressed={hook.platformSatisfaction === rating}
+                    className={`grid h-8 w-8 place-items-center rounded-[6px] border text-xs font-bold ${
+                      hook.platformSatisfaction === rating
+                        ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
+                        : "border-[var(--color-line)] bg-white text-[var(--color-graphite)] hover:border-[var(--color-ink)]"
+                    }`}
+                    key={rating}
+                    onClick={() => onSetSatisfaction(hook.id, rating)}
+                    type="button"
+                  >
+                    {rating}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+          </div>
+        </details>
+      )}
+    </article>
   );
 }

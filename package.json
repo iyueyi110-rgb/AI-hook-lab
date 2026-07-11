@@ -12,6 +12,7 @@
     "eval:summarize": "node eval/summarize-results.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "next": "16.2.9",
     "pg": "^8.22.0",
     "react": "19.2.4",

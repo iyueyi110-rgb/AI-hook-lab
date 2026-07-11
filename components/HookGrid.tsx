@@ -1,5 +1,7 @@
 "use client";
 
+import { Check, Copy, Lightbulb } from "@phosphor-icons/react";
+import { useEffect, useRef, useState } from "react";
 import type { GenerateResponse, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { HookCard } from "./HookCard";
 
@@ -22,12 +24,28 @@ export function HookGrid({
   onCopyHook,
   analysis,
 }: HookGridProps) {
+  const [copiedAll, setCopiedAll] = useState(false);
+  const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    },
+    [],
+  );
+
   if (hooks.length === 0) return null;
 
+  const bestHook = hooks.reduce((best, hook) => {
+    const score = hook.overallScore ?? hook.score ?? 0;
+    const bestScore = best.overallScore ?? best.score ?? 0;
+    return score > bestScore ? hook : best;
+  }, hooks[0]);
+  const remainingHooks = hooks.filter((hook) => hook.id !== bestHook.id);
+  const bestIndex = hooks.findIndex((hook) => hook.id === bestHook.id);
+
   const handleCopyAll = async () => {
-    const text = hooks
-      .map((h, i) => `${i + 1}. [${h.style}] ${h.text}`)
-      .join("\n\n");
+    const text = hooks.map((hook, index) => `${index + 1}. [${hook.style}] ${hook.text}`).join("\n\n");
     try {
       await navigator.clipboard.writeText(text);
     } catch {
@@ -40,55 +58,71 @@ export function HookGrid({
       document.execCommand("copy");
       document.body.removeChild(textarea);
     }
+    setCopiedAll(true);
+    if (copiedTimer.current) clearTimeout(copiedTimer.current);
+    copiedTimer.current = setTimeout(() => setCopiedAll(false), 1600);
   };
 
   return (
-    <section className="mx-auto mt-10 w-full max-w-5xl border-x border-t border-neutral-300 bg-white">
-      {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
-        <div className="border-b border-neutral-300 p-4 md:p-6">
-          <p className="mb-3 text-xs font-bold uppercase text-[#E4002B]">生成分析</p>
-          <div className="space-y-2 text-sm leading-6 text-[#111111]">
-            {analysis.bestStyle && <p>最佳风格：{analysis.bestStyle}</p>}
-            {analysis.commonPattern && <p>共性规律：{analysis.commonPattern}</p>}
-            {analysis.improvementTip && <p>优化建议：{analysis.improvementTip}</p>}
-          </div>
+    <section aria-labelledby="results-heading" className="editorial-panel overflow-hidden">
+      <div className="flex flex-col gap-3 border-b border-[var(--color-line)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <div>
+          <h2 className="text-lg font-black tracking-[-0.025em]" id="results-heading">
+            候选 Hook
+          </h2>
+          <p className="mt-1 text-xs text-[var(--color-muted)]">
+            {hooks.length} 个候选，模型分用于排序，最终选择由你决定。
+          </p>
         </div>
-      )}
-
-      <div className="flex items-center justify-between border-b border-neutral-300 px-4 py-4 md:px-6">
-        <h2 className="text-lg font-black text-[#111111]">
-          生成的 Hook
-          <span className="ml-2 text-sm font-bold text-neutral-500">
-            ({hooks.length} 个)
-          </span>
-        </h2>
-        <button
-          onClick={handleCopyAll}
-          className="text-sm font-bold text-[#E4002B] underline decoration-2 underline-offset-4 transition-colors hover:text-[#111111]"
-        >
-          一键复制全部
+        <button className="button-secondary self-start sm:self-auto" onClick={handleCopyAll} type="button">
+          {copiedAll ? <Check aria-hidden="true" size={16} weight="bold" /> : <Copy aria-hidden="true" size={16} weight="bold" />}
+          {copiedAll ? "已复制全部" : "复制全部"}
         </button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2">
-        {hooks.map((hook, index) => (
-          <div
-            key={hook.id}
-            className="border-b border-neutral-300 opacity-0 animate-[fadeIn_0.3s_ease-out_forwards] md:odd:border-r"
-            style={{ animationDelay: `${index * 80}ms` }}
-          >
-            <HookCard
-              hook={hook}
-              styleIndex={index}
-              isFavorited={favoritedIds.includes(hook.id)}
-              onToggleFavorite={onToggleFavorite}
-              onToggleAdopted={onToggleAdopted}
-              onSetSatisfaction={onSetSatisfaction}
-              onCopy={onCopyHook}
-            />
+      <HookCard
+        featured
+        hook={bestHook}
+        isFavorited={favoritedIds.includes(bestHook.id)}
+        onCopy={onCopyHook}
+        onSetSatisfaction={onSetSatisfaction}
+        onToggleAdopted={onToggleAdopted}
+        onToggleFavorite={onToggleFavorite}
+        styleIndex={bestIndex}
+      />
+
+      {remainingHooks.map((hook) => (
+        <HookCard
+          hook={hook}
+          isFavorited={favoritedIds.includes(hook.id)}
+          key={hook.id}
+          onCopy={onCopyHook}
+          onSetSatisfaction={onSetSatisfaction}
+          onToggleAdopted={onToggleAdopted}
+          onToggleFavorite={onToggleFavorite}
+          styleIndex={hooks.findIndex((item) => item.id === hook.id)}
+        />
+      ))}
+
+      {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
+        <div className="border-t border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-4 sm:p-5">
+          <div className="flex items-center gap-2 text-xs font-extrabold text-[var(--color-ink)]">
+            <Lightbulb aria-hidden="true" size={16} weight="fill" />
+            本轮生成分析
           </div>
-        ))}
-      </div>
+          <dl className="mt-3 grid gap-3 text-xs leading-5 text-[var(--color-graphite)] md:grid-cols-3">
+            {analysis.bestStyle && (
+              <div><dt className="font-bold text-[var(--color-ink)]">最佳风格</dt><dd className="mt-1">{analysis.bestStyle}</dd></div>
+            )}
+            {analysis.commonPattern && (
+              <div><dt className="font-bold text-[var(--color-ink)]">共性规律</dt><dd className="mt-1">{analysis.commonPattern}</dd></div>
+            )}
+            {analysis.improvementTip && (
+              <div><dt className="font-bold text-[var(--color-ink)]">优化建议</dt><dd className="mt-1">{analysis.improvementTip}</dd></div>
+            )}
+          </dl>
+        </div>
+      )}
     </section>
   );
 }
