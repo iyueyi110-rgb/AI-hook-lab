@@ -110,13 +110,32 @@ npm run build
 
 ## 评测命令
 
+完整离线评测系统位于：
+
+```bash
+http://localhost:3000/evaluation
+```
+
+首次使用先初始化存储和 60 条固定案例：
+
+```bash
+npm run eval:migrate
+npm run eval:seed
+```
+
+随后打开 `/evaluation/login` 创建首个管理员，再创建两名评测员和一名裁决员。系统支持 PostgreSQL 正式存储及本地 JSON 降级、Prompt 不可变版本、360 条候选生成、120 条正式结果、双人独立评分、60 案例 A/B 盲评、第三人裁决、Bad Case 复盘和七类导出。
+
+无 API Key 时必须显式选择 Mock 模式。Mock 数据会明显标注且不能形成 Prompt 升级结论。完整操作说明见 [docs/evaluation-system.md](docs/evaluation-system.md)。
+
+### API Smoke Test
+
 启动开发服务后，可以运行小样本评测：
 
 ```bash
 node eval/run-eval.mjs --limit 1 --platforms xiaohongshu --delay 0
 ```
 
-默认评测用同一主题和平台成对运行 `baseline/candidate`，共 120 组生成请求：
+旧脚本默认对同一主题和平台成对运行 `baseline/candidate`，仅用于接口 Smoke Test，不替代完整人工评测：
 
 ```bash
 node eval/run-eval.mjs
@@ -129,7 +148,7 @@ npm run eval:summarize
 | --- | --- |
 | `DEEPSEEK_API_KEY` | DeepSeek API Key，用于服务端生成 Hook |
 | `DATABASE_URL` | PostgreSQL 连接串；生产环境用于持久化事件 |
-| `EVAL_INGEST_TOKEN` | 评测脚本写入 `evaluation` 来源事件的共享令牌 |
+| `EVAL_INGEST_TOKEN` | 评测脚本写入 `evaluation_set` 来源事件的共享令牌 |
 
 ## 技术栈
 

@@ -18,7 +18,7 @@ export async function POST(request: NextRequest) {
       type: body?.type,
       timestamp: body?.timestamp,
       payload: body?.payload,
-      dataOrigin: canWriteEvaluation ? body?.dataOrigin : "real_operation",
+      dataOrigin: canWriteEvaluation && body?.dataOrigin === "simulation" ? "simulation" : canWriteEvaluation ? "evaluation_set" : "real_user",
     });
     return NextResponse.json({ ok: true, event });
   } catch (error) {

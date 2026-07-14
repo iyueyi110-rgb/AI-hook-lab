@@ -14,6 +14,7 @@ import {
 } from "@phosphor-icons/react";
 import { AppHeader } from "@/components/AppHeader";
 import type { DashboardSummary } from "@/lib/dashboardStore";
+import type { DataOrigin } from "@/lib/evaluation/types";
 
 function emptySummary(): DashboardSummary {
   return {
@@ -41,7 +42,7 @@ function emptySummary(): DashboardSummary {
     },
     platformDistribution: {},
     promptVersionDistribution: {},
-    dataOriginDistribution: { real_operation: 0, evaluation: 0, simulated: 0 },
+    dataOriginDistribution: { real_user: 0, evaluation_set: 0, simulation: 0 },
     badcaseDistribution: {},
     platformMetrics: {},
     recentEvents: [],
@@ -65,9 +66,9 @@ function formatEventType(type: string): string {
 
 function formatOrigin(origin: string): string {
   return {
-    real_operation: "真实操作",
-    evaluation: "评测集",
-    simulated: "模拟数据",
+    real_user: "真实用户",
+    evaluation_set: "离线评测",
+    simulation: "模拟事件",
   }[origin] ?? origin;
 }
 
@@ -153,6 +154,7 @@ function Distribution({ title, description, items, formatKey }: {
 
 export function DashboardClient({ initialSummary }: { initialSummary?: DashboardSummary }) {
   const [summary, setSummary] = useState<DashboardSummary>(initialSummary ?? emptySummary);
+  const [origin, setOrigin] = useState<DataOrigin>("real_user");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -160,7 +162,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
     setLoading(true);
     setError("");
     try {
-      const response = await fetch("/api/dashboard/summary", { cache: "no-store" });
+      const response = await fetch(`/api/dashboard/summary?origin=${origin}`, { cache: "no-store" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       setSummary((await response.json()) as DashboardSummary);
     } catch (cause) {
@@ -168,7 +170,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [origin]);
 
   const metricGroups = useMemo(
     () => [
@@ -201,13 +203,13 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
         description: "观察候选是否进入真实创作流程。",
         metrics: [
           {
-            label: "收藏率",
+            label: origin === "real_user" ? "真实收藏率" : origin === "evaluation_set" ? "评测收藏事件率" : "模拟收藏事件率",
             value: `${summary.rates.favoriteRate}%`,
             hint: `${summary.totals.hooksFavorited} 个收藏`,
             icon: <Heart aria-hidden="true" size={17} weight="bold" />,
           },
           {
-            label: "采用率",
+            label: origin === "real_user" ? "真实采用率" : origin === "evaluation_set" ? "评测采用事件率" : "模拟采用事件率",
             value: `${summary.rates.adoptionRate}%`,
             hint: `${summary.totals.hooksAdopted} 个采用`,
             icon: <CheckCircle aria-hidden="true" size={17} weight="bold" />,
@@ -239,7 +241,7 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
         ],
       },
     ],
-    [summary],
+    [origin, summary],
   );
 
   return (
@@ -256,10 +258,18 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               区分真实操作、评测集和模拟事件；模型自评分与人工反馈分别解释，不混算成效果结论。
             </p>
           </div>
-          <button className="button-secondary self-start md:self-auto" disabled={loading} onClick={loadSummary} type="button">
-            <ArrowClockwise aria-hidden="true" className={loading ? "animate-spin" : ""} size={16} weight="bold" />
-            {loading ? "刷新中" : "刷新数据"}
-          </button>
+          <div className="flex items-center gap-2 self-start md:self-auto">
+            <label className="sr-only" htmlFor="dashboard-origin">数据来源</label>
+            <select className="control-base min-h-10 px-3 text-xs font-bold" id="dashboard-origin" onChange={(event) => setOrigin(event.target.value as DataOrigin)} value={origin}>
+              <option value="real_user">真实用户数据</option>
+              <option value="evaluation_set">离线评测数据</option>
+              <option value="simulation">模拟事件</option>
+            </select>
+            <button className="button-secondary" disabled={loading} onClick={loadSummary} type="button">
+              <ArrowClockwise aria-hidden="true" className={loading ? "animate-spin" : ""} size={16} weight="bold" />
+              {loading ? "刷新中" : "刷新数据"}
+            </button>
+          </div>
         </header>
 
         {error && (

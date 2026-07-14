@@ -112,7 +112,7 @@ async function main() {
         await fetch(`${BASE_URL}/api/dashboard/events`, {
           method: "POST",
           headers: { "Content-Type": "application/json", "X-Eval-Token": process.env.EVAL_INGEST_TOKEN ?? "" },
-          body: JSON.stringify({ type: "generation_start", dataOrigin: "evaluation", payload: { platform, promptVariant, topicId: topic.id } }),
+          body: JSON.stringify({ type: "generation_start", dataOrigin: "evaluation_set", payload: { platform, promptVariant, topicId: topic.id } }),
         }).catch(() => undefined);
         const data = await generate(topic, platform, promptVariant);
         fs.writeFileSync(
@@ -149,7 +149,7 @@ async function main() {
         });
 
         console.log(`OK (${data.hooks?.length ?? 0} hooks)`);
-        await fetch(`${BASE_URL}/api/dashboard/events`, { method: "POST", headers: { "Content-Type": "application/json", "X-Eval-Token": process.env.EVAL_INGEST_TOKEN ?? "" }, body: JSON.stringify({ type: "generation_complete", dataOrigin: "evaluation", payload: { platform, templateVersion: data.templateVersion, promptVariant, hookCount: data.hooks?.length ?? 0, avgScore: data.hooks?.reduce((sum, hook) => sum + Number(hook.overallScore ?? 0), 0) / Math.max(1, data.hooks?.length ?? 0), badcaseTags: data.hooks?.flatMap((hook) => hook.badcaseTags ?? []) ?? [] } }) }).catch(() => undefined);
+        await fetch(`${BASE_URL}/api/dashboard/events`, { method: "POST", headers: { "Content-Type": "application/json", "X-Eval-Token": process.env.EVAL_INGEST_TOKEN ?? "" }, body: JSON.stringify({ type: "generation_complete", dataOrigin: "evaluation_set", payload: { platform, templateVersion: data.templateVersion, promptVariant, hookCount: data.hooks?.length ?? 0, avgScore: data.hooks?.reduce((sum, hook) => sum + Number(hook.overallScore ?? 0), 0) / Math.max(1, data.hooks?.length ?? 0), badcaseTags: data.hooks?.flatMap((hook) => hook.badcaseTags ?? []) ?? [] } }) }).catch(() => undefined);
         successCount += 1;
       } catch (error) {
         console.log(`FAIL (${error.message})`);

@@ -15,6 +15,7 @@
 /eval/results/*
 !/eval/results/.gitkeep
 /data/*.json
+/data/*.backup-*
 
 # next.js
 /.next/

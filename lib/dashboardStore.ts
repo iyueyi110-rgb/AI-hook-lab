@@ -1,8 +1,10 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import { normalizeDataOrigin } from "./evaluation/origins.ts";
+import type { DataOrigin } from "./evaluation/types.ts";
 
-export type DashboardDataOrigin = "real_operation" | "evaluation" | "simulated";
+export type DashboardDataOrigin = DataOrigin;
 
 export type DashboardEventType =
   | "generation_start"
@@ -65,7 +67,6 @@ export interface DashboardSummary {
 const DATA_DIR = path.join(process.cwd(), "data");
 const EVENTS_FILE = path.join(DATA_DIR, "dashboard-events.json");
 const MAX_EVENTS = 5000;
-const DATA_ORIGINS = new Set<DashboardDataOrigin>(["real_operation", "evaluation", "simulated"]);
 const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) : null;
 const EVENT_TYPES = new Set<DashboardEventType>([
   "generation_start",
@@ -112,15 +113,17 @@ function parseEvent(raw: unknown): DashboardEvent | null {
       ? (item.payload as Record<string, unknown>)
       : undefined;
 
-  return {
-    id: String(item.id ?? createId()),
-    type: item.type,
-    timestamp: String(item.timestamp ?? new Date().toISOString()),
-    dataOrigin: DATA_ORIGINS.has(item.dataOrigin as DashboardDataOrigin)
-      ? (item.dataOrigin as DashboardDataOrigin)
-      : "real_operation",
-    payload,
-  };
+  try {
+    return {
+      id: String(item.id ?? createId()),
+      type: item.type,
+      timestamp: String(item.timestamp ?? new Date().toISOString()),
+      dataOrigin: normalizeDataOrigin(item.dataOrigin),
+      payload,
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function readDashboardEvents(): Promise<DashboardEvent[]> {
@@ -161,9 +164,7 @@ export async function appendDashboardEvent(input: {
       typeof input.timestamp === "string" && input.timestamp
         ? input.timestamp
         : new Date().toISOString(),
-    dataOrigin: DATA_ORIGINS.has(input.dataOrigin as DashboardDataOrigin)
-      ? (input.dataOrigin as DashboardDataOrigin)
-      : "real_operation",
+    dataOrigin: normalizeDataOrigin(input.dataOrigin),
     payload:
       input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
         ? (input.payload as Record<string, unknown>)
@@ -201,7 +202,11 @@ async function ensurePostgresStore(): Promise<void> {
   `);
 }
 
-export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSummary {
+export function summarizeDashboardEvents(
+  allEvents: DashboardEvent[],
+  origin: DashboardDataOrigin = "real_user",
+): DashboardSummary {
+  const events = allEvents.filter((event) => event.dataOrigin === origin);
   const generationsStarted = events.filter((event) => event.type === "generation_start").length;
   const completed = events.filter((event) => event.type === "generation_complete");
   const generationsFailed = events.filter((event) => event.type === "generation_error").length;
@@ -232,9 +237,9 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
   const platformDistribution: Record<string, number> = {};
   const promptVersionDistribution: Record<string, number> = {};
   const dataOriginDistribution: Record<DashboardDataOrigin, number> = {
-    real_operation: 0,
-    evaluation: 0,
-    simulated: 0,
+    real_user: 0,
+    evaluation_set: 0,
+    simulation: 0,
   };
   const badcaseDistribution: Record<string, number> = {};
   const platformMetricDraft: Record<
@@ -282,7 +287,7 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
     platformMetricDraft[platform] = draft;
   });
 
-  events.forEach((event) => {
+  allEvents.forEach((event) => {
     dataOriginDistribution[event.dataOrigin] += 1;
   });
 
@@ -335,7 +340,7 @@ export function summarizeDashboardEvents(events: DashboardEvent[]): DashboardSum
   };
 }
 
-export async function getDashboardSummary(): Promise<DashboardSummary> {
+export async function getDashboardSummary(origin: DashboardDataOrigin = "real_user"): Promise<DashboardSummary> {
   const events = await readDashboardEvents();
-  return summarizeDashboardEvents(events);
+  return summarizeDashboardEvents(events, origin);
 }
