@@ -1,26 +1,25 @@
 export function SkeletonCards() {
   return (
-    <div className="w-full max-w-4xl mx-auto px-4 md:px-0 mt-10">
-      <p className="text-center text-sm text-gray-400 mb-6 animate-pulse">
-        正在分析平台风格，生成爆款 Hook...
-      </p>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {Array.from({ length: 6 }).map((_, i) => (
-          <div
-            key={i}
-            className="rounded-2xl border border-gray-100 bg-gray-50 p-5 space-y-3 animate-pulse"
-            style={{ animationDelay: `${i * 80}ms` }}
-          >
-            <div className="h-5 w-20 bg-gray-200 rounded-full" />
-            <div className="space-y-2">
-              <div className="h-4 bg-gray-200 rounded w-full" />
-              <div className="h-4 bg-gray-200 rounded w-3/4" />
+    <section aria-busy="true" aria-label="正在生成 Hook" className="editorial-panel overflow-hidden">
+      <div className="border-b border-[var(--color-line)] px-5 py-4">
+        <p className="text-sm font-extrabold">正在分析平台语气并生成候选</p>
+        <p className="mt-1 text-xs text-[var(--color-muted)]">历史记录不会被覆盖，请稍候。</p>
+      </div>
+      <div>
+        {Array.from({ length: 6 }).map((_, index) => (
+          <div className="border-b border-[var(--color-line)] p-5 last:border-b-0" key={index}>
+            <div className="soft-pulse h-3 w-24 rounded bg-[var(--color-line)]" />
+            <div className="mt-4 space-y-2">
+              <div className="soft-pulse h-4 w-full rounded bg-[var(--color-line)]" />
+              <div className="soft-pulse h-4 w-3/4 rounded bg-[var(--color-line)]" />
             </div>
-            <div className="h-2 bg-gray-200 rounded w-full" />
-            <div className="h-3 bg-gray-200 rounded w-2/3" />
+            <div className="mt-4 flex gap-2">
+              <div className="soft-pulse h-8 w-16 rounded bg-[var(--color-line)]" />
+              <div className="soft-pulse h-8 w-16 rounded bg-[var(--color-line)]" />
+            </div>
           </div>
         ))}
       </div>
-    </div>
+    </section>
   );
 }

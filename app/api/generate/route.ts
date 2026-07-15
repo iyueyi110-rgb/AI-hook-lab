@@ -1,66 +1,21 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { GenerateRequest, GenerateResponse, HookResult } from "@/lib/types";
-import { PLATFORM_CONFIG, PLATFORM_STYLES } from "@/lib/constants";
+import type {
+  GenerateRequest,
+  GenerateResponse,
+  HookResult,
+  HookScores,
+} from "@/lib/types";
+import {
+  buildPromptBundle,
+  calculateClickScore,
+  DEFAULT_WORD_LIMIT,
+  detectBadcases,
+  findSensitiveInputHints,
+  MAX_TARGET_AUDIENCE_LENGTH,
+  MAX_TOPIC_LENGTH,
+} from "@/lib/promptTemplates";
 
 const DEEPSEEK_BASE = "https://api.deepseek.com/v1";
-
-function buildSystemPrompt(): string {
-  return `你是一位世界级社交媒体文案专家，精通各大平台的爆款内容创作。
-
-你的任务：根据用户提供的信息，生成 10 个不同风格的爆款 Hook。
-
-核心要求：
-- 每个 Hook 必须精彩、引人入胜，让读者忍不住点击
-- 严格匹配对应风格的写作特征
-- scores 评分要真实客观（基于文本冲击力、好奇心缺口、情绪张力打分）
-- reasoning 要具体，不能用套话，要说清楚这个 hook 为什么能引爆
-
-输出格式：纯 JSON，不要 Markdown 包裹，不要额外文字。`;
-}
-
-function buildUserPrompt(
-  topic: string,
-  platform: string,
-  platformDesc: string,
-  contentType: string,
-  styles: string[]
-): string {
-  const styleInstructions = styles
-    .map((style, i) => `${i + 1}. ${style}`)
-    .join("\n");
-
-  return `## 任务信息
-
-**主题：** ${topic}
-**平台：** ${platform}（${platformDesc}）
-**内容类型：** ${contentType}
-
-## 平台风格池（必须每种风格各生成一个 Hook）
-
-${styleInstructions}
-
-## 输出格式
-
-返回严格 JSON：
-{
-  "hooks": [
-    {
-      "text": "Hook 文案",
-      "style": "风格名称（必须从风格池中选取）",
-      "score": 8,
-      "reasoning": "这个 hook 运用了XX手法，关键词XX制造了XX钩子，能吸引这个平台的XX人群"
-    }
-  ]
-}
-
-关键约束：
-- hooks 数组必须恰好 10 个
-- 每个风格只用一次，不要重复
-- text 长度控制在 15-80 字之间
-- score 是整数 1-10
-- reasoning 30-60 字，具体说明引爆原理
-- 只返回 JSON，不要任何额外说明文字`;
-}
 
 function generateId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -69,36 +24,99 @@ function generateId(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function validateAndCleanHooks(raw: unknown): HookResult[] {
+function clampScore(value: unknown, fallback = 7): number {
+  const n = Number(value);
+  if (Number.isNaN(n)) return fallback;
+  return Math.max(1, Math.min(10, Math.round(n)));
+}
+
+function normalizeScores(raw: Record<string, unknown>): HookScores {
+  return {
+    impact: clampScore(raw.impact),
+    platformFit: clampScore(raw.platformFit),
+    actionability: clampScore(raw.actionability),
+    shareability: clampScore(raw.shareability),
+  };
+}
+
+function calculateOverallScore(scores: HookScores): number {
+  return clampScore(
+    scores.impact * 0.35 +
+      scores.platformFit * 0.3 +
+      scores.actionability * 0.2 +
+      scores.shareability * 0.15
+  );
+}
+
+function normalizeWordLimit(value: unknown): number {
+  const parsed = Number(value);
+  if (Number.isNaN(parsed)) return DEFAULT_WORD_LIMIT;
+  return Math.max(30, Math.min(150, Math.round(parsed)));
+}
+
+function validateAndCleanHooks(
+  raw: unknown,
+  wordLimit: number,
+  templateVersion: string,
+  promptVariant: string
+): { hooks: HookResult[]; analysis?: GenerateResponse["analysis"] } {
   if (!raw || typeof raw !== "object") {
     throw new Error("Invalid JSON response from AI");
   }
 
   const obj = raw as Record<string, unknown>;
-  const hooks = obj.hooks;
+  const rawHooks = obj.hooks;
 
-  if (!Array.isArray(hooks) || hooks.length === 0) {
+  if (!Array.isArray(rawHooks) || rawHooks.length === 0) {
     throw new Error("AI 返回的 hooks 为空或格式错误");
   }
 
-  return hooks.slice(0, 10).map((h: Record<string, unknown>, index: number) => {
+  const hooks: HookResult[] = rawHooks.slice(0, 10).map((item, index) => {
+    const h = item as Record<string, unknown>;
     const text = String(h.text ?? "").trim();
     if (!text) {
       throw new Error(`第 ${index + 1} 个 Hook 文案为空`);
     }
 
-    let score = Number(h.score ?? 0);
-    if (isNaN(score)) score = 7;
-    score = Math.max(1, Math.min(10, Math.round(score)));
+    const rawOverall = h.overallScore ?? h.score;
+    const fallbackOverall = clampScore(rawOverall);
+    const scores =
+      h.scores && typeof h.scores === "object"
+        ? normalizeScores(h.scores as Record<string, unknown>)
+        : {
+            impact: fallbackOverall,
+            platformFit: fallbackOverall,
+            actionability: fallbackOverall,
+            shareability: fallbackOverall,
+          };
+    const overallScore =
+      rawOverall === undefined ? calculateOverallScore(scores) : clampScore(rawOverall);
+    const reasoning = String(h.reasoning ?? "").trim();
 
     return {
       id: generateId(),
       text,
       style: String(h.style ?? "未知风格").trim(),
-      score,
-      reasoning: String(h.reasoning ?? "").trim(),
+      reasoning,
+      clickScore: calculateClickScore(overallScore),
+      templateVersion,
+      promptVariant,
+      scores,
+      overallScore,
+      badcaseTags: detectBadcases({ text, reasoning, scores, wordLimit }),
     };
   });
+
+  const analysis =
+    obj.analysis && typeof obj.analysis === "object"
+      ? {
+          bestStyle: String((obj.analysis as Record<string, unknown>).bestStyle ?? ""),
+          commonPattern: String((obj.analysis as Record<string, unknown>).commonPattern ?? ""),
+          improvementTip: String((obj.analysis as Record<string, unknown>).improvementTip ?? ""),
+        }
+      : undefined;
+
+  return { hooks, analysis };
 }
 
 export async function POST(request: NextRequest) {
@@ -126,31 +144,70 @@ export async function POST(request: NextRequest) {
   }
 
   const { topic, platform, contentType } = body;
+  const trimmedTopic = topic?.trim() ?? "";
+  const trimmedTargetAudience = body.targetAudience?.trim() ?? "";
 
-  if (!topic?.trim()) {
+  if (!trimmedTopic) {
     return NextResponse.json(
       { error: "主题为空", message: "请输入一个主题" },
       { status: 400 }
     );
   }
 
-  const platformInfo = PLATFORM_CONFIG[platform];
-  const styles = PLATFORM_STYLES[platform];
-
-  if (!platformInfo || !styles) {
+  if (trimmedTopic.length > MAX_TOPIC_LENGTH) {
     return NextResponse.json(
-      { error: "平台不支持", message: `不支持的平台：${platform}` },
+      {
+        error: "主题过长",
+        message: `主题最多 ${MAX_TOPIC_LENGTH} 个字符，请缩短后重试`,
+      },
       { status: 400 }
     );
   }
 
-  const userPrompt = buildUserPrompt(
-    topic.trim(),
-    platformInfo.label,
-    platformInfo.description,
+  if (trimmedTargetAudience.length > MAX_TARGET_AUDIENCE_LENGTH) {
+    return NextResponse.json(
+      {
+        error: "目标用户描述过长",
+        message: `目标用户最多 ${MAX_TARGET_AUDIENCE_LENGTH} 个字符，请缩短后重试`,
+      },
+      { status: 400 }
+    );
+  }
+
+  const sensitiveHints = findSensitiveInputHints(`${trimmedTopic}\n${trimmedTargetAudience}`);
+  if (sensitiveHints.length > 0) {
+    return NextResponse.json(
+      {
+        error: "输入包含疑似个人信息",
+        message: `请移除或改写以下信息后再生成：${sensitiveHints.join("、")}`,
+      },
+      { status: 400 }
+    );
+  }
+
+  const wordLimit = normalizeWordLimit(body.wordLimit);
+  const requestBody: GenerateRequest = {
+    topic: trimmedTopic,
+    platform,
     contentType,
-    styles
-  );
+    targetAudience: trimmedTargetAudience || undefined,
+    emotionTone: body.emotionTone || undefined,
+    wordLimit,
+    promptVariant: body.promptVariant === "baseline" ? "baseline" : "candidate",
+  };
+
+  let promptBundle: ReturnType<typeof buildPromptBundle>;
+  try {
+    promptBundle = buildPromptBundle(requestBody);
+  } catch (error) {
+    return NextResponse.json(
+      {
+        error: error instanceof Error && error.message.includes("平台") ? "平台不支持" : "内容类型不支持",
+        message: error instanceof Error ? error.message : "请求参数不支持",
+      },
+      { status: 400 }
+    );
+  }
 
   try {
     const controller = new AbortController();
@@ -163,13 +220,13 @@ export async function POST(request: NextRequest) {
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        model: "deepseek-chat",
+        model: promptBundle.model,
         messages: [
-          { role: "system", content: buildSystemPrompt() },
-          { role: "user", content: userPrompt },
+          { role: "system", content: promptBundle.systemPrompt },
+          { role: "user", content: promptBundle.userPrompt },
         ],
-        temperature: 1.0,
-        max_tokens: 4096,
+        temperature: 0.95,
+        max_tokens: 8192,
         response_format: { type: "json_object" },
       }),
       signal: controller.signal,
@@ -224,7 +281,6 @@ export async function POST(request: NextRequest) {
     try {
       parsed = JSON.parse(choice);
     } catch {
-      // Try to extract JSON from markdown code blocks
       const jsonMatch = choice.match(/```(?:json)?\s*\n?([\s\S]*?)```/);
       if (jsonMatch) {
         try {
@@ -249,14 +305,26 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const hooks = validateAndCleanHooks(parsed);
+    const { hooks, analysis } = validateAndCleanHooks(
+      parsed,
+      wordLimit,
+      promptBundle.templateVersion,
+      promptBundle.promptVariant
+    );
 
     const response: GenerateResponse = {
       hooks,
       generatedAt: new Date().toISOString(),
-      topic: topic.trim(),
+      topic: trimmedTopic,
       platform,
       contentType,
+      model: promptBundle.model,
+      templateVersion: promptBundle.templateVersion,
+      promptVariant: promptBundle.promptVariant,
+      targetAudience: requestBody.targetAudience,
+      emotionTone: requestBody.emotionTone,
+      wordLimit,
+      analysis,
     };
 
     return NextResponse.json(response);

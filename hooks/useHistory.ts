@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback } from "react";
-import type { HistoryItem, GenerateResponse } from "@/lib/types";
+import type { HistoryItem, GenerateResponse, HookResult } from "@/lib/types";
 
 const STORAGE_KEY = "ai-hook-lab-history";
 const MAX_HISTORY = 50;
@@ -74,5 +74,24 @@ export function useHistory() {
     });
   }, []);
 
-  return { history, loaded, addToHistory, deleteHistory, clearAll, toggleFavorite };
+  const updateHook = useCallback((hookId: string, updater: (hook: HookResult) => HookResult) => {
+    setHistory((prev) => {
+      const updated = prev.map((item) => ({
+        ...item,
+        hooks: item.hooks.map((hook) => (hook.id === hookId ? updater(hook) : hook)),
+      }));
+      saveHistory(updated);
+      return updated;
+    });
+  }, []);
+
+  return {
+    history,
+    loaded,
+    addToHistory,
+    deleteHistory,
+    clearAll,
+    toggleFavorite,
+    updateHook,
+  };
 }

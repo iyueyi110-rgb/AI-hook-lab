@@ -1,8 +1,13 @@
 "use client";
 
-import type { HistoryItem } from "@/lib/types";
+import {
+  CheckCircle,
+  Copy,
+  Heart,
+} from "@phosphor-icons/react";
+import type { HistoryItem, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { PLATFORM_CONFIG } from "@/lib/constants";
-import { STYLE_COLORS } from "@/lib/constants";
+import { DrawerShell } from "./DrawerShell";
 
 interface FavoritesDrawerProps {
   open: boolean;
@@ -10,6 +15,9 @@ interface FavoritesDrawerProps {
   history: HistoryItem[];
   favoritedIds: string[];
   onToggleFavorite: (id: string) => void;
+  onToggleAdopted: (id: string) => void;
+  onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
+  onCopyHook: (hook: HookResult) => void;
 }
 
 export function FavoritesDrawer({
@@ -18,150 +26,113 @@ export function FavoritesDrawer({
   history,
   favoritedIds,
   onToggleFavorite,
+  onToggleAdopted,
+  onSetSatisfaction,
+  onCopyHook,
 }: FavoritesDrawerProps) {
-  if (!open) return null;
-
   const favoritedHooks = history
     .flatMap((item) =>
       item.hooks.map((hook) => ({
         ...hook,
         topic: item.topic,
         platform: item.platform,
-        generatedAt: item.generatedAt,
-        historyId: item.id,
-      }))
+      })),
     )
     .filter((hook) => favoritedIds.includes(hook.id));
 
+  const handleCopy = async (hook: (typeof favoritedHooks)[number]) => {
+    try {
+      await navigator.clipboard.writeText(hook.text);
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = hook.text;
+      textarea.style.position = "fixed";
+      textarea.style.opacity = "0";
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      document.body.removeChild(textarea);
+    }
+    onCopyHook(hook);
+  };
+
   return (
-    <>
-      {/* Backdrop */}
-      <div
-        className="fixed inset-0 bg-black/20 z-40 transition-opacity"
-        onClick={onClose}
-      />
-
-      {/* Drawer */}
-      <div
-        className={`fixed z-50 bg-white shadow-xl flex flex-col
-          top-0 right-0 h-full w-full max-w-md
-          max-md:bottom-0 max-md:top-auto max-md:h-[85vh] max-md:max-w-full max-md:rounded-t-2xl
-          md:border-l border-gray-100
-          animate-[slideInRight_0.25s_ease-out]
-          max-md:animate-[slideInUp_0.25s_ease-out]`}
-      >
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 shrink-0">
+    <DrawerShell
+      description={`${favoritedHooks.length} 个可复用候选`}
+      onClose={onClose}
+      open={open}
+      title="收藏夹"
+    >
+      {favoritedHooks.length === 0 ? (
+        <div className="grid min-h-56 place-items-center px-6 text-center">
           <div>
-            <h2 className="text-lg font-semibold text-gray-900">
-              收藏夹
-            </h2>
-            <p className="text-xs text-gray-400 mt-0.5">
-              {favoritedHooks.length} 个收藏
-            </p>
+            <Heart aria-hidden="true" className="mx-auto text-[var(--color-line-strong)]" size={30} />
+            <p className="mt-4 text-sm font-extrabold">还没有收藏的 Hook</p>
+            <p className="mt-1 text-xs leading-5 text-[var(--color-muted)]">在候选中点击收藏，把好开头沉淀为创作资产。</p>
           </div>
-          <button
-            onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 transition-colors p-1 rounded-lg hover:bg-gray-50"
-            aria-label="关闭"
-          >
-            <svg
-              className="w-5 h-5"
-              fill="none"
-              viewBox="0 0 24 24"
-              stroke="currentColor"
-              strokeWidth={2}
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                d="M6 18L18 6M6 6l12 12"
-              />
-            </svg>
-          </button>
         </div>
+      ) : (
+        <div>
+          {favoritedHooks.map((hook) => (
+            <article className="border-b border-[var(--color-line)] p-5 last:border-b-0 md:p-6" key={hook.id}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 text-[11px] font-bold">
+                  <span className="text-[var(--color-accent)]">{hook.style}</span>
+                  <span className="text-[var(--color-muted)]">{PLATFORM_CONFIG[hook.platform]?.label}</span>
+                </div>
+                <span className="text-xs font-black tabular-nums">{hook.overallScore ?? hook.score ?? "?"}/10</span>
+              </div>
+              <p className="mt-3 text-sm font-semibold leading-6 text-[var(--color-ink)]">{hook.text}</p>
+              <p className="mt-2 truncate text-[11px] text-[var(--color-muted)]">主题：{hook.topic}</p>
 
-        {/* List */}
-        <div className="flex-1 overflow-y-auto">
-          {favoritedHooks.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-center px-4">
-              <p className="text-4xl mb-3">💜</p>
-              <p className="text-sm text-gray-400">还没有收藏的 Hook</p>
-              <p className="text-xs text-gray-300 mt-1">
-                点击结果卡片上的 ♡ 来收藏
-              </p>
-            </div>
-          ) : (
-            <div className="divide-y divide-gray-50">
-              {favoritedHooks.map((hook) => {
-                const colorClass =
-                  STYLE_COLORS[
-                    [...new Set(favoritedHooks.map((h) => h.style))]
-                      .indexOf(hook.style) % STYLE_COLORS.length
-                  ] ?? STYLE_COLORS[0];
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="button-secondary" onClick={() => handleCopy(hook)} type="button">
+                  <Copy aria-hidden="true" size={15} weight="bold" />复制
+                </button>
+                <button
+                  aria-pressed={Boolean(hook.adopted)}
+                  className={`button-secondary ${hook.adopted ? "border-[var(--color-success)] text-[var(--color-success)]" : ""}`}
+                  onClick={() => onToggleAdopted(hook.id)}
+                  type="button"
+                >
+                  <CheckCircle aria-hidden="true" size={15} weight={hook.adopted ? "fill" : "bold"} />
+                  {hook.adopted ? "已采用" : "标记采用"}
+                </button>
+                <button
+                  aria-label="取消收藏"
+                  className="button-secondary border-[var(--color-accent)] text-[var(--color-accent)]"
+                  onClick={() => onToggleFavorite(hook.id)}
+                  type="button"
+                >
+                  <Heart aria-hidden="true" size={15} weight="fill" />取消收藏
+                </button>
+              </div>
 
-                const handleCopy = async (text: string) => {
-                  try {
-                    await navigator.clipboard.writeText(text);
-                  } catch {
-                    const textarea = document.createElement("textarea");
-                    textarea.value = text;
-                    textarea.style.position = "fixed";
-                    textarea.style.opacity = "0";
-                    document.body.appendChild(textarea);
-                    textarea.select();
-                    document.execCommand("copy");
-                    document.body.removeChild(textarea);
-                  }
-                };
-
-                return (
-                  <div key={hook.id} className="px-5 py-3.5">
-                    <div className="flex items-center justify-between mb-1">
-                      <div className="flex items-center gap-2">
-                        <span
-                          className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${colorClass}`}
-                        >
-                          {hook.style}
-                        </span>
-                        <span className="text-xs text-gray-400">
-                          {PLATFORM_CONFIG[hook.platform]?.emoji}{" "}
-                          {PLATFORM_CONFIG[hook.platform]?.label}
-                        </span>
-                      </div>
-                      <span className="text-xs font-semibold text-gray-500">
-                        {hook.score}/10
-                      </span>
-                    </div>
-                    <p className="text-sm text-gray-700 leading-relaxed mb-2">
-                      {hook.text}
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-xs text-gray-300">
-                        主题：{hook.topic}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => handleCopy(hook.text)}
-                          className="text-xs text-gray-400 hover:text-gray-600 transition-colors cursor-pointer"
-                        >
-                          复制
-                        </button>
-                        <button
-                          onClick={() => onToggleFavorite(hook.id)}
-                          className="text-sm text-rose-500 cursor-pointer"
-                        >
-                          ♥
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          )}
+              <fieldset className="mt-4">
+                <legend className="text-[11px] font-bold text-[var(--color-muted)]">人工平台适配</legend>
+                <div className="mt-2 flex gap-1">
+                  {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
+                    <button
+                      aria-label={`平台适配满意度 ${rating} 分`}
+                      aria-pressed={hook.platformSatisfaction === rating}
+                      className={`grid h-8 w-8 place-items-center rounded-[6px] border text-xs font-bold ${
+                        hook.platformSatisfaction === rating
+                          ? "border-[var(--color-ink)] bg-[var(--color-ink)] text-white"
+                          : "border-[var(--color-line)] bg-white text-[var(--color-graphite)] hover:border-[var(--color-ink)]"
+                      }`}
+                      key={rating}
+                      onClick={() => onSetSatisfaction(hook.id, rating)}
+                      type="button"
+                    >
+                      {rating}
+                    </button>
+                  ))}
+                </div>
+              </fieldset>
+            </article>
+          ))}
         </div>
-      </div>
-    </>
+      )}
+    </DrawerShell>
   );
 }
