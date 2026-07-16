@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowClockwise,
@@ -265,6 +266,10 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
+            <Link className="button-secondary" href="/evaluation">
+              <Flask aria-hidden="true" size={16} weight="bold" />
+              离线评测
+            </Link>
             <button className="button-secondary" disabled={loading} onClick={loadSummary} type="button">
               <ArrowClockwise aria-hidden="true" className={loading ? "animate-spin" : ""} size={16} weight="bold" />
               {loading ? "刷新中" : "刷新数据"}

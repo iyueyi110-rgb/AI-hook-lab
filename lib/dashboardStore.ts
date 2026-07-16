@@ -1,8 +1,13 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
+import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants.ts";
 import { normalizeDataOrigin } from "./evaluation/origins.ts";
 import type { DataOrigin } from "./evaluation/types.ts";
+import {
+  assertProductionDatabaseConfigured,
+  getConfiguredDatabaseUrl,
+} from "./persistence.ts";
 
 export type DashboardDataOrigin = DataOrigin;
 
@@ -67,7 +72,8 @@ export interface DashboardSummary {
 const DATA_DIR = path.join(process.cwd(), "data");
 const EVENTS_FILE = path.join(DATA_DIR, "dashboard-events.json");
 const MAX_EVENTS = 5000;
-const pool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, max: 3 }) : null;
+const databaseUrl = getConfiguredDatabaseUrl();
+const pool = databaseUrl ? new Pool({ connectionString: databaseUrl, max: 3 }) : null;
 const EVENT_TYPES = new Set<DashboardEventType>([
   "generation_start",
   "generation_complete",
@@ -79,6 +85,188 @@ const EVENT_TYPES = new Set<DashboardEventType>([
   "hook_unadopted",
   "platform_satisfaction",
 ]);
+const PLATFORMS = new Set(Object.keys(PLATFORM_CONFIG));
+const CONTENT_TYPES = new Set(Object.keys(CONTENT_TYPE_CONFIG));
+const PROMPT_VARIANTS = new Set(["baseline", "candidate"]);
+const BADCASE_TAGS = new Set([
+  "too_long",
+  "too_short",
+  "clickbait_risk",
+  "too_generic",
+  "weak_reasoning",
+  "platform_mismatch",
+]);
+const GENERATION_ERROR_CATEGORIES = new Set([
+  "API Key 未配置",
+  "请求格式错误",
+  "主题为空",
+  "主题过长",
+  "目标用户描述过长",
+  "输入包含疑似个人信息",
+  "平台不支持",
+  "内容类型不支持",
+  "API Key 无效",
+  "请求太频繁",
+  "AI 服务异常",
+  "AI 返回为空",
+  "JSON 解析失败",
+  "请求超时",
+  "生成失败",
+  "网络错误",
+]);
+const MAX_ANALYTICS_STRING_LENGTH = 100;
+const MAX_HOOK_ID_LENGTH = 128;
+const MAX_TOPIC_ID = 1_000_000;
+const MAX_HOOK_COUNT = 100;
+const MAX_GENERATION_DURATION_MS = 600_000;
+const MAX_BADCASE_TAGS = 60;
+
+interface PayloadFieldRule {
+  persist?: boolean;
+  validate(value: unknown, field: string): unknown;
+}
+
+interface EventPayloadSchema {
+  fields: Record<string, PayloadFieldRule>;
+  required: readonly string[];
+}
+
+function invalidPayload(field: string): never {
+  throw new Error(`Invalid dashboard event payload field: ${field}`);
+}
+
+function enumRule(values: ReadonlySet<string>): PayloadFieldRule {
+  return {
+    validate(value, field) {
+      if (typeof value !== "string" || !values.has(value)) invalidPayload(field);
+      return value;
+    },
+  };
+}
+
+function stringRule(maxLength: number, persist = true): PayloadFieldRule {
+  return {
+    persist,
+    validate(value, field) {
+      if (typeof value !== "string" || value.length === 0 || value.length > maxLength) {
+        invalidPayload(field);
+      }
+      return value;
+    },
+  };
+}
+
+function numberRule(min: number, max: number, integer = false): PayloadFieldRule {
+  return {
+    validate(value, field) {
+      if (
+        typeof value !== "number" ||
+        !Number.isFinite(value) ||
+        value < min ||
+        value > max ||
+        (integer && !Number.isInteger(value))
+      ) {
+        invalidPayload(field);
+      }
+      return value;
+    },
+  };
+}
+
+const platformRule = enumRule(PLATFORMS);
+const contentTypeRule = enumRule(CONTENT_TYPES);
+const promptVariantRule = enumRule(PROMPT_VARIANTS);
+const analyticsStringRule = stringRule(MAX_ANALYTICS_STRING_LENGTH);
+const hookIdRule = stringRule(MAX_HOOK_ID_LENGTH);
+const clickScoreRule = numberRule(0, 100);
+const interactionContextFields: Record<string, PayloadFieldRule> = {
+  platform: platformRule,
+  contentType: contentTypeRule,
+  templateVersion: analyticsStringRule,
+  promptVariant: promptVariantRule,
+  clickScore: clickScoreRule,
+};
+const interactionFields: Record<string, PayloadFieldRule> = {
+  hookId: hookIdRule,
+  ...interactionContextFields,
+};
+const badcaseTagsRule: PayloadFieldRule = {
+  validate(value, field) {
+    if (
+      !Array.isArray(value) ||
+      value.length > MAX_BADCASE_TAGS ||
+      value.some((tag) => typeof tag !== "string" || !BADCASE_TAGS.has(tag))
+    ) {
+      invalidPayload(field);
+    }
+    return [...value];
+  },
+};
+const generationErrorRule = enumRule(GENERATION_ERROR_CATEGORIES);
+const compatibilityTopicIdRule: PayloadFieldRule = {
+  persist: false,
+  validate(value, field) {
+    if (typeof value === "string" && value.length > 0 && value.length <= MAX_HOOK_ID_LENGTH) {
+      return value;
+    }
+    if (
+      typeof value === "number" &&
+      Number.isFinite(value) &&
+      Number.isInteger(value) &&
+      value >= 0 &&
+      value <= MAX_TOPIC_ID
+    ) {
+      return value;
+    }
+    invalidPayload(field);
+  },
+};
+
+const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
+  generation_start: {
+    fields: {
+      platform: platformRule,
+      contentType: contentTypeRule,
+      promptVariant: promptVariantRule,
+      topicId: compatibilityTopicIdRule,
+    },
+    required: ["platform"],
+  },
+  generation_complete: {
+    fields: {
+      platform: platformRule,
+      contentType: contentTypeRule,
+      model: analyticsStringRule,
+      templateVersion: analyticsStringRule,
+      promptVariant: promptVariantRule,
+      hookCount: numberRule(0, MAX_HOOK_COUNT, true),
+      avgScore: numberRule(0, 10),
+      avgClickScore: clickScoreRule,
+      durationMs: numberRule(0, MAX_GENERATION_DURATION_MS),
+      badcaseTags: badcaseTagsRule,
+    },
+    required: ["platform", "hookCount"],
+  },
+  generation_error: {
+    fields: { error: generationErrorRule },
+    required: ["error"],
+  },
+  hook_copied: {
+    fields: { ...interactionFields, style: analyticsStringRule },
+    required: ["hookId"],
+  },
+  hook_favorited: { fields: interactionFields, required: ["hookId"] },
+  hook_unfavorited: { fields: interactionFields, required: ["hookId"] },
+  hook_adopted: { fields: interactionFields, required: ["hookId"] },
+  hook_unadopted: { fields: interactionFields, required: ["hookId"] },
+  platform_satisfaction: {
+    fields: {
+      ...interactionFields,
+      rating: numberRule(1, 5, true),
+    },
+    required: ["hookId", "rating"],
+  },
+};
 
 function createId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -103,17 +291,38 @@ function isDashboardEventType(value: unknown): value is DashboardEventType {
   return typeof value === "string" && EVENT_TYPES.has(value as DashboardEventType);
 }
 
+function validateDashboardPayload(
+  eventType: DashboardEventType,
+  raw: unknown,
+): Record<string, unknown> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) invalidPayload("payload");
+
+  const schema = EVENT_PAYLOAD_SCHEMAS[eventType];
+  const input = raw as Record<string, unknown>;
+  const payload: Record<string, unknown> = {};
+
+  for (const [field, value] of Object.entries(input)) {
+    const rule = schema.fields[field];
+    if (!rule) invalidPayload(field);
+    if (value === undefined) continue;
+    const validated = rule.validate(value, field);
+    if (rule.persist !== false) payload[field] = validated;
+  }
+
+  for (const field of schema.required) {
+    if (!Object.hasOwn(input, field) || input[field] === undefined) invalidPayload(field);
+  }
+
+  return payload;
+}
+
 function parseEvent(raw: unknown): DashboardEvent | null {
   if (!raw || typeof raw !== "object") return null;
   const item = raw as Record<string, unknown>;
   if (!isDashboardEventType(item.type)) return null;
 
-  const payload =
-    item.payload && typeof item.payload === "object" && !Array.isArray(item.payload)
-      ? (item.payload as Record<string, unknown>)
-      : undefined;
-
   try {
+    const payload = validateDashboardPayload(item.type, item.payload);
     return {
       id: String(item.id ?? createId()),
       type: item.type,
@@ -127,6 +336,7 @@ function parseEvent(raw: unknown): DashboardEvent | null {
 }
 
 export async function readDashboardEvents(): Promise<DashboardEvent[]> {
+  assertProductionDatabaseConfigured();
   if (pool) {
     await ensurePostgresStore();
     const result = await pool.query<DashboardEvent>(
@@ -156,6 +366,9 @@ export async function appendDashboardEvent(input: {
   if (!isDashboardEventType(input.type)) {
     throw new Error("Unsupported dashboard event type");
   }
+  const dataOrigin = normalizeDataOrigin(input.dataOrigin);
+  const payload = validateDashboardPayload(input.type, input.payload);
+  assertProductionDatabaseConfigured();
 
   const event: DashboardEvent = {
     id: createId(),
@@ -164,11 +377,8 @@ export async function appendDashboardEvent(input: {
       typeof input.timestamp === "string" && input.timestamp
         ? input.timestamp
         : new Date().toISOString(),
-    dataOrigin: normalizeDataOrigin(input.dataOrigin),
-    payload:
-      input.payload && typeof input.payload === "object" && !Array.isArray(input.payload)
-        ? (input.payload as Record<string, unknown>)
-        : undefined,
+    dataOrigin,
+    payload,
   };
 
   if (pool) {

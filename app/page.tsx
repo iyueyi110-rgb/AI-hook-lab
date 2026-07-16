@@ -76,7 +76,7 @@ export default function Home() {
     setHooks([]);
     setAnalysis(null);
     const startedAt = Date.now();
-    track("generation_start", { topic: topic.trim(), platform, contentType });
+    track("generation_start", { platform, contentType });
 
     try {
       const res = await fetch("/api/generate", {

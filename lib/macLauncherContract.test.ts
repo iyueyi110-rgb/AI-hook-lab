@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import test from "node:test";
 
 const launcherUrl = new URL("../start-ai-hook-mac.command", import.meta.url);
+const dashboardLauncherUrl = new URL("../start-ai-hook-dashboard.bat", import.meta.url);
 const envExampleUrl = new URL("../.env.local.example", import.meta.url);
 
 test("macOS launcher covers setup, port selection, readiness and cleanup", async () => {
@@ -23,9 +24,19 @@ test("macOS launcher covers setup, port selection, readiness and cleanup", async
   assert.match(source, /npm run dev -- -p/);
   assert.match(source, /open .*HOME_URL/);
   assert.match(source, /open .*DASHBOARD_URL/);
-  assert.match(source, /\/dashboard/);
+  assert.match(source, /\$HOME_URL\/admin\/dashboard/);
+  assert.doesNotMatch(source, /\$HOME_URL\/dashboard/);
   assert.match(source, /trap cleanup/);
   assert.match(source, /AI_HOOK_SKIP_OPEN/);
+});
+
+test("Windows dashboard launcher opens the protected dashboard without changing startup behavior", async () => {
+  const source = await readFile(dashboardLauncherUrl, "utf8");
+
+  assert.match(source, /http:\/\/localhost:3001\/admin\/dashboard/);
+  assert.doesNotMatch(source, /http:\/\/localhost:300[01]\/dashboard/);
+  assert.match(source, /Start-Sleep -Seconds 3/);
+  assert.match(source, /npm run dev -- -p 3001/);
 });
 
 test("macOS launcher and environment example are safe local artifacts", async () => {

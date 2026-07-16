@@ -131,7 +131,7 @@ main() {
   if find_existing_ai_hook_port; then
     REUSED_EXISTING=1
     HOME_URL="http://localhost:$PORT"
-    DASHBOARD_URL="$HOME_URL/dashboard"
+    DASHBOARD_URL="$HOME_URL/admin/dashboard"
     echo "复用已运行的 AI Hook Lab：$HOME_URL"
     if [[ "${AI_HOOK_SKIP_OPEN:-0}" != "1" ]]; then
       open "$HOME_URL"
@@ -143,7 +143,7 @@ main() {
   choose_port || fail "端口均被占用，已检查：$PORT_CANDIDATES"
 
   HOME_URL="http://localhost:$PORT"
-  DASHBOARD_URL="$HOME_URL/dashboard"
+  DASHBOARD_URL="$HOME_URL/admin/dashboard"
 
   echo "使用端口：$PORT"
   echo "首页：$HOME_URL"

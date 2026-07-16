@@ -9,20 +9,28 @@ async function source(path: string): Promise<string> {
 }
 
 test("editorial workbench exposes shared tokens and navigation", async () => {
-  const [css, header, home, dashboard] = await Promise.all([
+  const [css, header, home, evaluation, dashboard] = await Promise.all([
     source("app/globals.css"),
     source("components/AppHeader.tsx"),
     source("app/page.tsx"),
-    source("app/dashboard/DashboardClient.tsx"),
+    source("app/evaluation/EvaluationClient.tsx"),
+    source("app/admin/dashboard/DashboardClient.tsx"),
   ]);
 
   assert.match(css, /--color-canvas:\s*#f5f5f3/i);
   assert.match(css, /--color-accent:\s*#e4002b/i);
   assert.doesNotMatch(css, /linear-gradient\(#d9d9d9 1px/);
-  assert.match(header, /href="\/dashboard"/);
+  assert.doesNotMatch(header, /href="\/dashboard"/);
+  assert.doesNotMatch(header, /href="\/admin\/dashboard"/);
+  assert.doesNotMatch(header, /href="\/evaluation"/);
   assert.match(header, /aria-current/);
   assert.match(home, /<AppHeader/);
+  assert.match(
+    evaluation,
+    /initial\.user\.role === "admin"\s*&&\s*\(\s*<Link[^>]*href="\/admin\/dashboard"/s,
+  );
   assert.match(dashboard, /<AppHeader/);
+  assert.match(dashboard, /href="\/evaluation"/);
 });
 
 test("results and drawers follow the approved product interaction contract", async () => {
@@ -45,7 +53,7 @@ test("results and drawers follow the approved product interaction contract", asy
 });
 
 test("dashboard groups metrics around operational decisions", async () => {
-  const dashboard = await source("app/dashboard/DashboardClient.tsx");
+  const dashboard = await source("app/admin/dashboard/DashboardClient.tsx");
 
   assert.match(dashboard, /生成健康度/);
   assert.match(dashboard, /内容价值/);

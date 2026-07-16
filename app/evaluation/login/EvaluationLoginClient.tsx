@@ -4,7 +4,15 @@ import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { Flask, LockKey, ShieldCheck } from "@phosphor-icons/react";
 
-export function EvaluationLoginClient({ setupRequired }: { setupRequired: boolean }) {
+export function EvaluationLoginClient({
+  setupRequired,
+  nextPath,
+}: {
+  setupRequired: boolean;
+  nextPath: string;
+}) {
+  const endpoint = setupRequired ? "/api/evaluation/setup" : "/api/evaluation/auth/login";
+  const action = `${endpoint}?next=${encodeURIComponent(nextPath)}`;
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -14,7 +22,7 @@ export function EvaluationLoginClient({ setupRequired }: { setupRequired: boolea
     setLoading(true);
     setError("");
     const form = new FormData(event.currentTarget);
-    const response = await fetch(setupRequired ? "/api/evaluation/setup" : "/api/evaluation/auth/login", {
+    const response = await fetch(action, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -29,7 +37,7 @@ export function EvaluationLoginClient({ setupRequired }: { setupRequired: boolea
       setLoading(false);
       return;
     }
-    router.push("/evaluation");
+    router.replace(nextPath);
     router.refresh();
   }
 
@@ -45,7 +53,7 @@ export function EvaluationLoginClient({ setupRequired }: { setupRequired: boolea
             <div className="flex items-center gap-2 text-sm font-black"><ShieldCheck size={18} weight="bold" />{setupRequired ? "创建首个管理员" : "内部账号登录"}</div>
             <p className="mt-2 text-xs leading-5 text-[var(--color-muted)]">评分、盲评和裁决均记录账号身份。系统不会把人工意向或模拟数据包装成真实行为。</p>
           </div>
-          <form action={setupRequired ? "/api/evaluation/setup" : "/api/evaluation/auth/login"} className="space-y-4 p-5" method="post" onSubmit={submit}>
+          <form action={action} className="space-y-4 p-5" method="post" onSubmit={submit}>
             <label className="block text-xs font-bold">用户名<input autoComplete="username" className="control-base mt-2 min-h-11 w-full px-3" minLength={3} name="username" required /></label>
             {setupRequired && <label className="block text-xs font-bold">显示名称<input className="control-base mt-2 min-h-11 w-full px-3" name="displayName" required /></label>}
             <label className="block text-xs font-bold">密码<input autoComplete={setupRequired ? "new-password" : "current-password"} className="control-base mt-2 min-h-11 w-full px-3" minLength={12} name="password" required type="password" /></label>

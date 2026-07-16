@@ -3,6 +3,11 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool, type PoolClient } from "pg";
 
+import {
+  DatabaseNotConfiguredError,
+  getConfiguredDatabaseUrl,
+  getPersistenceMode,
+} from "../persistence.ts";
 import { EVALUATION_CASES } from "./seeds.ts";
 import { EVALUATION_SCHEMA_SQL } from "./schema.ts";
 import type { EvaluationState, PromptVersion } from "./types.ts";
@@ -218,8 +223,10 @@ let singleton: EvaluationRepository | undefined;
 
 export function getEvaluationRepository(): EvaluationRepository {
   if (!singleton) {
-    singleton = process.env.DATABASE_URL
-      ? new PostgresEvaluationRepository(process.env.DATABASE_URL)
+    const mode = getPersistenceMode();
+    if (mode === "unavailable") throw new DatabaseNotConfiguredError();
+    singleton = mode === "postgres"
+      ? new PostgresEvaluationRepository(getConfiguredDatabaseUrl()!)
       : new JsonEvaluationRepository(process.env.EVALUATION_STORE_PATH || undefined);
   }
   return singleton;

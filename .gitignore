@@ -41,6 +41,9 @@ yarn-error.log*
 # vercel
 .vercel
 
+# isolated Codex worktrees
+.worktrees/
+
 # typescript
 *.tsbuildinfo
 next-env.d.ts
