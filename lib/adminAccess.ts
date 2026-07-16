@@ -16,10 +16,15 @@ export function sanitizeInternalReturnPath(
   const candidate = Array.isArray(value) ? value[0] : value;
   if (!candidate || !candidate.startsWith("/") || candidate.startsWith("//")) return fallback;
 
-  const parsed = new URL(candidate, "https://hookovo.invalid");
-  const allowed =
-    parsed.pathname === "/admin/dashboard" ||
-    parsed.pathname === "/evaluation" ||
-    parsed.pathname.startsWith("/evaluation/");
-  return allowed ? `${parsed.pathname}${parsed.search}` : fallback;
+  try {
+    decodeURIComponent(candidate);
+    const parsed = new URL(candidate, "https://hookovo.invalid");
+    const allowed =
+      parsed.pathname === "/admin/dashboard" ||
+      parsed.pathname === "/evaluation" ||
+      parsed.pathname.startsWith("/evaluation/");
+    return allowed ? `${parsed.pathname}${parsed.search}` : fallback;
+  } catch {
+    return fallback;
+  }
 }

@@ -25,3 +25,21 @@ test("legacy dashboard redirects and no longer renders data", async () => {
   assert.match(page, /redirect\("\/admin\/dashboard"\)/);
   assert.doesNotMatch(page, /getDashboardSummary/);
 });
+
+test("evaluation login sanitizes next on the server and passes it to the client", async () => {
+  const page = await source("app/evaluation/login/page.tsx");
+  const client = await source("app/evaluation/login/EvaluationLoginClient.tsx");
+  assert.match(page, /sanitizeInternalReturnPath/);
+  assert.match(page, /searchParams:\s*Promise/);
+  assert.match(client, /nextPath:\s*string/);
+  assert.match(client, /router\.replace\(nextPath\)/);
+});
+
+test("auth handlers use tested form redirects and preserve JSON failure statuses", async () => {
+  const login = await source("app/api/evaluation/auth/login/route.ts");
+  const setup = await source("app/api/evaluation/setup/route.ts");
+  assert.match(login, /createEvaluationFormRedirect/);
+  assert.match(login, /status:\s*401/);
+  assert.match(setup, /createEvaluationFormRedirect/);
+  assert.match(setup, /status:\s*400/);
+});

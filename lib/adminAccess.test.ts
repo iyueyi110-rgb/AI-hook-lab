@@ -18,3 +18,9 @@ test("return paths only allow internal backend destinations", () => {
   assert.equal(sanitizeInternalReturnPath("javascript:alert(1)"), "/evaluation");
   assert.equal(sanitizeInternalReturnPath("/not-an-internal-page"), "/evaluation");
 });
+
+test("malformed return paths fall back without throwing", () => {
+  for (const value of ["/%5C[::", "/\\[::", "/evaluation/%", "/evaluation/%E0%A4%A"]) {
+    assert.equal(sanitizeInternalReturnPath(value), "/evaluation");
+  }
+});
