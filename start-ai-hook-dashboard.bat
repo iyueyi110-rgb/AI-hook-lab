@@ -44,12 +44,12 @@ if not exist ".env.local" (
   pause
 )
 
-echo Opening http://localhost:3001/dashboard ...
-start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 3; Start-Process 'http://localhost:3001/dashboard'"
+echo Opening http://localhost:3001/admin/dashboard ...
+start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 3; Start-Process 'http://localhost:3001/admin/dashboard'"
 
 echo.
 echo If a Next dev server is already running for this folder, stop it first.
-echo You can also open http://localhost:3000/dashboard on the existing frontend server.
+echo You can also open http://localhost:3000/admin/dashboard on the existing frontend server.
 echo.
 echo Starting dashboard on port 3001. Press Ctrl+C to stop the server.
 echo.

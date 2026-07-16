@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { appendDashboardEvent } from "@/lib/dashboardStore";
+import { isDatabaseNotConfiguredError } from "@/lib/persistence";
 
 export const runtime = "nodejs";
 
@@ -22,6 +23,12 @@ export async function POST(request: NextRequest) {
     });
     return NextResponse.json({ ok: true, event });
   } catch (error) {
+    if (isDatabaseNotConfiguredError(error)) {
+      return NextResponse.json(
+        { ok: false, error: "数据库未配置", message: error.message },
+        { status: 503 },
+      );
+    }
     return NextResponse.json(
       {
         ok: false,

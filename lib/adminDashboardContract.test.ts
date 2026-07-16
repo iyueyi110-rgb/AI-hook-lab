@@ -20,6 +20,40 @@ test("dashboard summary API independently returns 401 and 403", async () => {
   assert.match(route, /getCurrentEvaluationUser/);
 });
 
+test("dashboard APIs return 503 when production persistence is unavailable", async () => {
+  const eventsRoute = await source("app/api/dashboard/events/route.ts");
+  const summaryRoute = await source("app/api/dashboard/summary/route.ts");
+  for (const route of [eventsRoute, summaryRoute]) {
+    assert.match(route, /isDatabaseNotConfiguredError/);
+    assert.match(route, /status:\s*503/);
+    assert.match(route, /数据库未配置/);
+  }
+});
+
+test("internal pages explain unavailable production persistence before session access", async () => {
+  const loginPage = await source("app/evaluation/login/page.tsx");
+  const dashboardPage = await source("app/admin/dashboard/page.tsx");
+  for (const page of [loginPage, dashboardPage]) {
+    assert.match(page, /DatabaseUnavailablePanel/);
+    assert.match(page, /getPersistenceMode\(\) === "unavailable"/);
+    assert.ok(page.indexOf("getPersistenceMode()") < page.indexOf("getCurrentEvaluationUser()"));
+  }
+});
+
+test("both persistence stores use the shared environment policy", async () => {
+  const dashboardStore = await source("lib/dashboardStore.ts");
+  const evaluationRepository = await source("lib/evaluation/repository.ts");
+  assert.match(dashboardStore, /assertProductionDatabaseConfigured/);
+  assert.match(dashboardStore, /getConfiguredDatabaseUrl/);
+  assert.match(evaluationRepository, /getPersistenceMode/);
+  assert.match(evaluationRepository, /DatabaseNotConfiguredError/);
+});
+
+test("generation start analytics omit the raw topic", async () => {
+  const page = await source("app/page.tsx");
+  assert.doesNotMatch(page, /generation_start[^\n]+topic/);
+});
+
 test("legacy dashboard redirects and no longer renders data", async () => {
   const page = await source("app/dashboard/page.tsx");
   assert.match(page, /redirect\("\/admin\/dashboard"\)/);
