@@ -1,21 +1,31 @@
 {
   "name": "ai-hook-lab",
   "version": "0.1.0",
+  "type": "module",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "node --test --experimental-strip-types lib/*.test.ts lib/evaluation/*.test.ts",
+    "eval:run": "node eval/run-eval.mjs",
+    "eval:summarize": "node eval/summarize-results.mjs",
+    "eval:migrate": "node --experimental-strip-types eval/migrate.mjs",
+    "eval:seed": "node --experimental-strip-types eval/seed.mjs",
+    "eval:user": "node --experimental-strip-types eval/user.mjs"
   },
   "dependencies": {
+    "@phosphor-icons/react": "^2.1.10",
     "next": "16.2.9",
+    "pg": "^8.22.0",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
+    "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
