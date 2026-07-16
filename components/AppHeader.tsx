@@ -24,7 +24,8 @@ export function AppHeader({
   onOpenFavorites,
 }: AppHeaderProps) {
   const pathname = usePathname();
-  const onDashboard = pathname.startsWith("/dashboard");
+  const onDashboard =
+    pathname.startsWith("/admin/dashboard") || pathname.startsWith("/dashboard");
   const onEvaluation = pathname.startsWith("/evaluation");
   const onWorkbench = !onDashboard && !onEvaluation;
 
