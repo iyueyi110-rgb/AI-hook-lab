@@ -38,6 +38,7 @@ export interface HookResult {
 }
 
 export interface GenerateResponse {
+  taskId?: string;
   hooks: HookResult[];
   generatedAt: string;
   topic: string;
@@ -69,4 +70,13 @@ export interface GenerateRequest {
   emotionTone?: EmotionTone | "";
   wordLimit?: number;
   promptVariant?: "baseline" | "candidate";
+  imageDescription?: string;
+}
+
+export interface ImageAnalysisResult {
+  topic: string;
+  imageDescription: string;
+  suggestedPlatform: Platform;
+  suggestedContentType: ContentType;
+  suggestedEmotionTone: EmotionTone;
 }

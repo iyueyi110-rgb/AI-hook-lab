@@ -4,12 +4,19 @@ import { Pool } from "pg";
 import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants.ts";
 import { normalizeDataOrigin } from "./evaluation/origins.ts";
 import type { DataOrigin } from "./evaluation/types.ts";
+import { findSensitiveInputHints } from "./promptTemplates.ts";
 import {
   assertProductionDatabaseConfigured,
   getConfiguredDatabaseUrl,
 } from "./persistence.ts";
 
 export type DashboardDataOrigin = DataOrigin;
+
+export interface DashboardFeedbackFilters {
+  platform?: string;
+  promptVersion?: string;
+  trigger?: string;
+}
 
 export type DashboardEventType =
   | "generation_start"
@@ -20,7 +27,8 @@ export type DashboardEventType =
   | "hook_unfavorited"
   | "hook_adopted"
   | "hook_unadopted"
-  | "platform_satisfaction";
+  | "platform_satisfaction"
+  | "creator_feedback";
 
 export interface DashboardEvent {
   id: string;
@@ -66,6 +74,28 @@ export interface DashboardSummary {
       badcaseCount: number;
     }
   >;
+  feedback: {
+    totals: {
+      promptsShown: number;
+      submitted: number;
+      skipped: number;
+      linkedCompletedTasks: number;
+      totalCompletedTasks: number;
+      tasksWithConfirmedUsage: number;
+    };
+    responseRate: number;
+    taskCoverageRate: number;
+    taskAdoptionRate: number;
+    usageOutcomeDistribution: Record<string, number>;
+    reasonDistribution: Record<string, number>;
+    triggerDistribution: Record<string, number>;
+    platformDistribution: Record<string, number>;
+    promptVersionDistribution: Record<string, number>;
+    modelHumanAlignment: Record<
+      string,
+      { agreed: number; missedByModel: number; modelOnly: number }
+    >;
+  };
   recentEvents: DashboardEvent[];
 }
 
@@ -84,6 +114,7 @@ const EVENT_TYPES = new Set<DashboardEventType>([
   "hook_adopted",
   "hook_unadopted",
   "platform_satisfaction",
+  "creator_feedback",
 ]);
 const PLATFORMS = new Set(Object.keys(PLATFORM_CONFIG));
 const CONTENT_TYPES = new Set(Object.keys(CONTENT_TYPE_CONFIG));
@@ -120,6 +151,39 @@ const MAX_TOPIC_ID = 1_000_000;
 const MAX_HOOK_COUNT = 100;
 const MAX_GENERATION_DURATION_MS = 600_000;
 const MAX_BADCASE_TAGS = 60;
+const MAX_FEEDBACK_REASON_TAGS = 3;
+const FEEDBACK_STATUSES = new Set(["shown", "submitted", "skipped"]);
+const FEEDBACK_TRIGGERS = new Set([
+  "adoption",
+  "explicit_batch_reject",
+  "sampled_before_regenerate",
+  "low_satisfaction",
+]);
+const FEEDBACK_SCOPES = new Set(["hook", "batch"]);
+const FEEDBACK_USAGE_OUTCOMES = new Set([
+  "direct_use",
+  "light_edit",
+  "heavy_rewrite",
+  "reference_only",
+]);
+const FEEDBACK_REASON_TAGS = new Set([
+  "not_relevant",
+  "too_generic",
+  "platform_mismatch",
+  "tone_mismatch",
+  "length_mismatch",
+  "weak_reasoning",
+  "clickbait_risk",
+  "repetitive",
+  "hard_to_execute",
+  "other",
+]);
+const COMPARABLE_FEEDBACK_TAGS = [
+  "weak_reasoning",
+  "clickbait_risk",
+  "too_generic",
+  "platform_mismatch",
+] as const;
 
 interface PayloadFieldRule {
   persist?: boolean;
@@ -178,7 +242,12 @@ const contentTypeRule = enumRule(CONTENT_TYPES);
 const promptVariantRule = enumRule(PROMPT_VARIANTS);
 const analyticsStringRule = stringRule(MAX_ANALYTICS_STRING_LENGTH);
 const hookIdRule = stringRule(MAX_HOOK_ID_LENGTH);
+const browserContextRule = stringRule(MAX_HOOK_ID_LENGTH);
 const clickScoreRule = numberRule(0, 100);
+const browserContextFields: Record<string, PayloadFieldRule> = {
+  anonymousCreatorId: browserContextRule,
+  taskId: browserContextRule,
+};
 const interactionContextFields: Record<string, PayloadFieldRule> = {
   platform: platformRule,
   contentType: contentTypeRule,
@@ -188,6 +257,7 @@ const interactionContextFields: Record<string, PayloadFieldRule> = {
 };
 const interactionFields: Record<string, PayloadFieldRule> = {
   hookId: hookIdRule,
+  ...browserContextFields,
   ...interactionContextFields,
 };
 const badcaseTagsRule: PayloadFieldRule = {
@@ -200,6 +270,32 @@ const badcaseTagsRule: PayloadFieldRule = {
       invalidPayload(field);
     }
     return [...value];
+  },
+};
+const feedbackReasonTagsRule: PayloadFieldRule = {
+  validate(value, field) {
+    if (
+      !Array.isArray(value) ||
+      value.length > MAX_FEEDBACK_REASON_TAGS ||
+      value.some((tag) => typeof tag !== "string" || !FEEDBACK_REASON_TAGS.has(tag))
+    ) {
+      invalidPayload(field);
+    }
+    return [...value];
+  },
+};
+const feedbackCommentRule: PayloadFieldRule = {
+  validate(value, field) {
+    const trimmed = typeof value === "string" ? value.trim() : "";
+    if (
+      typeof value !== "string" ||
+      trimmed.length === 0 ||
+      trimmed.length > MAX_ANALYTICS_STRING_LENGTH ||
+      findSensitiveInputHints(trimmed).length > 0
+    ) {
+      invalidPayload(field);
+    }
+    return trimmed;
   },
 };
 const generationErrorRule = enumRule(GENERATION_ERROR_CATEGORIES);
@@ -225,6 +321,7 @@ const compatibilityTopicIdRule: PayloadFieldRule = {
 const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
   generation_start: {
     fields: {
+      ...browserContextFields,
       platform: platformRule,
       contentType: contentTypeRule,
       promptVariant: promptVariantRule,
@@ -234,6 +331,7 @@ const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
   },
   generation_complete: {
     fields: {
+      ...browserContextFields,
       platform: platformRule,
       contentType: contentTypeRule,
       model: analyticsStringRule,
@@ -248,7 +346,7 @@ const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
     required: ["platform", "hookCount"],
   },
   generation_error: {
-    fields: { error: generationErrorRule },
+    fields: { ...browserContextFields, error: generationErrorRule },
     required: ["error"],
   },
   hook_copied: {
@@ -266,7 +364,66 @@ const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
     },
     required: ["hookId", "rating"],
   },
+  creator_feedback: {
+    fields: {
+      promptId: browserContextRule,
+      status: enumRule(FEEDBACK_STATUSES),
+      trigger: enumRule(FEEDBACK_TRIGGERS),
+      scope: enumRule(FEEDBACK_SCOPES),
+      anonymousCreatorId: browserContextRule,
+      taskId: browserContextRule,
+      hookId: hookIdRule,
+      usageOutcome: enumRule(FEEDBACK_USAGE_OUTCOMES),
+      reasonTags: feedbackReasonTagsRule,
+      comment: feedbackCommentRule,
+      ...interactionContextFields,
+      modelBadcaseTags: badcaseTagsRule,
+    },
+    required: ["promptId", "status", "trigger", "scope", "anonymousCreatorId", "taskId"],
+  },
 };
+
+function validateCreatorFeedbackConditions(payload: Record<string, unknown>): void {
+  const status = payload.status;
+  const trigger = payload.trigger;
+  const scope = payload.scope;
+  const reasonTags = payload.reasonTags;
+  const hasReasons = Array.isArray(reasonTags) && reasonTags.length > 0;
+  const hasResponse =
+    payload.usageOutcome !== undefined || payload.reasonTags !== undefined || payload.comment !== undefined;
+
+  if (scope === "hook" && typeof payload.hookId !== "string") invalidPayload("hookId");
+  if (scope === "batch" && payload.hookId !== undefined) invalidPayload("hookId");
+  if ((trigger === "adoption" || trigger === "low_satisfaction") && scope !== "hook") {
+    invalidPayload("scope");
+  }
+  if (
+    (trigger === "explicit_batch_reject" || trigger === "sampled_before_regenerate") &&
+    scope !== "batch"
+  ) {
+    invalidPayload("scope");
+  }
+
+  if (status !== "submitted") {
+    if (hasResponse) invalidPayload("status");
+    return;
+  }
+
+  if (trigger === "adoption") {
+    if (payload.usageOutcome === undefined) invalidPayload("usageOutcome");
+    if (payload.usageOutcome === "direct_use") {
+      if (payload.reasonTags !== undefined || payload.comment !== undefined) {
+        invalidPayload("reasonTags");
+      }
+      return;
+    }
+    if (!hasReasons) invalidPayload("reasonTags");
+    return;
+  }
+
+  if (payload.usageOutcome !== undefined) invalidPayload("usageOutcome");
+  if (!hasReasons) invalidPayload("reasonTags");
+}
 
 function createId(): string {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
@@ -312,6 +469,8 @@ function validateDashboardPayload(
   for (const field of schema.required) {
     if (!Object.hasOwn(input, field) || input[field] === undefined) invalidPayload(field);
   }
+
+  if (eventType === "creator_feedback") validateCreatorFeedbackConditions(payload);
 
   return payload;
 }
@@ -415,8 +574,26 @@ async function ensurePostgresStore(): Promise<void> {
 export function summarizeDashboardEvents(
   allEvents: DashboardEvent[],
   origin: DashboardDataOrigin = "real_user",
+  feedbackFilters: DashboardFeedbackFilters = {},
 ): DashboardSummary {
-  const events = allEvents.filter((event) => event.dataOrigin === origin);
+  const events = allEvents.filter((event) => {
+    if (event.dataOrigin !== origin) return false;
+    if (feedbackFilters.platform && event.payload?.platform !== feedbackFilters.platform) return false;
+    if (
+      feedbackFilters.promptVersion &&
+      event.payload?.templateVersion !== feedbackFilters.promptVersion
+    ) {
+      return false;
+    }
+    if (
+      feedbackFilters.trigger &&
+      event.type === "creator_feedback" &&
+      event.payload?.trigger !== feedbackFilters.trigger
+    ) {
+      return false;
+    }
+    return true;
+  });
   const generationsStarted = events.filter((event) => event.type === "generation_start").length;
   const completed = events.filter((event) => event.type === "generation_complete");
   const generationsFailed = events.filter((event) => event.type === "generation_error").length;
@@ -426,6 +603,8 @@ export function summarizeDashboardEvents(
   const adopted = events.filter((event) => event.type === "hook_adopted").length;
   const unadopted = events.filter((event) => event.type === "hook_unadopted").length;
   const satisfactionEvents = events.filter((event) => event.type === "platform_satisfaction");
+  const feedbackEvents = events.filter((event) => event.type === "creator_feedback");
+  const submittedFeedback = feedbackEvents.filter((event) => event.payload?.status === "submitted");
 
   const hooksGenerated = completed.reduce(
     (sum, event) => sum + (Number(event.payload?.hookCount) || 0),
@@ -517,6 +696,90 @@ export function summarizeDashboardEvents(
   const hooksFavorited = Math.max(0, favs - unfavs);
   const hooksAdopted = Math.max(0, adopted - unadopted);
 
+  const shownPromptIds = new Set(
+    feedbackEvents
+      .filter((event) => event.payload?.status === "shown")
+      .map((event) => String(event.payload?.promptId)),
+  );
+  const submittedPromptIds = new Set(
+    submittedFeedback.map((event) => String(event.payload?.promptId)),
+  );
+  const linkedSubmittedPromptCount = [...submittedPromptIds].filter((promptId) =>
+    shownPromptIds.has(promptId),
+  ).length;
+  const skippedPromptIds = new Set(
+    feedbackEvents
+      .filter((event) => event.payload?.status === "skipped")
+      .map((event) => String(event.payload?.promptId)),
+  );
+  const completedTaskIds = new Set(
+    completed
+      .map((event) => event.payload?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const confirmedUsageTaskIds = new Set(
+    submittedFeedback
+      .filter(
+        (event) =>
+          event.payload?.trigger === "adoption" &&
+          ["direct_use", "light_edit", "heavy_rewrite"].includes(
+            String(event.payload?.usageOutcome),
+          ),
+      )
+      .map((event) => event.payload?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const usageOutcomeDistribution: Record<string, number> = {};
+  const reasonDistribution: Record<string, number> = {};
+  const feedbackTriggerDistribution: Record<string, number> = {};
+  const feedbackPlatformDistribution: Record<string, number> = {};
+  const feedbackPromptVersionDistribution: Record<string, number> = {};
+  const modelHumanAlignment = Object.fromEntries(
+    COMPARABLE_FEEDBACK_TAGS.map((tag) => [
+      tag,
+      { agreed: 0, missedByModel: 0, modelOnly: 0 },
+    ]),
+  ) as DashboardSummary["feedback"]["modelHumanAlignment"];
+
+  submittedFeedback.forEach((event) => {
+    const usageOutcome = event.payload?.usageOutcome;
+    if (typeof usageOutcome === "string") {
+      usageOutcomeDistribution[usageOutcome] = (usageOutcomeDistribution[usageOutcome] ?? 0) + 1;
+    }
+    const trigger = String(event.payload?.trigger ?? "unknown");
+    feedbackTriggerDistribution[trigger] = (feedbackTriggerDistribution[trigger] ?? 0) + 1;
+    const platform = event.payload?.platform;
+    if (typeof platform === "string") {
+      feedbackPlatformDistribution[platform] = (feedbackPlatformDistribution[platform] ?? 0) + 1;
+    }
+    const promptVersion = event.payload?.templateVersion;
+    if (typeof promptVersion === "string") {
+      feedbackPromptVersionDistribution[promptVersion] =
+        (feedbackPromptVersionDistribution[promptVersion] ?? 0) + 1;
+    }
+
+    const humanTags = new Set(
+      Array.isArray(event.payload?.reasonTags)
+        ? event.payload.reasonTags.filter((tag): tag is string => typeof tag === "string")
+        : [],
+    );
+    const modelTags = new Set(
+      Array.isArray(event.payload?.modelBadcaseTags)
+        ? event.payload.modelBadcaseTags.filter((tag): tag is string => typeof tag === "string")
+        : [],
+    );
+    humanTags.forEach((tag) => {
+      reasonDistribution[tag] = (reasonDistribution[tag] ?? 0) + 1;
+    });
+    COMPARABLE_FEEDBACK_TAGS.forEach((tag) => {
+      const human = humanTags.has(tag);
+      const model = modelTags.has(tag);
+      if (human && model) modelHumanAlignment[tag].agreed += 1;
+      else if (human) modelHumanAlignment[tag].missedByModel += 1;
+      else if (model) modelHumanAlignment[tag].modelOnly += 1;
+    });
+  });
+
   return {
     totals: {
       events: events.length,
@@ -546,11 +809,33 @@ export function summarizeDashboardEvents(
     dataOriginDistribution,
     badcaseDistribution,
     platformMetrics,
+    feedback: {
+      totals: {
+        promptsShown: shownPromptIds.size,
+        submitted: submittedPromptIds.size,
+        skipped: skippedPromptIds.size,
+        linkedCompletedTasks: completedTaskIds.size,
+        totalCompletedTasks: completed.length,
+        tasksWithConfirmedUsage: confirmedUsageTaskIds.size,
+      },
+      responseRate: rate(linkedSubmittedPromptCount, shownPromptIds.size),
+      taskCoverageRate: rate(completedTaskIds.size, completed.length),
+      taskAdoptionRate: rate(confirmedUsageTaskIds.size, completedTaskIds.size),
+      usageOutcomeDistribution,
+      reasonDistribution,
+      triggerDistribution: feedbackTriggerDistribution,
+      platformDistribution: feedbackPlatformDistribution,
+      promptVersionDistribution: feedbackPromptVersionDistribution,
+      modelHumanAlignment,
+    },
     recentEvents: events.slice(-20).reverse(),
   };
 }
 
-export async function getDashboardSummary(origin: DashboardDataOrigin = "real_user"): Promise<DashboardSummary> {
+export async function getDashboardSummary(
+  origin: DashboardDataOrigin = "real_user",
+  feedbackFilters: DashboardFeedbackFilters = {},
+): Promise<DashboardSummary> {
   const events = await readDashboardEvents();
-  return summarizeDashboardEvents(events, origin);
+  return summarizeDashboardEvents(events, origin, feedbackFilters);
 }

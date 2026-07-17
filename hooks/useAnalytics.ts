@@ -12,7 +12,8 @@ type EventType =
   | "hook_unfavorited"
   | "hook_adopted"
   | "hook_unadopted"
-  | "platform_satisfaction";
+  | "platform_satisfaction"
+  | "creator_feedback";
 
 interface AnalyticsEvent {
   type: EventType;
@@ -136,5 +137,19 @@ export function useAnalytics() {
     [track]
   );
 
-  return { track, trackSatisfaction, stats };
+  const hasDecisionFeedbackForTask = useCallback(
+    (taskId: string) =>
+      events.some(
+        (event) =>
+          event.type === "creator_feedback" &&
+          event.payload?.taskId === taskId &&
+          ["adoption", "explicit_batch_reject", "sampled_before_regenerate"].includes(
+            String(event.payload?.trigger),
+          ) &&
+          ["submitted", "skipped"].includes(String(event.payload?.status)),
+      ),
+    [events],
+  );
+
+  return { track, trackSatisfaction, hasDecisionFeedbackForTask, stats };
 }

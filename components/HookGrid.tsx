@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Lightbulb } from "@phosphor-icons/react";
+import { Check, Copy, Lightbulb, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { GenerateResponse, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { HookCard } from "./HookCard";
@@ -12,6 +12,7 @@ interface HookGridProps {
   onToggleAdopted: (id: string) => void;
   onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
   onCopyHook: (hook: HookResult) => void;
+  onRejectBatch: () => void;
   analysis?: GenerateResponse["analysis"] | null;
 }
 
@@ -22,6 +23,7 @@ export function HookGrid({
   onToggleAdopted,
   onSetSatisfaction,
   onCopyHook,
+  onRejectBatch,
   analysis,
 }: HookGridProps) {
   const [copiedAll, setCopiedAll] = useState(false);
@@ -103,6 +105,14 @@ export function HookGrid({
           styleIndex={hooks.findIndex((item) => item.id === hook.id)}
         />
       ))}
+
+      <div className="flex flex-col gap-3 border-t border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
+        <p className="text-xs leading-5 text-[var(--color-muted)]">没有一条适合？告诉我们最主要的问题，不会删除本轮结果。</p>
+        <button className="button-secondary shrink-0" onClick={onRejectBatch} type="button">
+          <WarningCircle aria-hidden="true" size={16} weight="bold" />
+          这批都不合适
+        </button>
+      </div>
 
       {analysis && (analysis.bestStyle || analysis.commonPattern || analysis.improvementTip) && (
         <div className="border-t border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-4 sm:p-5">
