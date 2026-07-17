@@ -11,6 +11,7 @@ import {
   DEFAULT_WORD_LIMIT,
   detectBadcases,
   findSensitiveInputHints,
+  MAX_IMAGE_DESCRIPTION_LENGTH,
   MAX_TARGET_AUDIENCE_LENGTH,
   MAX_TOPIC_LENGTH,
 } from "@/lib/promptTemplates";
@@ -146,6 +147,7 @@ export async function POST(request: NextRequest) {
   const { topic, platform, contentType } = body;
   const trimmedTopic = topic?.trim() ?? "";
   const trimmedTargetAudience = body.targetAudience?.trim() ?? "";
+  const trimmedImageDescription = body.imageDescription?.trim() ?? "";
 
   if (!trimmedTopic) {
     return NextResponse.json(
@@ -174,12 +176,26 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const sensitiveHints = findSensitiveInputHints(`${trimmedTopic}\n${trimmedTargetAudience}`);
+  if (trimmedImageDescription.length > MAX_IMAGE_DESCRIPTION_LENGTH) {
+    return NextResponse.json(
+      {
+        error: "图片描述过长",
+        message: `图片描述最多 ${MAX_IMAGE_DESCRIPTION_LENGTH} 个字符，请清除图片或更换截图`,
+      },
+      { status: 400 }
+    );
+  }
+
+  const sensitiveHints = findSensitiveInputHints(
+    `${trimmedTopic}\n${trimmedTargetAudience}\n${trimmedImageDescription}`
+  );
   if (sensitiveHints.length > 0) {
     return NextResponse.json(
       {
         error: "输入包含疑似个人信息",
-        message: `请移除或改写以下信息后再生成：${sensitiveHints.join("、")}`,
+        message: trimmedImageDescription
+          ? `图片或输入中包含疑似${sensitiveHints.join("、")}，请清除图片、替换截图或改写后重试`
+          : `请移除或改写以下信息后再生成：${sensitiveHints.join("、")}`,
       },
       { status: 400 }
     );
@@ -194,6 +210,7 @@ export async function POST(request: NextRequest) {
     emotionTone: body.emotionTone || undefined,
     wordLimit,
     promptVariant: body.promptVariant === "baseline" ? "baseline" : "candidate",
+    imageDescription: trimmedImageDescription || undefined,
   };
 
   let promptBundle: ReturnType<typeof buildPromptBundle>;

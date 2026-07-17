@@ -118,6 +118,12 @@ summary::-webkit-details-marker {
   opacity: 0.45;
 }
 
+.control-base.choice-button[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
 .button-primary {
   display: inline-flex;
   min-height: 44px;

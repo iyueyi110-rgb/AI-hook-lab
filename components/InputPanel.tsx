@@ -1,15 +1,19 @@
 "use client";
 
-import { useId, useState, type ReactNode } from "react";
+import { useId, useRef, useState, type ReactNode } from "react";
+import Image from "next/image";
 import {
+  Camera,
   CaretDown,
   MagicWand,
   SlidersHorizontal,
+  X,
 } from "@phosphor-icons/react";
 import type {
   ContentType,
   EmotionTone,
   GenerateStatus,
+  ImageAnalysisResult,
   Platform,
 } from "@/lib/types";
 import {
@@ -34,6 +38,12 @@ interface InputPanelProps {
   setWordLimit: (n: number) => void;
   status: GenerateStatus;
   onGenerate: () => void;
+  imagePreviewUrl: string | null;
+  imageAnalysis: ImageAnalysisResult | null;
+  isAnalyzing: boolean;
+  imageAnalysisError: string | null;
+  onImageSelect: (file: File) => void;
+  onClearImage: () => void;
 }
 
 function FieldLabel({ children, htmlFor }: { children: ReactNode; htmlFor?: string }) {
@@ -59,13 +69,26 @@ export function InputPanel({
   setWordLimit,
   status,
   onGenerate,
+  imagePreviewUrl,
+  imageAnalysis,
+  isAnalyzing,
+  imageAnalysisError,
+  onImageSelect,
+  onClearImage,
 }: InputPanelProps) {
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [dragActive, setDragActive] = useState(false);
+  const imageInputRef = useRef<HTMLInputElement>(null);
+  const imageInputId = useId();
   const platformLabelId = useId();
   const contentLabelId = useId();
   const emotionLabelId = useId();
   const loading = status === "loading";
-  const canGenerate = topic.trim().length > 0 && !loading;
+  const canGenerate = topic.trim().length > 0 && !loading && !isAnalyzing;
+
+  const selectFile = (file?: File) => {
+    if (file && !loading) onImageSelect(file);
+  };
 
   return (
     <aside className="editorial-panel overflow-hidden lg:sticky lg:top-24">
@@ -83,6 +106,115 @@ export function InputPanel({
       </div>
 
       <div className="space-y-5 p-5 md:p-6">
+        <div>
+          <FieldLabel htmlFor={imageInputId}>内容截图（可选）</FieldLabel>
+          <div
+            className={`relative overflow-hidden rounded-[10px] border border-dashed transition-colors ${
+              dragActive
+                ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+                : "border-[var(--color-line-strong)] bg-[var(--color-canvas)]"
+            }`}
+            onDragEnter={(event) => {
+              event.preventDefault();
+              if (!loading) setDragActive(true);
+            }}
+            onDragLeave={(event) => {
+              event.preventDefault();
+              if (!event.currentTarget.contains(event.relatedTarget as Node)) setDragActive(false);
+            }}
+            onDragOver={(event) => event.preventDefault()}
+            onDrop={(event) => {
+              event.preventDefault();
+              setDragActive(false);
+              selectFile(event.dataTransfer.files[0]);
+            }}
+          >
+            <input
+              accept="image/jpeg,image/png,image/webp"
+              className="sr-only"
+              disabled={loading}
+              id={imageInputId}
+              onChange={(event) => {
+                selectFile(event.target.files?.[0]);
+                event.target.value = "";
+              }}
+              ref={imageInputRef}
+              type="file"
+            />
+            <label
+              aria-label={imagePreviewUrl ? "更换内容截图" : "上传内容截图"}
+              className="block cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-[var(--color-accent)] focus-visible:ring-inset"
+              htmlFor={imageInputId}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  imageInputRef.current?.click();
+                }
+              }}
+              role="button"
+              tabIndex={loading ? -1 : 0}
+            >
+              {imagePreviewUrl ? (
+                <div className="grid min-h-28 grid-cols-[92px_1fr] items-center gap-3 p-3 pr-11">
+                  <Image
+                    alt="待识别的内容截图预览"
+                    className="h-24 w-[92px] rounded-md border border-[var(--color-line)] object-cover"
+                    height={96}
+                    src={imagePreviewUrl}
+                    unoptimized
+                    width={92}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-extrabold text-[var(--color-accent)]">
+                      {isAnalyzing ? "正在识别…" : imageAnalysis ? "截图已识别" : "截图待处理"}
+                    </p>
+                    <p className="mt-1 line-clamp-3 text-sm font-bold leading-5 text-[var(--color-ink)]">
+                      {imageAnalysis?.topic ?? "豆包将自动提取主题与创作建议"}
+                    </p>
+                    {!isAnalyzing && (
+                      <p className="mt-2 text-[11px] text-[var(--color-muted)]">点击或拖拽可替换</p>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                <div className="flex min-h-28 flex-col items-center justify-center px-4 py-5 text-center">
+                  <Camera aria-hidden="true" className="text-[var(--color-accent)]" size={24} weight="bold" />
+                  <p className="mt-2 text-sm font-extrabold">上传内容截图，自动识别主题</p>
+                  <p className="mt-1 text-[11px] text-[var(--color-muted)]">JPEG、PNG 或 WebP，最大 5MB</p>
+                </div>
+              )}
+            </label>
+
+            {imagePreviewUrl && (
+              <button
+                aria-label="清除内容截图"
+                className="absolute right-2 top-2 z-10 grid size-8 place-items-center rounded-full border border-[var(--color-line)] bg-[var(--color-surface)] text-[var(--color-graphite)] shadow-sm hover:text-[var(--color-accent)]"
+                disabled={loading}
+                onClick={onClearImage}
+                type="button"
+              >
+                <X aria-hidden="true" size={15} weight="bold" />
+              </button>
+            )}
+
+            {imagePreviewUrl && isAnalyzing && (
+              <div className="soft-pulse pointer-events-none absolute inset-0 grid place-items-center bg-[var(--color-surface)]/80">
+                <span className="rounded-full bg-[var(--color-ink)] px-3 py-1.5 text-xs font-extrabold text-white">
+                  正在识别…
+                </span>
+              </div>
+            )}
+          </div>
+          {imageAnalysisError && (
+            <p className="mt-2 text-xs font-semibold leading-5 text-[var(--color-danger)]" role="alert">
+              {imageAnalysisError}
+            </p>
+          )}
+          <p className="mt-2 text-[10px] leading-4 text-[var(--color-muted)]">
+            图片会发送至豆包识别，文字描述将用于 DeepSeek 生成；原图不会保存。
+          </p>
+        </div>
+
         <div>
           <FieldLabel htmlFor="topic">主题</FieldLabel>
           <div className="relative">
@@ -117,17 +249,16 @@ export function InputPanel({
               return (
                 <button
                   aria-pressed={selected}
-                  className={`control-base min-h-10 px-3 text-xs font-bold ${
-                    selected
-                      ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                      : "text-[var(--color-ink)]"
-                  }`}
+                  className="choice-button control-base relative min-h-10 px-3 text-xs font-bold"
                   disabled={loading}
                   key={item}
                   onClick={() => setPlatform(item)}
                   type="button"
                 >
                   {PLATFORM_CONFIG[item].label}
+                  {imageAnalysis?.suggestedPlatform === item && (
+                    <span className="absolute right-1 top-1 text-[9px] font-black text-[var(--color-accent)]">荐</span>
+                  )}
                 </button>
               );
             })}
@@ -144,17 +275,16 @@ export function InputPanel({
               return (
                 <button
                   aria-pressed={selected}
-                  className={`control-base min-h-10 px-3 text-xs font-bold ${
-                    selected
-                      ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                      : "text-[var(--color-ink)]"
-                  }`}
+                  className="choice-button control-base relative min-h-10 px-3 text-xs font-bold"
                   disabled={loading}
                   key={item}
                   onClick={() => setContentType(item)}
                   type="button"
                 >
                   {CONTENT_TYPE_CONFIG[item].label}
+                  {imageAnalysis?.suggestedContentType === item && (
+                    <span className="absolute right-1 top-1 text-[9px] font-black text-[var(--color-accent)]">荐</span>
+                  )}
                 </button>
               );
             })}
@@ -224,11 +354,7 @@ export function InputPanel({
                 <div className="flex flex-wrap gap-2">
                   <button
                     aria-pressed={emotionTone === ""}
-                    className={`control-base min-h-9 px-3 text-xs font-bold ${
-                      emotionTone === ""
-                        ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                        : ""
-                    }`}
+                    className="choice-button control-base min-h-9 px-3 text-xs font-bold"
                     disabled={loading}
                     onClick={() => setEmotionTone("")}
                     type="button"
@@ -238,11 +364,7 @@ export function InputPanel({
                   {(Object.keys(EMOTION_TONE_CONFIG) as EmotionTone[]).map((tone) => (
                     <button
                       aria-pressed={emotionTone === tone}
-                      className={`control-base min-h-9 px-3 text-xs font-bold ${
-                        emotionTone === tone
-                          ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)] text-[var(--color-accent)]"
-                          : ""
-                      }`}
+                      className="choice-button control-base relative min-h-9 px-3 text-xs font-bold"
                       disabled={loading}
                       key={tone}
                       onClick={() => setEmotionTone(tone)}
@@ -250,6 +372,9 @@ export function InputPanel({
                       type="button"
                     >
                       {EMOTION_TONE_CONFIG[tone].label}
+                      {imageAnalysis?.suggestedEmotionTone === tone && (
+                        <span className="absolute right-1 top-0.5 text-[9px] font-black text-[var(--color-accent)]">荐</span>
+                      )}
                     </button>
                   ))}
                 </div>
