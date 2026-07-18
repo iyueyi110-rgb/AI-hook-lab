@@ -1,4 +1,4 @@
-import type { EvaluationUser } from "./evaluation/types.ts";
+import type { EvaluationUser } from "./evaluation/types";
 
 export type AdminAccess = "unauthenticated" | "forbidden" | "authorized";
 

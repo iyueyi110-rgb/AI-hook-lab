@@ -40,8 +40,13 @@ test("rejects empty and oversized image files", async () => {
   const empty = new File([], "empty.png", { type: "image/png" });
   const oversized = imageFile("image/jpeg", MAX_IMAGE_BYTES);
 
-  assert.equal((await validateImageUpload(empty)).status, 400);
-  assert.equal((await validateImageUpload(oversized)).status, 413);
+  const emptyResult = await validateImageUpload(empty);
+  const oversizedResult = await validateImageUpload(oversized);
+
+  assert.equal(emptyResult.ok, false);
+  if (!emptyResult.ok) assert.equal(emptyResult.status, 400);
+  assert.equal(oversizedResult.ok, false);
+  if (!oversizedResult.ok) assert.equal(oversizedResult.status, 413);
 });
 
 test("rejects unsupported MIME types and mismatched file signatures", async () => {
@@ -52,8 +57,13 @@ test("rejects unsupported MIME types and mismatched file signatures", async () =
     type: "image/png",
   });
 
-  assert.equal((await validateImageUpload(unsupported)).status, 400);
-  assert.equal((await validateImageUpload(disguised)).status, 400);
+  const unsupportedResult = await validateImageUpload(unsupported);
+  const disguisedResult = await validateImageUpload(disguised);
+
+  assert.equal(unsupportedResult.ok, false);
+  if (!unsupportedResult.ok) assert.equal(unsupportedResult.status, 400);
+  assert.equal(disguisedResult.ok, false);
+  if (!disguisedResult.ok) assert.equal(disguisedResult.status, 400);
 });
 
 test("converts an image to a MIME-preserving base64 data URL", async () => {

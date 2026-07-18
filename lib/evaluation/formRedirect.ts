@@ -1,4 +1,4 @@
-import { sanitizeInternalReturnPath } from "../adminAccess.ts";
+import { sanitizeInternalReturnPath } from "../adminAccess";
 
 export type EvaluationFormError = "login_failed" | "setup_failed";
 

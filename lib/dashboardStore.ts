@@ -1,14 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants.ts";
-import { normalizeDataOrigin } from "./evaluation/origins.ts";
-import type { DataOrigin } from "./evaluation/types.ts";
-import { findSensitiveInputHints } from "./promptTemplates.ts";
+import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants";
+import { normalizeDataOrigin } from "./evaluation/origins";
+import type { DataOrigin } from "./evaluation/types";
+import { findSensitiveInputHints } from "./promptTemplates";
 import {
   assertProductionDatabaseConfigured,
   getConfiguredDatabaseUrl,
-} from "./persistence.ts";
+} from "./persistence";
 
 export type DashboardDataOrigin = DataOrigin;
 
@@ -503,7 +503,10 @@ export async function readDashboardEvents(): Promise<DashboardEvent[]> {
        FROM dashboard_event ORDER BY timestamp DESC LIMIT $1`,
       [MAX_EVENTS]
     );
-    return result.rows.reverse().map(parseEvent).filter((event): event is DashboardEvent => Boolean(event));
+    return result.rows
+      .reverse()
+      .map(parseEvent)
+      .filter((event: DashboardEvent | null): event is DashboardEvent => Boolean(event));
   }
   await ensureStore();
   try {

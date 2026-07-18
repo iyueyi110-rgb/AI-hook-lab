@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { summarizeDashboardEvents, type DashboardEvent } from "./dashboardStore.ts";
@@ -15,6 +16,10 @@ const dashboardEventsRouteUrl = new URL(
   import.meta.url,
 ).href;
 const projectRootUrl = new URL("../", import.meta.url).href;
+const tsExtensionLoaderRegisterUrl = new URL(
+  "../test/register-ts-extension-loader.mjs",
+  import.meta.url,
+).href;
 
 function localPersistenceEnvironment(): NodeJS.ProcessEnv {
   return {
@@ -35,7 +40,9 @@ async function runModuleScript(
     process.execPath,
     [
       "--experimental-strip-types",
-      ...(loaderPath ? ["--experimental-loader", loaderPath] : []),
+      "--import",
+      tsExtensionLoaderRegisterUrl,
+      ...(loaderPath ? ["--experimental-loader", pathToFileURL(loaderPath).href] : []),
       "--input-type=module",
       "-e",
       script,

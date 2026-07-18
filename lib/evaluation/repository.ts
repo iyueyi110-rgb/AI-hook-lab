@@ -7,10 +7,10 @@ import {
   DatabaseNotConfiguredError,
   getConfiguredDatabaseUrl,
   getPersistenceMode,
-} from "../persistence.ts";
-import { EVALUATION_CASES } from "./seeds.ts";
-import { EVALUATION_SCHEMA_SQL } from "./schema.ts";
-import type { EvaluationState, PromptVersion } from "./types.ts";
+} from "../persistence";
+import { EVALUATION_CASES } from "./seeds";
+import { EVALUATION_SCHEMA_SQL } from "./schema";
+import type { EvaluationState, PromptVersion } from "./types";
 
 export interface EvaluationRepository {
   initialize(): Promise<void>;

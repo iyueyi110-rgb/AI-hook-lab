@@ -1,11 +1,15 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { access, readFile, stat } from "node:fs/promises";
 import { constants } from "node:fs";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 const launcherUrl = new URL("../start-ai-hook-mac.command", import.meta.url);
 const dashboardLauncherUrl = new URL("../start-ai-hook-dashboard.bat", import.meta.url);
 const envExampleUrl = new URL("../.env.local.example", import.meta.url);
+const execFileAsync = promisify(execFile);
 
 test("macOS launcher covers setup, port selection, readiness and cleanup", async () => {
   const source = await readFile(launcherUrl, "utf8");
@@ -40,9 +44,18 @@ test("Windows dashboard launcher opens the protected dashboard without changing 
 });
 
 test("macOS launcher and environment example are safe local artifacts", async () => {
-  await access(launcherUrl, constants.X_OK);
-  const mode = (await stat(launcherUrl)).mode;
-  assert.notEqual(mode & 0o111, 0);
+  if (process.platform === "win32") {
+    const { stdout } = await execFileAsync(
+      "git",
+      ["ls-files", "--stage", "--", "start-ai-hook-mac.command"],
+      { cwd: fileURLToPath(new URL("../", import.meta.url)) },
+    );
+    assert.match(stdout, /^100755 /);
+  } else {
+    await access(launcherUrl, constants.X_OK);
+    const mode = (await stat(launcherUrl)).mode;
+    assert.notEqual(mode & 0o111, 0);
+  }
 
   const envExample = await readFile(envExampleUrl, "utf8");
   assert.match(envExample, /^DEEPSEEK_API_KEY=$/m);
