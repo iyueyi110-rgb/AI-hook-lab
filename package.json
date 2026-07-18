@@ -13,7 +13,9 @@
     "eval:summarize": "node eval/summarize-results.mjs",
     "eval:migrate": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/migrate.mjs",
     "eval:seed": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/seed.mjs",
-    "eval:user": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/user.mjs"
+    "eval:user": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/user.mjs",
+    "eval:agent": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/agent/evaluation.test.ts lib/agentDashboardEvents.test.ts lib/secretScan.test.ts",
+    "security:scan": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs scripts/scan-tracked-secrets.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",

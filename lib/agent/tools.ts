@@ -8,11 +8,11 @@ export interface ToolDefinition {
 }
 
 export const TOOL_REGISTRY: Record<ToolName, ToolDefinition> = {
-  analyze_image: { name: "analyze_image", allowedStatuses: ["understanding", "analyzing_image"], risk: "medium" },
+  analyze_image: { name: "analyze_image", allowedStatuses: ["analyzing_image"], risk: "medium" },
   generate_hooks: { name: "generate_hooks", allowedStatuses: ["generating"], risk: "medium" },
   rewrite_hook: { name: "rewrite_hook", allowedStatuses: ["revising"], risk: "low" },
   regenerate_batch: { name: "regenerate_batch", allowedStatuses: ["revising"], risk: "medium" },
-  compare_candidates: { name: "compare_candidates", allowedStatuses: ["reviewing", "revising"], risk: "low" },
+  compare_candidates: { name: "compare_candidates", allowedStatuses: ["reviewing"], risk: "low" },
   save_final_choice: { name: "save_final_choice", allowedStatuses: ["awaiting_final_confirmation"], risk: "high" },
 };
 

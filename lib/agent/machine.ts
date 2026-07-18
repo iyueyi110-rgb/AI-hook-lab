@@ -30,12 +30,12 @@ const COMMANDS: Record<AgentRunStatus, AgentCommand["type"][]> = {
 };
 
 const TOOLS: Record<AgentRunStatus, ToolName[]> = {
-  understanding: ["analyze_image"],
+  understanding: [],
   analyzing_image: ["analyze_image"],
   awaiting_brief_confirmation: [],
   generating: ["generate_hooks"],
   reviewing: ["compare_candidates"],
-  revising: ["rewrite_hook", "regenerate_batch", "compare_candidates"],
+  revising: ["rewrite_hook", "regenerate_batch"],
   awaiting_final_confirmation: ["save_final_choice"],
   completed: [],
   failed: [],

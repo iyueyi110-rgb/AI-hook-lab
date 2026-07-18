@@ -31,6 +31,9 @@ test("agent dashboard events accept only aggregate allowlisted payloads", async 
       { type: "agent_tool_call", payload: { status: "completed", tool: "unknown_tool" } },
       { type: "agent_revision", payload: { status: "revising", command: "raw instruction" } },
       { type: "agent_memory_deleted", payload: { scope: "all", imageDescription: "private image" } },
+      { type: "agent_tool_call", payload: { status: "completed", tool: "generate_hooks", metadata: { topic: "private topic" } } },
+      { type: "agent_tool_call", payload: { status: "completed", tool: "generate_hooks", metadata: [{ message: "private chat" }] } },
+      { type: "agent_tool_call", payload: { status: "completed", tool: "generate_hooks", metadata: { hook: "private hook", image: "private image", email: "person@example.com" } } },
     ];
     const accepted = [];
     for (const input of valid) accepted.push(await appendDashboardEvent({ ...input, dataOrigin: "real_user" }));
@@ -56,7 +59,7 @@ test("agent dashboard events accept only aggregate allowlisted payloads", async 
     });
     const result = JSON.parse(stdout) as { accepted: Array<{ payload: Record<string, unknown> }>; rejected: string[] };
     assert.equal(result.accepted.length, 8);
-    assert.equal(result.rejected.length, 6);
+    assert.equal(result.rejected.length, 9);
     assert.ok(result.accepted.every((event) => !Object.hasOwn(event.payload, "topic")));
     const persisted = JSON.parse(await readFile(path.join(directory, "data", "dashboard-events.json"), "utf8"));
     assert.equal(persisted.length, 8);

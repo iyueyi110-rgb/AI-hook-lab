@@ -562,7 +562,7 @@ function isDashboardEventType(value: unknown): value is DashboardEventType {
   return typeof value === "string" && EVENT_TYPES.has(value as DashboardEventType);
 }
 
-function validateDashboardPayload(
+export function validateDashboardPayload(
   eventType: DashboardEventType,
   raw: unknown,
 ): Record<string, unknown> {
