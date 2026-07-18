@@ -1,9 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
 import { validateDashboardPayload } from "../dashboardStore.ts";
+import { EVALUATION_CASES } from "../evaluation/seeds.ts";
+import { generateCoachHooks } from "../generation/coach.ts";
+import type { GenerationProvider } from "../generation/service.ts";
 import { MemoryAgentRepository } from "./repository.ts";
 import { createCreativeCoachService, type CoachGenerationRequest } from "./service.ts";
 import { assertToolAllowed } from "./tools.ts";
@@ -77,10 +81,14 @@ function createService(repository = new MemoryAgentRepository(), overrides: {
 
 test("agent evaluation inventory covers every approved coach scenario without changing the legacy 60-case corpus", async () => {
   const inventory = JSON.parse(await readFile(new URL("../../eval/agent-fixtures.json", import.meta.url), "utf8")) as {
-    legacyCorpus: { cases: number; mutation: string };
-    scenarios: Array<{ id: string; evaluation: string }>;
+    scenarios: Array<{ id: string; evaluation: string; evidenceTest: string; includedInMachineMetrics: boolean }>;
   };
-  assert.deepEqual(inventory.legacyCorpus, { cases: 60, mutation: "none" });
+  assert.equal(EVALUATION_CASES.length, 60);
+  assert.equal(new Set(EVALUATION_CASES.map((item) => item.caseId)).size, 60);
+  assert.equal(EVALUATION_CASES[0]?.caseId, "CASE_001_XHS");
+  assert.equal(EVALUATION_CASES.at(-1)?.caseId, "CASE_020_BILI");
+  const stableCorpus = EVALUATION_CASES.map(({ caseId, topicId, platform, topic, category, targetAudience, lengthLimit }) => ({ caseId, topicId, platform, topic, category, targetAudience, lengthLimit }));
+  assert.equal(createHash("sha256").update(JSON.stringify(stableCorpus)).digest("hex"), "0f18af6884dce34491e69a6b53a770f76d48100d83fe96d574f323d095983909");
   assert.deepEqual(new Set(inventory.scenarios.map((item) => item.id)), new Set([
     "complete_brief", "missing_topic", "missing_platform", "missing_content_type",
     "image_confirm_and_correct", "initial_ten", "rewrite_three", "regenerate_ten",
@@ -89,6 +97,58 @@ test("agent evaluation inventory covers every approved coach scenario without ch
     "memory_current_request_override", "memory_delete", "hook_quality_and_top3_explanation",
   ]));
   assert.ok(inventory.scenarios.every((item) => ["deterministic", "human_pairwise"].includes(item.evaluation)));
+  const packageJson = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8")) as { scripts: { "eval:agent": string } };
+  const executedTestSources = await Promise.all([
+    ["lib/agent/evaluation.test.ts", new URL("./evaluation.test.ts", import.meta.url)] as const,
+    ["lib/agent/service.test.ts", new URL("./service.test.ts", import.meta.url)] as const,
+    ["lib/generation/service.test.ts", new URL("../generation/service.test.ts", import.meta.url)] as const,
+  ].map(async ([file, url]) => ({ file, source: await readFile(url, "utf8") })));
+  for (const scenario of inventory.scenarios) {
+    if (scenario.evaluation === "deterministic") {
+      assert.equal(scenario.includedInMachineMetrics, true);
+      const evidence = executedTestSources.find((item) => item.source.includes(`test(\"${scenario.evidenceTest}\"`));
+      assert.ok(evidence, `${scenario.id} must map to an executable test`);
+      assert.ok(packageJson.scripts["eval:agent"].includes(evidence.file), `${scenario.id} evidence must run in eval:agent`);
+    } else {
+      assert.equal(scenario.includedInMachineMetrics, false);
+    }
+  }
+});
+
+test("shared generation repairs invalid JSON or count once per Agent turn and exposes final success or failure", async () => {
+  let successCalls = 0;
+  const successProvider: GenerationProvider = { async generate() {
+    successCalls += 1;
+    if (successCalls === 1) return "not-json";
+    return { hooks: Array.from({ length: 10 }, (_, index) => ({ text: `repaired ${index}` })) };
+  } };
+  const successCoach = createService(new MemoryAgentRepository(), {
+    generate: (request) => generateCoachHooks(request, { provider: successProvider, maxRetries: 2 }),
+  });
+  const successRun = await successCoach.createRun(undefined, { brief: completeBrief });
+  const repaired = await successCoach.submitTurn(successRun.sessionToken, successRun.response.run.id, 0, { type: "confirm_brief" });
+  assert.equal(successCalls, 2);
+  assert.equal(repaired.run.status, "reviewing");
+  assert.equal(repaired.candidates.length, 10);
+
+  let retryCalls = 0;
+  const retryProvider: GenerationProvider = { async generate() {
+    retryCalls += 1;
+    if (retryCalls <= 2) return { hooks: [] };
+    return { hooks: Array.from({ length: 10 }, (_, index) => ({ text: `retry ${index}` })) };
+  } };
+  const retryCoach = createService(new MemoryAgentRepository(), {
+    generate: (request) => generateCoachHooks(request, { provider: retryProvider, maxRetries: 2 }),
+  });
+  const retryRun = await retryCoach.createRun(undefined, { brief: completeBrief });
+  await assert.rejects(() => retryCoach.submitTurn(retryRun.sessionToken, retryRun.response.run.id, 0, { type: "confirm_brief" }));
+  const failed = await retryCoach.getRun(retryRun.sessionToken, retryRun.response.run.id);
+  assert.equal(failed.run.status, "failed");
+  assert.equal(retryCalls, 2);
+  const recovered = await retryCoach.submitTurn(retryRun.sessionToken, retryRun.response.run.id, failed.run.revision, { type: "retry" });
+  assert.equal(retryCalls, 3);
+  assert.equal(recovered.run.status, "reviewing");
+  assert.equal(recovered.candidates.length, 10);
 });
 
 test("offline fixtures meet the measurable acceptance thresholds through real coach behavior", async () => {
@@ -227,4 +287,7 @@ test("optimization protocol stops at three rounds or no improvement and keeps su
   assert.equal(AGENT_HUMAN_PAIRWISE_PROTOCOL.positionSwapRequired, true);
   assert.equal(AGENT_HUMAN_PAIRWISE_PROTOCOL.modelScoreRepresentsCtr, false);
   assert.match(AGENT_HUMAN_PAIRWISE_PROTOCOL.note, /human|blind|pairwise/i);
+  const missingEvidenceReport = evaluateAgentOfflineResults([]);
+  assert.ok(missingEvidenceReport.failures.length >= 8);
+  assert.ok(missingEvidenceReport.failures.some((failure) => failure.startsWith("missing offline evidence:")));
 });

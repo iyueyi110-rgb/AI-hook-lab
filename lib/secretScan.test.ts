@@ -17,3 +17,25 @@ test("tracked secret scan identifies provider keys without returning their value
   assert.equal(JSON.stringify(findings).includes(deepseek), false);
   assert.equal(JSON.stringify(findings).includes(ark), false);
 });
+
+test("tracked secret scan accepts controlled common placeholders without weakening real key detection", () => {
+  const placeholders = [
+    "your_api_key", "your_api_key_here", "your_ark_api_key", "replace_me", "CHANGE_ME",
+    "sk-your-key-here", "ark-your-key-here", "placeholder", "<secret>", "example",
+  ];
+  const files = placeholders.flatMap((value, index) => [
+    { path: `deepseek-${index}.env`, content: `DEEPSEEK_API_KEY=${value}` },
+    { path: `ark-${index}.env`, content: `ARK_API_KEY=${value}` },
+  ]);
+  assert.deepEqual(findTrackedSecretFindings(files), []);
+
+  const realDeepSeek = ["sk", "fedcba9876543210fedcba9876543210"].join("-");
+  const realArk = ["ark", "fedcba98-7654-3210-fedc-ba9876543210-live"].join("-");
+  const findings = findTrackedSecretFindings([
+    { path: "real-deepseek.env", content: `DEEPSEEK_API_KEY=${realDeepSeek}` },
+    { path: "real-ark.env", content: `ARK_API_KEY=${realArk}` },
+  ]);
+  assert.equal(findings.length, 2);
+  assert.equal(JSON.stringify(findings).includes(realDeepSeek), false);
+  assert.equal(JSON.stringify(findings).includes(realArk), false);
+});

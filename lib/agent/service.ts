@@ -91,6 +91,7 @@ export interface CreativeCoachDependencies {
   now?: () => Date;
   id?: (prefix: string) => string;
   operationLeaseMs?: number;
+  authorizeTool?: (status: StoredAgentRun["status"], tool: ToolName) => void;
 }
 
 function defaultId(prefix: string): string {
@@ -158,15 +159,22 @@ function finalizedResponseForRun(run: StoredAgentRun): GenerateResponse | undefi
 
 function asResponse(run: StoredAgentRun, messages: Message[] = [], finalizedResponse?: GenerateResponse): CoachRunResponse {
   syncRunSummary(run);
-  const comparison = compareCandidates(run.candidates);
+  const comparisonResult = [...run.toolResults].reverse().find((result) => result.tool === "compare_candidates" && result.status === "success");
+  const topCandidateIds = Array.isArray(comparisonResult?.output?.topCandidateIds)
+    ? comparisonResult.output.topCandidateIds.filter((item): item is string => typeof item === "string")
+    : [];
+  const comparisonExplanations = Array.isArray(comparisonResult?.output?.explanations)
+    ? comparisonResult.output.explanations.filter((item): item is string => typeof item === "string")
+    : [];
+  const candidatesById = new Map(run.candidates.map((candidate) => [candidate.id, candidate]));
   const publicRun = structuredClone(run) as CoachRunState & { creatorSessionId?: string };
   delete publicRun.creatorSessionId;
   return {
     run: publicRun,
     messages: structuredClone(messages),
     candidates: structuredClone(run.candidates),
-    topCandidates: structuredClone(comparison.top3),
-    comparisonExplanations: comparison.explanations,
+    topCandidates: structuredClone(topCandidateIds.map((candidateId) => candidatesById.get(candidateId)).filter((candidate): candidate is Candidate => Boolean(candidate))),
+    comparisonExplanations: structuredClone(comparisonExplanations),
     pendingConfirmation: run.status === "awaiting_brief_confirmation" ? "brief" : run.status === "awaiting_final_confirmation" ? "final" : null,
     allowedCommands: run.activeOperation
       ? []
@@ -286,6 +294,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   const { repository } = dependencies;
   const now = dependencies.now ?? (() => new Date());
   const id = dependencies.id ?? defaultId;
+  const authorizeTool = dependencies.authorizeTool ?? assertToolAllowed;
   const operationLeaseMs = Number.isFinite(dependencies.operationLeaseMs) && dependencies.operationLeaseMs! > 0
     ? dependencies.operationLeaseMs!
     : DEFAULT_AGENT_OPERATION_LEASE_MS;
@@ -401,9 +410,11 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       const call = [...run.toolCalls].reverse().find((item) => item.status === "requested");
       if (call) call.status = "completed";
       run.toolResults.push({ callId: call?.id, tool: request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch", status: "success", output: { count: candidates.length } });
+      authorizeTool(run.status, "compare_candidates");
+      const comparison = compareCandidates(candidates);
       const compareId = id("tool");
       run.toolCalls.push({ id: compareId, tool: "compare_candidates", input: { candidateCount: candidates.length }, status: "completed", createdAt: now().toISOString() });
-      run.toolResults.push({ callId: compareId, tool: "compare_candidates", status: "success", output: { topCandidateIds: compareCandidates(candidates).top3.map((item) => item.id) } });
+      run.toolResults.push({ callId: compareId, tool: "compare_candidates", status: "success", output: { topCandidateIds: comparison.top3.map((item) => item.id), explanations: comparison.explanations } });
       run.updatedAt = now().toISOString();
       run.revision += 1;
       return asResponse(run);
@@ -533,6 +544,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = pending.kind === "initial" ? "generate_hooks" : pending.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
+          authorizeTool(run.status, tool);
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, retry: true }, status: "requested", createdAt: timestamp });
           asResponse(run);
           return { kind: "generate" as const, operationId, request: { ...pending, brief: run.brief, sourceCandidate } satisfies CoachGenerationRequest, revision: run.revision };
@@ -552,6 +564,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operation = activeOperation("generation", timestamp);
           const operationId = operation.id;
           run.activeOperation = operation;
+          authorizeTool(run.status, "generate_hooks");
           run.toolCalls.push({ id: id("tool"), tool: "generate_hooks", input: { expectedCount: 10 }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -574,6 +587,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = command.type === "rewrite_candidate" ? "rewrite_hook" : "regenerate_batch";
+          authorizeTool(run.status, tool);
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, ...(command.type === "rewrite_candidate" ? { candidateId: sourceCandidate!.id } : { hasReason: Boolean(command.reason) }) }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -593,7 +607,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         if (command.type === "confirm_final") {
           const selected = run.candidates.find((item) => item.id === run.selectedCandidateId);
           if (!selected || !run.brief) throw new AgentConflictError("A candidate must be selected first");
-          assertToolAllowed(run.status, "save_final_choice");
+          authorizeTool(run.status, "save_final_choice");
           const callId = id("tool");
           const approvalId = id("approval");
           run.approvals.push({ id: approvalId, tool: "save_final_choice", status: "approved", requestedAt: timestamp, resolvedAt: timestamp });
@@ -680,6 +694,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         const operation = activeOperation("image", now().toISOString());
         const operationId = operation.id;
         run.activeOperation = operation;
+        authorizeTool(run.status, "analyze_image");
         run.toolCalls.push({ id: callId, tool: "analyze_image", input: { mimeType: file.type, size: file.size }, status: "requested", createdAt: now().toISOString() });
         run.updatedAt = now().toISOString();
         asResponse(run);

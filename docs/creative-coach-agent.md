@@ -8,7 +8,8 @@ Creative Coach is an optional, single-Agent workflow layered on top of the exist
 - Anonymous ownership uses the HttpOnly `ai-hook-creator-session` cookie. The cookie is `SameSite=Lax`, `Secure` in production, and expires after 180 days; storage contains only its SHA-256 digest.
 - Local development uses `data/agent-store.json` (or `AGENT_STORE_PATH`) when `DATABASE_URL` is empty. Production fails closed unless PostgreSQL is configured.
 - Terminal runs, including their messages and final candidates, are removed after 30 days by lazy cleanup. Creator preference memory is separate and can be deleted immediately from the UI/API.
-- Original images are never persisted. Tool audit records contain only safe metadata such as MIME type and byte count.
+- The original image file and its binary/base64 bytes are never persisted. The resulting structured understanding (for example `topic`, `imageDescription`, suggested platform/content type/tone) may be stored in the run brief and structured tool result for the same maximum 30-day run lifetime. The tool-call input audit contains only safe upload metadata such as MIME type and byte count.
+- Long-term creator memory is a strict enum/value whitelist (platform, existing style preference/avoidance, tone, word-limit band and avoided Bad Case tag). It never stores an image, image description, topic, Hook, free-form message or personal identity data.
 
 Image analysis requires both `ARK_API_KEY` and `ARK_MODEL_ID`. `ARK_MODEL_ID` is the Ark model or endpoint ID enabled for the account. Keep real credentials only in ignored `.env.local`; never commit them.
 

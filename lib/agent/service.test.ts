@@ -15,6 +15,7 @@ import {
   type CoachGenerationRequest,
 } from "./service.ts";
 import * as coachServiceModule from "./service.ts";
+import type { AgentRunStatus, ToolName } from "./types.ts";
 
 const completeBrief = {
   topic: "用 AI 写周报",
@@ -61,6 +62,7 @@ function service(overrides: {
   repository?: AgentRepository;
   now?: () => Date;
   operationLeaseMs?: number;
+  authorizeTool?: (status: AgentRunStatus, tool: ToolName) => void;
 } = {}) {
   let sequence = 0;
   return createCreativeCoachService({
@@ -76,9 +78,80 @@ function service(overrides: {
     decideBriefPatch: overrides.decideBriefPatch,
     now: overrides.now ?? (() => new Date("2026-07-18T00:00:00.000Z")),
     operationLeaseMs: overrides.operationLeaseMs,
+    authorizeTool: overrides.authorizeTool,
     id: (prefix) => `${prefix}-${++sequence}`,
   });
 }
+
+test("authorizes every real tool invocation in its fixed execution state", async () => {
+  const authorized: Array<[AgentRunStatus, ToolName]> = [];
+  const coach = service({ authorizeTool: (status, tool) => authorized.push([status, tool]) });
+
+  const imageRun = await coach.createRun(undefined, { brief: completeBrief, hasImage: true });
+  const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "image.jpg", { type: "image/jpeg" });
+  await coach.uploadImage(imageRun.sessionToken, imageRun.response.run.id, 0, file);
+
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  const rewritten = await coach.submitTurn(created.sessionToken, created.response.run.id, reviewed.run.revision, { type: "rewrite_candidate", candidateId: reviewed.candidates[0]!.id });
+  const regenerated = await coach.submitTurn(created.sessionToken, created.response.run.id, rewritten.run.revision, { type: "reject_batch", reason: "too generic" });
+  const selected = await coach.submitTurn(created.sessionToken, created.response.run.id, regenerated.run.revision, { type: "select_candidate", candidateId: regenerated.candidates[0]!.id });
+  await coach.submitTurn(created.sessionToken, created.response.run.id, selected.run.revision, { type: "confirm_final" });
+
+  assert.deepEqual(authorized, [
+    ["analyzing_image", "analyze_image"],
+    ["generating", "generate_hooks"], ["reviewing", "compare_candidates"],
+    ["revising", "rewrite_hook"], ["reviewing", "compare_candidates"],
+    ["revising", "regenerate_batch"], ["reviewing", "compare_candidates"],
+    ["awaiting_final_confirmation", "save_final_choice"],
+  ]);
+});
+
+test("authorization denial rolls back the reservation and never invokes an external provider", async () => {
+  let imageCalls = 0;
+  const imageCoach = service({
+    analyzeImage: async () => { imageCalls += 1; throw new Error("must not execute"); },
+    authorizeTool: (_status, tool) => { if (tool === "analyze_image") throw new Error("denied"); },
+  });
+  const imageRun = await imageCoach.createRun(undefined, { brief: completeBrief, hasImage: true });
+  const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "image.jpg", { type: "image/jpeg" });
+  await assert.rejects(() => imageCoach.uploadImage(imageRun.sessionToken, imageRun.response.run.id, 0, file), /denied/);
+  assert.equal(imageCalls, 0);
+  assert.equal((await imageCoach.getRun(imageRun.sessionToken, imageRun.response.run.id)).run.revision, 0);
+
+  let generationCalls = 0;
+  const generationCoach = service({
+    generate: async (request) => { generationCalls += 1; return generated(request); },
+    authorizeTool: (_status, tool) => { if (tool === "generate_hooks") throw new Error("denied"); },
+  });
+  const created = await generationCoach.createRun(undefined, { brief: completeBrief });
+  await assert.rejects(() => generationCoach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" }), /denied/);
+  assert.equal(generationCalls, 0);
+  const unchanged = await generationCoach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(unchanged.run.status, "awaiting_brief_confirmation");
+  assert.equal(unchanged.run.revision, 0);
+});
+
+test("corrupted illegal public states cannot reach image or generation providers", async () => {
+  const repository = new MemoryAgentRepository();
+  let imageCalls = 0;
+  let generationCalls = 0;
+  const coach = service({
+    repository,
+    analyzeImage: async () => { imageCalls += 1; throw new Error("must not execute"); },
+    generate: async (request) => { generationCalls += 1; return generated(request); },
+  });
+  const imageRun = await coach.createRun(undefined, { brief: completeBrief, hasImage: true });
+  await repository.transaction((state) => { state.runs.find((run) => run.id === imageRun.response.run.id)!.status = "understanding"; });
+  const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "image.jpg", { type: "image/jpeg" });
+  await assert.rejects(() => coach.uploadImage(imageRun.sessionToken, imageRun.response.run.id, 0, file), /not expected/);
+
+  const generationRun = await coach.createRun(undefined, { brief: completeBrief });
+  await repository.transaction((state) => { state.runs.find((run) => run.id === generationRun.response.run.id)!.status = "understanding"; });
+  await assert.rejects(() => coach.submitTurn(generationRun.sessionToken, generationRun.response.run.id, 0, { type: "confirm_brief" }), /not allowed/);
+  assert.equal(imageCalls, 0);
+  assert.equal(generationCalls, 0);
+});
 
 test("recovers one expired generation lease atomically and rejects the old result", async () => {
   let currentTime = new Date("2026-07-18T00:00:00.000Z");

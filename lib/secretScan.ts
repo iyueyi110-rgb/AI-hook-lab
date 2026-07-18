@@ -9,7 +9,21 @@ export interface SecretFinding {
   rule: "provider_assignment" | "deepseek_key" | "ark_key" | "private_key";
 }
 
-const PLACEHOLDERS = new Set(["", "your_api_key_here", "placeholder", "changeme", "<secret>", "example"]);
+const PLACEHOLDERS = new Set([
+  "",
+  "your_api_key",
+  "your_api_key_here",
+  "your_ark_api_key",
+  "your_deepseek_api_key",
+  "replace_me",
+  "change_me",
+  "changeme",
+  "sk-your-key-here",
+  "ark-your-key-here",
+  "placeholder",
+  "<secret>",
+  "example",
+]);
 
 function matchingRule(line: string): SecretFinding["rule"] | undefined {
   const assignment = line.match(/^\s*(?:DEEPSEEK_API_KEY|ARK_API_KEY)\s*=\s*([^\s#]+)\s*$/i);
