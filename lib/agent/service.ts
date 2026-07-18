@@ -25,7 +25,7 @@ import {
   recordCreatorMemory,
   resolveCreatorSession,
 } from "./repository.ts";
-import type { AgentCommand, Candidate, CreativeBrief, MemoryKey, Message, ToolName } from "./types.ts";
+import type { AgentCommand, AgentRunStatus, Candidate, CreativeBrief, MemoryKey, Message, ToolName } from "./types.ts";
 
 export const MAX_AGENT_MESSAGE_LENGTH = 2_000;
 export const DEFAULT_AGENT_OPERATION_LEASE_MS = 120_000;
@@ -316,6 +316,31 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     return !Number.isFinite(startedAt) || startedAt + operationLeaseMs <= current.getTime();
   }
 
+  function authorizeGenerationOperation(
+    run: StoredAgentRun,
+    operation: NonNullable<StoredAgentRun["activeOperation"]>,
+    generationTool: "generate_hooks" | "rewrite_hook" | "regenerate_batch",
+  ): void {
+    authorizeTool(run.status, generationTool);
+    authorizeTool("reviewing", "compare_candidates");
+    operation.authorizationTickets = [
+      { status: run.status, tool: generationTool },
+      { status: "reviewing", tool: "compare_candidates" },
+    ];
+  }
+
+  function assertAuthorizationTicket(
+    run: StoredAgentRun,
+    operationId: string,
+    status: AgentRunStatus,
+    tool: ToolName,
+  ): void {
+    assertActiveOperation(run, operationId, "generation");
+    if (!run.activeOperation!.authorizationTickets?.some((ticket) => ticket.status === status && ticket.tool === tool)) {
+      throw new AgentConflictError(`Missing authorization ticket for ${tool} while ${status}`);
+    }
+  }
+
   function recoverExpiredOperation(run: StoredAgentRun, current: Date): boolean {
     const operation = run.activeOperation;
     if (!operation || !operationExpired(run, current)) return false;
@@ -366,6 +391,11 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   }
 
   async function completeGeneration(ownerId: string, runId: string, request: CoachGenerationRequest, revision: number, operationId: string): Promise<CoachRunResponse> {
+    const generationTool = request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
+    const reservedRun = findOwnedRun(await repository.read(), runId, ownerId);
+    assertExpectedRevision(reservedRun, revision);
+    assertAuthorizationTicket(reservedRun, operationId, reservedRun.status, generationTool);
+    assertAuthorizationTicket(reservedRun, operationId, "reviewing", "compare_candidates");
     let candidates: Candidate[];
     try {
       const generated = await dependencies.generate(request);
@@ -401,6 +431,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       const run = findOwnedRun(state, runId, ownerId);
       assertExpectedRevision(run, revision);
       assertActiveOperation(run, operationId, "generation");
+      assertAuthorizationTicket(run, operationId, "reviewing", "compare_candidates");
       run.candidates = candidates;
       run.status = "reviewing";
       run.recoverable = undefined;
@@ -410,7 +441,6 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       const call = [...run.toolCalls].reverse().find((item) => item.status === "requested");
       if (call) call.status = "completed";
       run.toolResults.push({ callId: call?.id, tool: request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch", status: "success", output: { count: candidates.length } });
-      authorizeTool(run.status, "compare_candidates");
       const comparison = compareCandidates(candidates);
       const compareId = id("tool");
       run.toolCalls.push({ id: compareId, tool: "compare_candidates", input: { candidateCount: candidates.length }, status: "completed", createdAt: now().toISOString() });
@@ -544,7 +574,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = pending.kind === "initial" ? "generate_hooks" : pending.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
-          authorizeTool(run.status, tool);
+          authorizeGenerationOperation(run, operation, tool);
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, retry: true }, status: "requested", createdAt: timestamp });
           asResponse(run);
           return { kind: "generate" as const, operationId, request: { ...pending, brief: run.brief, sourceCandidate } satisfies CoachGenerationRequest, revision: run.revision };
@@ -564,7 +594,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operation = activeOperation("generation", timestamp);
           const operationId = operation.id;
           run.activeOperation = operation;
-          authorizeTool(run.status, "generate_hooks");
+          authorizeGenerationOperation(run, operation, "generate_hooks");
           run.toolCalls.push({ id: id("tool"), tool: "generate_hooks", input: { expectedCount: 10 }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -587,7 +617,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = command.type === "rewrite_candidate" ? "rewrite_hook" : "regenerate_batch";
-          authorizeTool(run.status, tool);
+          authorizeGenerationOperation(run, operation, tool);
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, ...(command.type === "rewrite_candidate" ? { candidateId: sourceCandidate!.id } : { hasReason: Boolean(command.reason) }) }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);

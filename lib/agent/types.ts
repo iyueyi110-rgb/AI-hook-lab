@@ -136,6 +136,7 @@ export interface AgentRun {
     kind: "decision" | "generation" | "image";
     startedAt: string;
     expiresAt?: string;
+    authorizationTickets?: Array<{ status: AgentRunStatus; tool: ToolName }>;
   };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;

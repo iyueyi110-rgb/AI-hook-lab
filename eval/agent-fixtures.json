@@ -16,7 +16,7 @@
     { "id": "revision_conflict", "evaluation": "deterministic", "evidenceTest": "approval, revision, ownership, retry, memory override and immediate deletion remain enforceable", "includedInMachineMetrics": true },
     { "id": "approval_bypass", "evaluation": "deterministic", "evidenceTest": "approval, revision, ownership, retry, memory override and immediate deletion remain enforceable", "includedInMachineMetrics": true },
     { "id": "cross_session", "evaluation": "deterministic", "evidenceTest": "approval, revision, ownership, retry, memory override and immediate deletion remain enforceable", "includedInMachineMetrics": true },
-    { "id": "provider_error_retry", "evaluation": "deterministic", "evidenceTest": "shared generation repairs invalid JSON or count once per Agent turn and exposes final success or failure", "includedInMachineMetrics": true },
+    { "id": "provider_error_retry", "evaluation": "deterministic", "evidenceTest": "persists recoverable provider failures and retry resumes the interrupted generation", "includedInMachineMetrics": true },
     { "id": "memory_current_request_override", "evaluation": "deterministic", "evidenceTest": "offline fixtures meet the measurable acceptance thresholds through real coach behavior", "includedInMachineMetrics": true },
     { "id": "memory_delete", "evaluation": "deterministic", "evidenceTest": "offline fixtures meet the measurable acceptance thresholds through real coach behavior", "includedInMachineMetrics": true },
     { "id": "hook_quality_and_top3_explanation", "evaluation": "human_pairwise", "evidenceTest": "manual blinded pairwise protocol", "includedInMachineMetrics": false }

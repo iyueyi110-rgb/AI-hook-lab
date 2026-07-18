@@ -22,12 +22,22 @@ const PLACEHOLDERS = new Set([
   "ark-your-key-here",
   "placeholder",
   "<secret>",
+  "<placeholder>",
   "example",
 ]);
 
+function normalizeAssignmentValue(raw: string): string {
+  const trimmed = raw.trim();
+  const first = trimmed[0];
+  if ((first === "'" || first === '"') && trimmed.length >= 2 && trimmed.at(-1) === first) {
+    return trimmed.slice(1, -1).trim();
+  }
+  return trimmed;
+}
+
 function matchingRule(line: string): SecretFinding["rule"] | undefined {
   const assignment = line.match(/^\s*(?:DEEPSEEK_API_KEY|ARK_API_KEY)\s*=\s*([^\s#]+)\s*$/i);
-  if (assignment && !PLACEHOLDERS.has(assignment[1]!.toLowerCase())) return "provider_assignment";
+  if (assignment && !PLACEHOLDERS.has(normalizeAssignmentValue(assignment[1]!).toLowerCase())) return "provider_assignment";
   if (/\bsk-[a-z0-9_-]{24,}\b/i.test(line)) return "deepseek_key";
   if (/\bark-[a-z0-9_-]{24,}\b/i.test(line)) return "ark_key";
   if (/-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/.test(line)) return "private_key";

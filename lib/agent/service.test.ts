@@ -132,6 +132,22 @@ test("authorization denial rolls back the reservation and never invokes an exter
   assert.equal(unchanged.run.revision, 0);
 });
 
+test("compare preauthorization denial prevents generation and leaves no reservation artifacts", async () => {
+  let providerCalls = 0;
+  const coach = service({
+    generate: async (request) => { providerCalls += 1; return generated(request); },
+    authorizeTool: (_status, tool) => { if (tool === "compare_candidates") throw new Error("compare denied"); },
+  });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  await assert.rejects(() => coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" }), /compare denied/);
+  assert.equal(providerCalls, 0);
+  const unchanged = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(unchanged.run.status, "awaiting_brief_confirmation");
+  assert.equal(unchanged.run.revision, 0);
+  assert.equal(unchanged.run.activeOperation, undefined);
+  assert.equal(unchanged.run.toolCalls.length, 0);
+});
+
 test("corrupted illegal public states cannot reach image or generation providers", async () => {
   const repository = new MemoryAgentRepository();
   let imageCalls = 0;
@@ -654,11 +670,16 @@ test("persists recoverable provider failures and retry resumes the interrupted g
   assert.equal(providerFailure?.response.run.resumeStatus, "generating");
   assert.deepEqual(collectCoachToolEvents(providerFailure!.response, new Set()).map((event) => event.status), ["error"]);
   const failed = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(calls, 1);
+  assert.equal(failed.run.status, "failed");
+  assert.equal(failed.run.revision, 2);
   assert.deepEqual(failed.allowedCommands, ["retry"]);
   assert.equal(failed.needsInput, true);
   const recovered = await coach.submitTurn(created.sessionToken, created.response.run.id, failed.run.revision, { type: "retry" });
   assert.equal(recovered.run.status, "reviewing");
+  assert.equal(recovered.run.revision, 4);
   assert.equal(recovered.candidates.length, 10);
+  assert.equal(calls, 2);
 });
 
 test("analyzes images without storing raw bytes and preserves explicit brief fields", async () => {

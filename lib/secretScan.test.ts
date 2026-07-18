@@ -39,3 +39,27 @@ test("tracked secret scan accepts controlled common placeholders without weakeni
   assert.equal(JSON.stringify(findings).includes(realDeepSeek), false);
   assert.equal(JSON.stringify(findings).includes(realArk), false);
 });
+
+test("tracked secret scan normalizes one matching quote pair only and rejects nested or suffixed placeholders", () => {
+  assert.deepEqual(findTrackedSecretFindings([
+    { path: "quoted.env", content: [
+      "DEEPSEEK_API_KEY='your_api_key'",
+      "ARK_API_KEY=\"your_ark_api_key\"",
+      "DEEPSEEK_API_KEY=<placeholder>",
+    ].join("\n") },
+  ]), []);
+
+  const realDeepSeek = ["sk", "00112233445566778899aabbccddeeff"].join("-");
+  const realArk = ["ark", "00112233-4455-6677-8899-aabbccddeeff-live"].join("-");
+  const findings = findTrackedSecretFindings([
+    { path: "unsafe.env", content: [
+      "DEEPSEEK_API_KEY=\"'your_api_key'\"",
+      "ARK_API_KEY=your_ark_api_key_prod",
+      `DEEPSEEK_API_KEY='${realDeepSeek}'`,
+      `ARK_API_KEY=\"${realArk}\"`,
+    ].join("\n") },
+  ]);
+  assert.equal(findings.length, 4);
+  assert.equal(JSON.stringify(findings).includes(realDeepSeek), false);
+  assert.equal(JSON.stringify(findings).includes(realArk), false);
+});

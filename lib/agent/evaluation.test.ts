@@ -79,6 +79,19 @@ function createService(repository = new MemoryAgentRepository(), overrides: {
   });
 }
 
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function corpusHash(cases: typeof EVALUATION_CASES): string {
+  return createHash("sha256").update(stableJson(cases)).digest("hex");
+}
+
 test("agent evaluation inventory covers every approved coach scenario without changing the legacy 60-case corpus", async () => {
   const inventory = JSON.parse(await readFile(new URL("../../eval/agent-fixtures.json", import.meta.url), "utf8")) as {
     scenarios: Array<{ id: string; evaluation: string; evidenceTest: string; includedInMachineMetrics: boolean }>;
@@ -87,8 +100,14 @@ test("agent evaluation inventory covers every approved coach scenario without ch
   assert.equal(new Set(EVALUATION_CASES.map((item) => item.caseId)).size, 60);
   assert.equal(EVALUATION_CASES[0]?.caseId, "CASE_001_XHS");
   assert.equal(EVALUATION_CASES.at(-1)?.caseId, "CASE_020_BILI");
-  const stableCorpus = EVALUATION_CASES.map(({ caseId, topicId, platform, topic, category, targetAudience, lengthLimit }) => ({ caseId, topicId, platform, topic, category, targetAudience, lengthLimit }));
-  assert.equal(createHash("sha256").update(JSON.stringify(stableCorpus)).digest("hex"), "0f18af6884dce34491e69a6b53a770f76d48100d83fe96d574f323d095983909");
+  assert.deepEqual(Object.keys(EVALUATION_CASES[0]!).sort(), [
+    "caseId", "category", "createdAt", "dataOrigin", "datasetVersion", "emotionStyle", "id",
+    "lengthLimit", "platform", "platformLabel", "status", "targetAudience", "topic", "topicId", "updatedAt",
+  ]);
+  assert.equal(corpusHash(EVALUATION_CASES), "67987ce48299cbaf60e54695aac2c84791cbdbadec408b1d8b7ae31f110fff6b");
+  const mutated = structuredClone(EVALUATION_CASES);
+  mutated[0]!.datasetVersion = `${mutated[0]!.datasetVersion}-mutated`;
+  assert.notEqual(corpusHash(mutated), corpusHash(EVALUATION_CASES));
   assert.deepEqual(new Set(inventory.scenarios.map((item) => item.id)), new Set([
     "complete_brief", "missing_topic", "missing_platform", "missing_content_type",
     "image_confirm_and_correct", "initial_ten", "rewrite_three", "regenerate_ten",
