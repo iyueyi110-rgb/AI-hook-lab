@@ -3,5 +3,7 @@ export * from "./budget.ts";
 export * from "./candidates.ts";
 export * from "./machine.ts";
 export * from "./memory.ts";
+export * from "./repository.ts";
+export * from "./schema.ts";
 export * from "./tools.ts";
 export * from "./types.ts";
