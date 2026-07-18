@@ -112,6 +112,7 @@ export interface AgentRun {
   revision: number;
   status: AgentRunStatus;
   brief?: CreativeBrief;
+  briefDraft?: Partial<CreativeBrief>;
   messages: Message[];
   candidates: Candidate[];
   toolCalls: ToolCall[];
@@ -119,6 +120,16 @@ export interface AgentRun {
   approvals: Approval[];
   memory: Memory;
   revisionRounds: number;
+  clarificationAttempts?: number;
+  requiresFormCompletion?: boolean;
+  selectedCandidateId?: string;
+  pendingGeneration?: {
+    kind: "initial" | "rewrite" | "regenerate";
+    count: 3 | 10;
+    sourceCandidateId?: string;
+    instruction?: string;
+    reason?: string;
+  };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;
 }

@@ -5,5 +5,7 @@ export * from "./machine.ts";
 export * from "./memory.ts";
 export * from "./repository.ts";
 export * from "./schema.ts";
+export * from "./service.ts";
+export * from "./http.ts";
 export * from "./tools.ts";
 export * from "./types.ts";

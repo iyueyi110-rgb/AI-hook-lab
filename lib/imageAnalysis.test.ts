@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  analyzeImageFile,
+  ImageAnalysisError,
   DEFAULT_IMAGE_ANALYSIS_TIMEOUT_MS,
   handleAnalyzeImageRequest,
   imageFileToDataUrl,
@@ -183,6 +185,36 @@ test("sends a validated image to Doubao with JSON Schema output", async () => {
   assert.doesNotMatch(JSON.stringify(upstreamBody), /store/);
 });
 
+test("exposes image analysis as a reusable service without retaining the image payload", async () => {
+  let capturedBody = "";
+  const result = await analyzeImageFile(imageFile("image/png"), {
+    apiKey: "test-key",
+    model: "doubao-vision-test",
+    fetchImpl: async (_input, init) => {
+      capturedBody = String(init?.body);
+      return Response.json(doubaoResponse(validAnalysis));
+    },
+  });
+
+  assert.deepEqual(result, validAnalysis);
+  assert.match(capturedBody, /data:image\/png;base64,/);
+  assert.doesNotMatch(JSON.stringify(result), /base64|data:image/i);
+});
+
+test("the reusable image service returns typed validation and provider failures", async () => {
+  await assert.rejects(
+    () => analyzeImageFile(new File([], "empty.png", { type: "image/png" }), {
+      apiKey: "test-key",
+      model: "doubao-vision-test",
+    }),
+    (error: unknown) => error instanceof ImageAnalysisError && error.status === 400
+  );
+  await assert.rejects(
+    () => analyzeImageFile(imageFile("image/jpeg"), { apiKey: "", model: "" }),
+    (error: unknown) => error instanceof ImageAnalysisError && error.status === 501
+  );
+});
+
 test("returns 501 when Doubao credentials or model configuration is absent", async () => {
   const file = imageFile("image/jpeg");
   const withoutKey = await handleAnalyzeImageRequest(analyzeRequest(file), {
@@ -289,4 +321,23 @@ test("the Next route wires ARK configuration into the tested handler", async () 
   assert.match(route, /process\.env\.ARK_MODEL_ID/);
   assert.match(envExample, /^ARK_API_KEY=$/m);
   assert.match(envExample, /^ARK_MODEL_ID=$/m);
+});
+
+test("enforces the image deadline when an injected provider ignores abort", async () => {
+  const response = await handleAnalyzeImageRequest(analyzeRequest(imageFile("image/jpeg")), {
+    apiKey: "test-key",
+    model: "doubao-vision-test",
+    fetchImpl: async () => {
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      return Response.json(doubaoResponse(validAnalysis));
+    },
+    timeoutMs: 5,
+  });
+  assert.equal(response.status, 504);
+});
+
+test("the classic image handler delegates to the reusable image service", async () => {
+  const source = await readFile(new URL("./imageAnalysis.ts", import.meta.url), "utf8");
+  const handler = source.slice(source.indexOf("export async function handleAnalyzeImageRequest"));
+  assert.match(handler, /analyzeImageFile\(image, options\)/);
 });
