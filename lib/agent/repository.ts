@@ -65,6 +65,30 @@ export class AgentNotFoundError extends Error {
   }
 }
 
+export class CreatorSessionNotFoundError extends Error {
+  readonly code = "creator_session_not_found" as const;
+  constructor() {
+    super("Creator session was not found");
+    this.name = "CreatorSessionNotFoundError";
+  }
+}
+
+export class AgentMemoryValidationError extends Error {
+  readonly code = "agent_memory_invalid" as const;
+  constructor(message: string) {
+    super(message);
+    this.name = "AgentMemoryValidationError";
+  }
+}
+
+export class UnsupportedAgentSchemaError extends Error {
+  readonly code = "agent_schema_unsupported" as const;
+  constructor(schemaVersion: unknown, storedSchemaVersion?: unknown) {
+    super(`Unsupported agent schema version ${String(schemaVersion)}${storedSchemaVersion === undefined ? "" : ` (stored ${String(storedSchemaVersion)})`}`);
+    this.name = "UnsupportedAgentSchemaError";
+  }
+}
+
 export function createInitialAgentState(): AgentState {
   return { schemaVersion: 1, creatorSessions: [], runs: [], memories: [] };
 }
@@ -98,6 +122,20 @@ export function resolveCreatorSession(state: AgentState, token: string | undefin
   return session;
 }
 
+function requireActiveCreatorSession(state: AgentState, creatorSessionId: string, now = new Date()): CreatorSession {
+  const session = state.creatorSessions.find((item) => item.id === creatorSessionId && Date.parse(item.expiresAt) > now.getTime());
+  if (!session) throw new CreatorSessionNotFoundError();
+  return session;
+}
+
+const MEMORY_KEYS: readonly MemoryKey[] = ["default_platform", "preferred_style", "avoided_style", "preferred_tone", "word_limit_band", "avoid_badcase_tag"];
+
+function assertMemoryKey(key: unknown): asserts key is MemoryKey {
+  if (typeof key !== "string" || !MEMORY_KEYS.includes(key as MemoryKey)) {
+    throw new AgentMemoryValidationError("Memory key is not allowed");
+  }
+}
+
 export function findOwnedRun(state: AgentState, runId: string, creatorSessionId: string): StoredAgentRun {
   const run = state.runs.find((item) => item.id === runId && item.creatorSessionId === creatorSessionId);
   if (!run) throw new AgentNotFoundError();
@@ -110,12 +148,15 @@ export function assertOwnedRunRevision(state: AgentState, runId: string, creator
   return run;
 }
 
-export function listCreatorMemory(state: AgentState, creatorSessionId: string): Memory {
+export function listCreatorMemory(state: AgentState, creatorSessionId: string, now = new Date()): Memory {
+  requireActiveCreatorSession(state, creatorSessionId, now);
   return state.memories.find((item) => item.creatorSessionId === creatorSessionId)?.memory ?? { entries: [] };
 }
 
-export function recordCreatorMemory(state: AgentState, creatorSessionId: string, update: { key: MemoryKey; value: string }): { memory: Memory; accepted: boolean } {
-  const current = listCreatorMemory(state, creatorSessionId);
+export function recordCreatorMemory(state: AgentState, creatorSessionId: string, update: { key: MemoryKey; value: string }, now = new Date()): { memory: Memory; accepted: boolean } {
+  requireActiveCreatorSession(state, creatorSessionId, now);
+  assertMemoryKey(update.key);
+  const current = state.memories.find((item) => item.creatorSessionId === creatorSessionId)?.memory ?? { entries: [] };
   const result = recordMemory({ id: "memory", revision: 0, status: "understanding", messages: [], candidates: [], toolCalls: [], toolResults: [], approvals: [], memory: current, revisionRounds: 0 }, 0, update);
   if (result.accepted) {
     const existing = state.memories.find((item) => item.creatorSessionId === creatorSessionId);
@@ -125,7 +166,9 @@ export function recordCreatorMemory(state: AgentState, creatorSessionId: string,
   return { memory: result.run.memory, accepted: result.accepted };
 }
 
-export function deleteCreatorMemory(state: AgentState, creatorSessionId: string, key?: MemoryKey, value?: string): void {
+export function deleteCreatorMemory(state: AgentState, creatorSessionId: string, key?: MemoryKey, value?: string, now = new Date()): void {
+  requireActiveCreatorSession(state, creatorSessionId, now);
+  if (key !== undefined) assertMemoryKey(key);
   const entry = state.memories.find((item) => item.creatorSessionId === creatorSessionId);
   if (!entry) return;
   if (!key) { entry.memory = { entries: [] }; return; }
@@ -143,69 +186,105 @@ function summaryFor(run: StoredAgentRun, originalMessageCount = run.messages.len
   return { messageCount: Math.max(run.summary?.messageCount ?? 0, originalMessageCount), latestMessageAt: run.messages.at(-1)?.createdAt ?? run.summary?.latestMessageAt, candidateCount: run.candidates.length, status: run.status };
 }
 
-function stripImagePayload(value: unknown): unknown {
-  if (typeof value === "string") return value.startsWith("data:image/") ? undefined : value;
-  if (Array.isArray(value)) return value.map((item) => stripImagePayload(item)).filter((item) => item !== undefined);
+const DATA_URI = /^data:[^,]*;base64,/i;
+
+function stripBinaryPayload(value: unknown): unknown {
+  if (typeof value === "string") return DATA_URI.test(value) ? undefined : value;
+  if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return undefined;
+  if (Array.isArray(value)) return value.map((item) => stripBinaryPayload(item)).filter((item) => item !== undefined);
   if (!value || typeof value !== "object") return value;
   const clean: Record<string, unknown> = {};
   for (const [childKey, childValue] of Object.entries(value)) {
     const normalizedKey = childKey.toLowerCase();
-    const isDescription = normalizedKey === "imagedescription";
-    if (!isDescription && (normalizedKey.includes("image") || normalizedKey.includes("base64") || normalizedKey.includes("binary"))) continue;
-    const child = stripImagePayload(childValue);
+    if (normalizedKey.includes("base64") || normalizedKey.includes("binary") || (normalizedKey.includes("image") && normalizedKey !== "imagedescription")) continue;
+    const child = stripBinaryPayload(childValue);
     if (child !== undefined) clean[childKey] = child;
   }
   return clean;
 }
 
-function normalizeState(state: AgentState): void {
-  state.schemaVersion = 1;
+export function validateAgentState(state: unknown, storedSchemaVersion?: unknown): asserts state is AgentState {
+  const schemaVersion = typeof state === "object" && state !== null ? (state as { schemaVersion?: unknown }).schemaVersion : undefined;
+  if (schemaVersion !== 1 || (storedSchemaVersion !== undefined && storedSchemaVersion !== schemaVersion)) {
+    throw new UnsupportedAgentSchemaError(schemaVersion, storedSchemaVersion);
+  }
+}
+
+function normalizeState(state: AgentState, now = new Date()): void {
+  validateAgentState(state);
+  cleanupStaleRuns(state, now);
   state.runs = state.runs.map((run) => {
     const originalMessageCount = run.messages.length;
     const messages = trimRecentMessages(run.messages);
     const trimmed = { ...run, messages };
-    const safeRun = stripImagePayload(trimmed) as StoredAgentRun;
+    const safeRun = stripBinaryPayload(trimmed) as StoredAgentRun;
     return { ...safeRun, summary: summaryFor(safeRun, originalMessageCount) };
   });
+  const cleanState = stripBinaryPayload(state) as AgentState;
+  for (const key of Object.keys(state)) delete (state as unknown as Record<string, unknown>)[key];
+  Object.assign(state, cleanState);
+  validateAgentState(state);
 }
 
 export class MemoryAgentRepository implements AgentRepository {
   readonly mode = "json" as const;
   private state = createInitialAgentState();
-  async initialize(): Promise<void> {}
-  async read(): Promise<AgentState> { return structuredClone(this.state); }
+  async initialize(): Promise<void> { normalizeState(this.state); }
+  async read(): Promise<AgentState> { normalizeState(this.state); return structuredClone(this.state); }
   async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
     const draft = structuredClone(this.state);
+    validateAgentState(draft);
     const result = await mutator(draft);
+    validateAgentState(draft);
     normalizeState(draft);
     this.state = draft;
     return result;
   }
 }
 
+// This serializes same-file repositories only within one Node.js process. Multi-process writers must use PostgreSQL.
+const JSON_FILE_QUEUES = new Map<string, Promise<void>>();
+
+function enqueueJson<T>(filePath: string, operation: () => Promise<T>): Promise<T> {
+  const previous = JSON_FILE_QUEUES.get(filePath) ?? Promise.resolve();
+  const task = previous.then(operation, operation);
+  JSON_FILE_QUEUES.set(filePath, task.then(() => undefined, () => undefined));
+  return task;
+}
+
 export class JsonAgentRepository implements AgentRepository {
   readonly mode = "json" as const;
-  private queue: Promise<void> = Promise.resolve();
   private readonly filePath: string;
-  constructor(filePath = path.join(process.cwd(), "data", "agent-store.json")) { this.filePath = filePath; }
+  constructor(filePath = path.join(process.cwd(), "data", "agent-store.json")) { this.filePath = path.resolve(filePath); }
   async initialize(): Promise<void> {
-    await mkdir(path.dirname(this.filePath), { recursive: true });
-    try { await readFile(this.filePath, "utf8"); } catch { await this.write(createInitialAgentState()); }
+    await enqueueJson(this.filePath, async () => { await this.loadAndPersist(); });
   }
   async read(): Promise<AgentState> {
-    await this.initialize();
-    return JSON.parse(await readFile(this.filePath, "utf8")) as AgentState;
+    return enqueueJson(this.filePath, () => this.loadAndPersist());
   }
   async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
-    let resolve!: (value: T) => void;
-    let reject!: (reason: unknown) => void;
-    const result = new Promise<T>((res, rej) => { resolve = res; reject = rej; });
-    this.queue = this.queue.then(async () => {
-      try { const state = await this.read(); const value = await mutator(state); normalizeState(state); await this.write(state); resolve(value); }
-      catch (error) { reject(error); }
+    return enqueueJson(this.filePath, async () => {
+      const state = await this.loadAndPersist();
+      validateAgentState(state);
+      const value = await mutator(state);
+      validateAgentState(state);
+      normalizeState(state);
+      await this.write(state);
+      return value;
     });
-    await this.queue;
-    return result;
+  }
+  private async loadAndPersist(): Promise<AgentState> {
+    await mkdir(path.dirname(this.filePath), { recursive: true });
+    let state: AgentState;
+    try { state = JSON.parse(await readFile(this.filePath, "utf8")) as AgentState; }
+    catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      state = createInitialAgentState();
+    }
+    validateAgentState(state);
+    normalizeState(state);
+    await this.write(state);
+    return state;
   }
   private async write(state: AgentState): Promise<void> {
     const temporary = `${this.filePath}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
@@ -225,18 +304,21 @@ export class PostgresAgentRepository implements AgentRepository {
     await this.transaction(() => undefined);
   }
   async read(): Promise<AgentState> {
-    const result = await this.pool.query<{ payload: AgentState }>("SELECT payload FROM agent_state WHERE id = 'default'");
-    if (!result.rows[0]) throw new Error("Agent store is not initialized");
-    return result.rows[0].payload;
+    return this.transaction((state) => {
+      normalizeState(state);
+      return structuredClone(state);
+    });
   }
   async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const result = await client.query<{ payload: AgentState }>("SELECT payload FROM agent_state WHERE id = 'default' FOR UPDATE");
+      const result = await client.query<{ payload: AgentState; schema_version: number }>("SELECT schema_version, payload FROM agent_state WHERE id = 'default' FOR UPDATE");
       if (!result.rows[0]) throw new Error("Agent store is not initialized");
       const state = result.rows[0].payload;
+      validateAgentState(state, result.rows[0].schema_version);
       const value = await mutator(state);
+      validateAgentState(state, result.rows[0].schema_version);
       normalizeState(state);
       await client.query("UPDATE agent_state SET schema_version = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = 'default'", [state.schemaVersion, JSON.stringify(state)]);
       await syncProjection(client, state);
@@ -257,9 +339,13 @@ async function syncProjection(client: PoolClient, state: AgentState): Promise<vo
   await replaceRows(client, "agent_run", state.runs.map((item) => ({ query: "INSERT INTO agent_run (id, creator_session_id, revision, status, updated_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, item.creatorSessionId, item.revision, item.status, item.updatedAt, JSON.stringify(item)] })));
   await replaceRows(client, "agent_message", state.runs.flatMap((run) => run.messages.map((item) => ({ query: "INSERT INTO agent_message (id, run_id, role, created_at, payload) VALUES ($1,$2,$3,$4,$5::jsonb)", values: [item.id, run.id, item.role, item.createdAt, JSON.stringify(item)] }))));
   await replaceRows(client, "agent_candidate", state.runs.flatMap((run) => run.candidates.map((item) => ({ query: "INSERT INTO agent_candidate (id, run_id, payload) VALUES ($1,$2,$3::jsonb)", values: [item.id, run.id, JSON.stringify(item)] }))));
-  await replaceRows(client, "agent_tool_call", state.runs.flatMap((run) => run.toolCalls.map((item) => ({ query: "INSERT INTO agent_tool_call (id, run_id, tool, status, created_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, run.id, item.tool, item.status, item.createdAt, JSON.stringify(item)] }))));
+  await replaceRows(client, "agent_tool_call", state.runs.flatMap((run) => buildToolCallProjection(run).map((item) => ({ query: "INSERT INTO agent_tool_call (id, run_id, tool, status, created_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, run.id, item.tool, item.status, item.createdAt, JSON.stringify(item)] }))));
   await replaceRows(client, "agent_approval", state.runs.flatMap((run) => run.approvals.map((item) => ({ query: "INSERT INTO agent_approval (id, run_id, tool, status, requested_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, run.id, item.tool, item.status, item.requestedAt, JSON.stringify(item)] }))));
   await replaceRows(client, "creator_memory", state.memories.flatMap((owner) => owner.memory.entries.map((item) => ({ query: "INSERT INTO creator_memory (creator_session_id, memory_key, memory_value, confidence, payload) VALUES ($1,$2,$3,$4,$5::jsonb)", values: [owner.creatorSessionId, item.key, item.value, item.confidence, JSON.stringify(item)] }))));
+}
+
+export function buildToolCallProjection(run: StoredAgentRun): Array<AgentRun["toolCalls"][number] & { result?: AgentRun["toolResults"][number] }> {
+  return run.toolCalls.map((call) => ({ ...call, result: run.toolResults.find((result) => result.tool === call.tool) }));
 }
 
 let singleton: AgentRepository | undefined;
