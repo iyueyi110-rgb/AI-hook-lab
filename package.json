@@ -8,7 +8,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/evaluation/*.test.ts",
+    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/generation/*.test.ts lib/evaluation/*.test.ts",
     "eval:run": "node eval/run-eval.mjs",
     "eval:summarize": "node eval/summarize-results.mjs",
     "eval:migrate": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/migrate.mjs",
