@@ -35,6 +35,12 @@ export function mapGenerationError(
         message: "模型响应超时（30秒），请重试或缩短主题描述",
         status: 504,
       };
+    case "empty_response":
+      return {
+        error: "AI 返回为空",
+        message: "模型未返回有效内容，请重试",
+        status: 500,
+      };
     case "invalid_json":
       return {
         error: "JSON 解析失败",

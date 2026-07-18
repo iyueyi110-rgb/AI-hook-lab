@@ -202,3 +202,36 @@ test("enforces timeoutMs for an injected provider with a real delayed operation"
     (error: unknown) => error instanceof GenerationError && error.code === "timeout"
   );
 });
+
+test("returns timeout at the deadline when an injected provider ignores its abort signal", async () => {
+  const provider: GenerationProvider = {
+    async generate() {
+      await new Promise<void>((resolve) => {
+        const timer = setTimeout(resolve, 200);
+        timer.unref();
+      });
+      return payload(3);
+    },
+  };
+  const startedAt = performance.now();
+
+  await assert.rejects(
+    generateCandidates({ promptBundle, expectedCount: 3, provider, timeoutMs: 10 }),
+    (error: unknown) => error instanceof GenerationError && error.code === "timeout"
+  );
+
+  assert.ok(performance.now() - startedAt < 100);
+});
+
+test("classifies an HTTP 200 response with empty model content separately", async () => {
+  await assert.rejects(
+    createDeepSeekProvider({
+      apiKey: "secret-key",
+      fetch: async () =>
+        new Response(JSON.stringify({ choices: [{ message: { content: "" } }] }), {
+          status: 200,
+        }),
+    }).generate({ promptBundle }),
+    (error: unknown) => error instanceof GenerationError && error.code === "empty_response"
+  );
+});

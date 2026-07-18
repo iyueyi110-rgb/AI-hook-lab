@@ -3,6 +3,7 @@ export type GenerationErrorCode =
   | "auth"
   | "rate_limit"
   | "timeout"
+  | "empty_response"
   | "invalid_json"
   | "invalid_count"
   | "upstream"
@@ -119,7 +120,7 @@ export function createDeepSeekProvider(options: {
         const content = (data as { choices?: Array<{ message?: { content?: unknown } }> })
           ?.choices?.[0]?.message?.content;
         if (typeof content !== "string" || !content.trim()) {
-          throw new GenerationError("upstream");
+          throw new GenerationError("empty_response");
         }
         return content;
       } catch (error) {
@@ -168,6 +169,24 @@ function withAttempts(error: GenerationError, attempts: number): GenerationError
   return new GenerationError(error.code, { attempts, status: error.status });
 }
 
+function createDeadline(controller: AbortController, timeoutMs: number): {
+  promise: Promise<never>;
+  clear: () => void;
+} {
+  let timeout: ReturnType<typeof setTimeout>;
+  const promise = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort();
+      reject(new GenerationError("timeout"));
+    }, timeoutMs);
+  });
+
+  return {
+    promise,
+    clear: () => clearTimeout(timeout),
+  };
+}
+
 export async function generateCandidates(
   input: GenerateCandidatesInput
 ): Promise<GenerateCandidatesResult> {
@@ -187,18 +206,19 @@ export async function generateCandidates(
 
   for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
     const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      input.timeoutMs ?? DEFAULT_TIMEOUT_MS
-    );
+    const deadline = createDeadline(controller, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
     try {
-      const generated = await provider.generate({
-        promptBundle: input.promptBundle,
-        temperature: input.temperature,
-        maxTokens: input.maxTokens,
-        signal: controller.signal,
-      });
-      if (controller.signal.aborted) throw new GenerationError("timeout");
+      const generated = await Promise.race([
+        Promise.resolve().then(() =>
+          provider.generate({
+            promptBundle: input.promptBundle,
+            temperature: input.temperature,
+            maxTokens: input.maxTokens,
+            signal: controller.signal,
+          })
+        ),
+        deadline.promise,
+      ]);
       const payload = parsePayload(generated);
       const candidates = payload[field];
 
@@ -209,15 +229,15 @@ export async function generateCandidates(
       return { payload, candidates, attempts: attempt };
     } catch (error) {
       const generationError =
-        controller.signal.aborted
-          ? new GenerationError("timeout")
-          : error instanceof GenerationError
+        error instanceof GenerationError
             ? error
+            : controller.signal.aborted
+              ? new GenerationError("timeout")
             : new GenerationError("internal");
       if (isRetryable(generationError) && attempt < attemptsAllowed) continue;
       throw withAttempts(generationError, attempt);
     } finally {
-      clearTimeout(timeout);
+      deadline.clear();
     }
   }
 

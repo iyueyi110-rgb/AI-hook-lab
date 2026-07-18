@@ -33,3 +33,13 @@ test("preserves the upstream HTTP status in the classic generic error message", 
     status: 502,
   });
 });
+
+test("maps an empty HTTP 200 model response to the classic 500 payload", () => {
+  const response = mapGenerationError(new GenerationError("empty_response"));
+
+  assert.deepEqual(response, {
+    error: "AI 返回为空",
+    message: "模型未返回有效内容，请重试",
+    status: 500,
+  });
+});
