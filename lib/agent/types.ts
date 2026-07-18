@@ -73,6 +73,7 @@ export interface ToolCall {
 export type ToolResultStatus = "success" | "error" | "denied" | "approval_required";
 
 export interface ToolResult {
+  callId?: string;
   tool: ToolName;
   status: ToolResultStatus;
   output?: Record<string, unknown>;

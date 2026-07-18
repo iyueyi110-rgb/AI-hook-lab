@@ -188,8 +188,25 @@ function summaryFor(run: StoredAgentRun, originalMessageCount = run.messages.len
 
 const DATA_URI = /^data:[^,]*;base64,/i;
 
+function hasPrefix(value: Uint8Array, bytes: number[]): boolean {
+  return bytes.every((byte, index) => value[index] === byte);
+}
+
+function isEncodedBinaryPayload(value: string): boolean {
+  if (value.length < 8 || !/^[A-Za-z0-9+/_-]*={0,2}$/.test(value) || value.includes("=") && !/=+$/.test(value)) return false;
+  const unpadded = value.replace(/=/g, "");
+  if (unpadded.length % 4 === 1) return false;
+  const standard = unpadded.replace(/-/g, "+").replace(/_/g, "/");
+  const decoded = Buffer.from(standard.padEnd(Math.ceil(standard.length / 4) * 4, "="), "base64");
+  return hasPrefix(decoded, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    || hasPrefix(decoded, [0xff, 0xd8, 0xff])
+    || hasPrefix(decoded, [0x47, 0x49, 0x46, 0x38])
+    || hasPrefix(decoded, [0x25, 0x50, 0x44, 0x46, 0x2d])
+    || (hasPrefix(decoded, [0x52, 0x49, 0x46, 0x46]) && hasPrefix(decoded.subarray(8), [0x57, 0x45, 0x42, 0x50]));
+}
+
 function stripBinaryPayload(value: unknown): unknown {
-  if (typeof value === "string") return DATA_URI.test(value) ? undefined : value;
+  if (typeof value === "string") return DATA_URI.test(value) || isEncodedBinaryPayload(value) ? undefined : value;
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) return undefined;
   if (Array.isArray(value)) return value.map((item) => stripBinaryPayload(item)).filter((item) => item !== undefined);
   if (!value || typeof value !== "object") return value;
@@ -345,7 +362,19 @@ async function syncProjection(client: PoolClient, state: AgentState): Promise<vo
 }
 
 export function buildToolCallProjection(run: StoredAgentRun): Array<AgentRun["toolCalls"][number] & { result?: AgentRun["toolResults"][number] }> {
-  return run.toolCalls.map((call) => ({ ...call, result: run.toolResults.find((result) => result.tool === call.tool) }));
+  const byCallId = new Map(run.toolResults.filter((result) => result.callId).map((result) => [result.callId!, result]));
+  const legacyByTool = new Map<AgentRun["toolResults"][number]["tool"], AgentRun["toolResults"][number][]>();
+  for (const result of run.toolResults) {
+    if (result.callId) continue;
+    const queue = legacyByTool.get(result.tool) ?? [];
+    queue.push(result);
+    legacyByTool.set(result.tool, queue);
+  }
+  return run.toolCalls.map((call) => {
+    const identified = byCallId.get(call.id);
+    const result = identified?.tool === call.tool ? identified : legacyByTool.get(call.tool)?.shift();
+    return { ...call, result };
+  });
 }
 
 let singleton: AgentRepository | undefined;

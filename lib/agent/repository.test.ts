@@ -189,6 +189,30 @@ test("persistence cleans data URIs from every state branch regardless of MIME or
   assert.equal(JSON.stringify(persisted).includes("YmluYXJ5"), false);
 });
 
+test("JSON read and write remove magic-detected base64 and base64url binary from ordinary content fields", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "agent-store-"));
+  const file = path.join(directory, "agent.json");
+  const state = createInitialAgentState() as unknown as Record<string, unknown>;
+  state.metadata = {
+    content: "iVBORw0KGgoAAAANSUhEUgAAAAE",
+    nested: { content: "_9j_4AAQSkZJRgABAQ" },
+    gif: "R0lGODlhAQABAIAAAAAAAP///w",
+    webp: "UklGRiIAAABXRUJQ",
+    pdf: "JVBERi0xLjQK",
+    prose: "This is ordinary text.",
+  };
+  await writeFile(file, JSON.stringify(state), "utf8");
+  const stored = await new JsonAgentRepository(file).read() as unknown as Record<string, unknown>;
+  const serialized = JSON.stringify(stored);
+  assert.equal(serialized.includes("iVBORw0KGgo"), false);
+  assert.equal(serialized.includes("_9j_4AAQ"), false);
+  assert.equal(serialized.includes("R0lGODlh"), false);
+  assert.equal(serialized.includes("UklGRiIAAABXRUJQ"), false);
+  assert.equal(serialized.includes("JVBERi0xLjQK"), false);
+  assert.equal(serialized.includes("This is ordinary text."), true);
+  assert.equal((await readFile(file, "utf8")).includes("iVBORw0KGgo"), false);
+});
+
 test("unsupported or mismatched schema versions fail closed without rewriting JSON", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "agent-store-"));
   const file = path.join(directory, "agent.json");
@@ -218,6 +242,21 @@ test("tool call projection embeds the matching structured result without a ninth
   const projected = buildToolCallProjection(run("run", "owner", { toolCalls: [{ id: "call", tool: "generate_hooks", status: "completed", createdAt: "2026-01-01", input: {} }], toolResults: [{ tool: "generate_hooks", status: "success", output: { count: 3 } }] }));
   assert.deepEqual(projected[0]?.result, { tool: "generate_hooks", status: "success", output: { count: 3 } });
   assert.doesNotMatch(AGENT_SCHEMA_SQL, /agent_tool_result/);
+});
+
+test("tool call projection uses call ids and legacy tool-order fallback for repeated tool names", () => {
+  const projected = buildToolCallProjection(run("run", "owner", {
+    toolCalls: [
+      { id: "first", tool: "generate_hooks", status: "completed", createdAt: "2026-01-01", input: {} },
+      { id: "second", tool: "generate_hooks", status: "completed", createdAt: "2026-01-02", input: {} },
+    ],
+    toolResults: [
+      { tool: "generate_hooks", status: "success", output: { attempt: 2 }, callId: "second" },
+      { tool: "generate_hooks", status: "error", error: { code: "failed", message: "first" } },
+    ] as never,
+  }));
+  assert.equal(projected[0]?.result?.status, "error");
+  assert.deepEqual(projected[1]?.result, { tool: "generate_hooks", status: "success", output: { attempt: 2 }, callId: "second" });
 });
 
 test("agent persistence uses postgres when configured and fails closed in production without it", () => {

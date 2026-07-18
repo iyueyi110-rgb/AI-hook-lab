@@ -26,12 +26,14 @@ export function assertToolAllowed(status: AgentRunStatus, tool: ToolName): void 
 export function createToolResult(
   tool: ToolName,
   status: ToolResultStatus,
-  output?: Record<string, unknown>
+  output?: Record<string, unknown>,
+  callId?: string,
 ): ToolResult {
-  if (status === "success") return { tool, status, output: output ?? {} };
+  const base = callId ? { tool, status, callId } : { tool, status };
+  if (status === "success") return { ...base, output: output ?? {} };
   if (status === "approval_required") {
-    return { tool, status, approval: { reason: `Approval required for ${tool}`, risk: TOOL_REGISTRY[tool].risk } };
+    return { ...base, approval: { reason: `Approval required for ${tool}`, risk: TOOL_REGISTRY[tool].risk } };
   }
-  if (status === "denied") return { tool, status, error: { code: "denied", message: `Tool ${tool} was denied` } };
-  return { tool, status, error: { code: "tool_error", message: `Tool ${tool} failed` } };
+  if (status === "denied") return { ...base, error: { code: "denied", message: `Tool ${tool} was denied` } };
+  return { ...base, error: { code: "tool_error", message: `Tool ${tool} failed` } };
 }
