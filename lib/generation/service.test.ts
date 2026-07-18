@@ -5,6 +5,7 @@ import {
   createDeepSeekProvider,
   generateCandidates,
   type GenerationProvider,
+  type ProviderGenerationInput,
 } from "./service.ts";
 
 const promptBundle = {
@@ -27,7 +28,7 @@ function payload(count: number) {
 }
 
 test("generates exactly the requested number of candidates through an injected provider", async () => {
-  const calls: unknown[] = [];
+  const calls: ProviderGenerationInput[] = [];
   const provider: GenerationProvider = {
     async generate(input) {
       calls.push(input);
@@ -46,13 +47,11 @@ test("generates exactly the requested number of candidates through an injected p
   assert.equal(result.candidates.length, 3);
   assert.equal(result.attempts, 1);
   assert.deepEqual(result.payload, payload(3));
-  assert.deepEqual(calls, [
-    {
-      promptBundle,
-      temperature: 0.42,
-      maxTokens: 512,
-    },
-  ]);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0]?.promptBundle, promptBundle);
+  assert.equal(calls[0]?.temperature, 0.42);
+  assert.equal(calls[0]?.maxTokens, 512);
+  assert.ok(calls[0]?.signal instanceof AbortSignal);
 });
 
 test("retries invalid JSON and candidate count failures no more than twice", async () => {
@@ -183,6 +182,23 @@ test("maps DeepSeek HTTP and timeout failures to safe structured errors", async 
           });
         }),
     }).generate({ promptBundle }),
+    (error: unknown) => error instanceof GenerationError && error.code === "timeout"
+  );
+});
+
+test("enforces timeoutMs for an injected provider with a real delayed operation", async () => {
+  const provider: GenerationProvider = {
+    async generate(input) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      if (input.signal?.aborted) {
+        throw new DOMException("aborted", "AbortError");
+      }
+      return payload(3);
+    },
+  };
+
+  await assert.rejects(
+    generateCandidates({ promptBundle, expectedCount: 3, provider, timeoutMs: 1 }),
     (error: unknown) => error instanceof GenerationError && error.code === "timeout"
   );
 });
