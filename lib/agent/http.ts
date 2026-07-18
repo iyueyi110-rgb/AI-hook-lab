@@ -59,15 +59,42 @@ function assertSameOrigin(request: Request): void {
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
-  const length = Number(request.headers.get("content-length") ?? 0);
-  if (Number.isFinite(length) && length > MAX_AGENT_JSON_BYTES) throw new HttpError(413, "Request body is too large");
-  const text = await request.text();
-  if (Buffer.byteLength(text, "utf8") > MAX_AGENT_JSON_BYTES) throw new HttpError(413, "Request body is too large");
+  const bytes = await readBoundedBody(request, MAX_AGENT_JSON_BYTES, "Request body is too large");
+  const text = new TextDecoder().decode(bytes);
   try {
     const parsed = JSON.parse(text);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
     return parsed as Record<string, unknown>;
   } catch { throw new HttpError(400, "Request body must be a JSON object"); }
+}
+
+async function readBoundedBody(request: Request, maxBytes: number, errorMessage: string): Promise<Uint8Array> {
+  const rawLength = request.headers.get("content-length");
+  if (rawLength !== null) {
+    const length = Number(rawLength);
+    if (Number.isFinite(length) && length > maxBytes) {
+      await request.body?.cancel("request_too_large");
+      throw new HttpError(413, errorMessage);
+    }
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel("request_too_large");
+      throw new HttpError(413, errorMessage);
+    }
+    chunks.push(value);
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+  return result;
 }
 
 function exactKeys(value: Record<string, unknown>, allowed: string[], required: string[] = []): void {
@@ -200,10 +227,10 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
       return handle(async () => {
         const off = hidden(); if (off) return off;
         assertSameOrigin(request);
-        const length = Number(request.headers.get("content-length") ?? 0);
-        if (Number.isFinite(length) && length > MAX_IMAGE_BYTES + 64 * 1024) throw new HttpError(413, "Image request is too large");
+        const bytes = await readBoundedBody(request, MAX_IMAGE_BYTES + 64 * 1024, "Image request is too large");
+        const boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: bytes.buffer as ArrayBuffer });
         let form: FormData;
-        try { form = await request.formData(); } catch { throw new HttpError(400, "Expected multipart form data"); }
+        try { form = await boundedRequest.formData(); } catch { throw new HttpError(400, "Expected multipart form data"); }
         const file = form.get("image");
         if (!(file instanceof File)) throw new HttpError(400, "image is required");
         if (file.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is too large");

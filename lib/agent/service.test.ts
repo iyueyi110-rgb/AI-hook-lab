@@ -123,6 +123,27 @@ test("uses a validated low-temperature decision patch for natural-language clari
   assert.equal(result.run.brief?.platform, "douyin");
 });
 
+test("atomically reserves one decision call for concurrent stale turns", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({ decideBriefPatch: async () => { calls += 1; await gate; return { platform: "douyin" }; } });
+  const created = await coach.createRun(undefined, { brief: { topic: "AI 周报", contentType: "video" } });
+  const attempts = Array.from({ length: 8 }, () => coach.submitTurn(
+    created.sessionToken, created.response.run.id, 0, { type: "message", text: "我想发在抖音" }
+  ).then((value) => ({ status: "fulfilled" as const, value }), (reason) => ({ status: "rejected" as const, reason })));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const callsBeforeRelease = calls;
+  let mid;
+  try { mid = await coach.getRun(created.sessionToken, created.response.run.id); }
+  finally { release(); }
+  const settled = await Promise.all(attempts);
+  assert.equal(callsBeforeRelease, 1);
+  assert.equal(mid.allowedCommands.length, 0);
+  assert.equal(settled.filter((item) => item.status === "fulfilled").length, 1);
+  assert.equal(settled.filter((item) => item.status === "rejected" && /Expected revision/.test(String(item.reason))).length, 7);
+});
+
 test("generates 10, rewrites one candidate into 3, and regenerates a batch of 10", async () => {
   const calls: CoachGenerationRequest[] = [];
   const coach = service({ generate: async (request) => { calls.push(request); return generated(request); } });
@@ -136,7 +157,7 @@ test("generates 10, rewrites one candidate into 3, and regenerates a batch of 10
   assert.equal(reviewed.topCandidates.length, 3);
   assert.deepEqual(calls.map((call) => [call.kind, call.count]), [["initial", 10]]);
 
-  const rewritten = await coach.submitTurn(token, runId, 1, {
+  const rewritten = await coach.submitTurn(token, runId, reviewed.run.revision, {
     type: "rewrite_candidate",
     candidateId: reviewed.candidates[0]!.id,
     instruction: "更具体",
@@ -146,10 +167,58 @@ test("generates 10, rewrites one candidate into 3, and regenerates a batch of 10
   assert.equal(rewritten.run.revisionRounds, 1);
   assert.deepEqual(calls.at(-1) && [calls.at(-1)!.kind, calls.at(-1)!.count], ["rewrite", 3]);
 
-  const regenerated = await coach.submitTurn(token, runId, 2, { type: "reject_batch", reason: "太泛" });
+  const regenerated = await coach.submitTurn(token, runId, rewritten.run.revision, { type: "reject_batch", reason: "太泛" });
   assert.equal(regenerated.candidates.length, 10);
   assert.equal(regenerated.run.revisionRounds, 2);
   assert.deepEqual(calls.at(-1) && [calls.at(-1)!.kind, calls.at(-1)!.count], ["regenerate", 10]);
+});
+
+test("atomically reserves one generation and invalidates the mid-operation revision", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({ generate: async (request) => { calls += 1; await gate; return generated(request); } });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const attempts = Array.from({ length: 8 }, () => coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" })
+    .then((value) => ({ status: "fulfilled" as const, value }), (reason) => ({ status: "rejected" as const, reason })));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const callsBeforeRelease = calls;
+  let mid;
+  try { mid = await coach.getRun(created.sessionToken, created.response.run.id); }
+  finally { release(); }
+  const settled = await Promise.all(attempts);
+  assert.equal(callsBeforeRelease, 1);
+  assert.equal(mid.run.status, "generating");
+  assert.equal(mid.run.revision, 1);
+  assert.equal(mid.allowedCommands.length, 0);
+  const successful = settled.find((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof coach.submitTurn>>> => item.status === "fulfilled")!;
+  assert.equal(successful.value.run.revision, 2);
+  await assert.rejects(() => coach.submitTurn(created.sessionToken, created.response.run.id, 1, { type: "select_candidate", candidateId: successful.value.candidates[0]!.id }), /Expected revision/);
+  assert.equal(settled.filter((item) => item.status === "rejected").length, 7);
+});
+
+test("a revising operation blocks selection and another revision at its current revision", async () => {
+  let release!: () => void;
+  const rewriteGate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({ generate: async (request) => {
+    if (request.kind === "rewrite") await rewriteGate;
+    return generated(request);
+  } });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  const rewriting = coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
+    type: "rewrite_candidate", candidateId: reviewed.candidates[0]!.id,
+  });
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const mid = await coach.getRun(created.sessionToken, reviewed.run.id);
+  assert.equal(mid.run.status, "revising");
+  assert.deepEqual(mid.allowedCommands, []);
+  await assert.rejects(
+    () => coach.submitTurn(created.sessionToken, reviewed.run.id, mid.run.revision, { type: "select_candidate", candidateId: reviewed.candidates[0]!.id }),
+    /in flight/
+  );
+  release();
+  await rewriting;
 });
 
 test("enforces the three-revision ceiling and exact candidate counts", async () => {
@@ -182,13 +251,13 @@ test("requires selection and a separate final confirmation before returning a cl
   const created = await coach.createRun(undefined, { brief: completeBrief });
   const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
   assert.equal(reviewed.finalizedResponse, undefined);
-  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, 1, {
+  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
     type: "select_candidate",
     candidateId: reviewed.candidates[0]!.id,
   });
   assert.equal(selected.run.status, "awaiting_final_confirmation");
   assert.equal(selected.finalizedResponse, undefined);
-  const final = await coach.submitTurn(created.sessionToken, reviewed.run.id, 2, { type: "confirm_final" });
+  const final = await coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
   assert.equal(final.run.status, "completed");
   assert.equal(final.finalizedResponse?.hooks.length, 1);
   assert.equal(final.finalizedResponse?.topic, completeBrief.topic);
@@ -223,6 +292,8 @@ test("persists recoverable provider failures and retry resumes the interrupted g
     (error: unknown) => error instanceof AgentProviderError && error.status === 504 && error.response.run.resumeStatus === "generating"
   );
   const failed = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.deepEqual(failed.allowedCommands, ["retry"]);
+  assert.equal(failed.needsInput, true);
   const recovered = await coach.submitTurn(created.sessionToken, created.response.run.id, failed.run.revision, { type: "retry" });
   assert.equal(recovered.run.status, "reviewing");
   assert.equal(recovered.candidates.length, 10);
@@ -242,6 +313,36 @@ test("analyzes images without storing raw bytes and preserves explicit brief fie
   assert.equal(analyzed.run.brief?.platform, "douyin");
   assert.equal(analyzed.run.brief?.imageDescription, "一张没有个人信息的内容截图");
   assert.doesNotMatch(JSON.stringify(analyzed), /data:image|base64|\/9j/i);
+});
+
+test("atomically reserves one image call and validates upload before reservation", async () => {
+  let calls = 0;
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({ analyzeImage: async () => { calls += 1; await gate; return {
+    topic: "图", imageDescription: "安全图片描述", suggestedPlatform: "douyin", suggestedContentType: "video", suggestedEmotionTone: "curious",
+  }; } });
+  const created = await coach.createRun(undefined, { brief: completeBrief, hasImage: true });
+  const invalid = new File([], "empty.png", { type: "image/png" });
+  await assert.rejects(() => coach.uploadImage(created.sessionToken, created.response.run.id, 0, invalid), /包含内容|empty/i);
+  assert.equal((await coach.getRun(created.sessionToken, created.response.run.id)).run.revision, 0);
+  assert.equal(calls, 0);
+
+  const valid = new File([new Uint8Array([0xff, 0xd8, 0xff])], "image.jpg", { type: "image/jpeg" });
+  const attempts = Array.from({ length: 5 }, () => coach.uploadImage(created.sessionToken, created.response.run.id, 0, valid)
+    .then((value) => ({ status: "fulfilled" as const, value }), (reason) => ({ status: "rejected" as const, reason })));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const callsBeforeRelease = calls;
+  let mid;
+  try { mid = await coach.getRun(created.sessionToken, created.response.run.id); }
+  finally { release(); }
+  const settled = await Promise.all(attempts);
+  assert.equal(callsBeforeRelease, 1);
+  assert.equal(mid.run.revision, 1);
+  assert.equal(mid.needsInput, false);
+  const success = settled.find((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof coach.uploadImage>>> => item.status === "fulfilled")!;
+  assert.equal(success.value.run.revision, 2);
+  assert.equal(settled.filter((item) => item.status === "rejected").length, 4);
 });
 
 test("maps an unconfigured image provider to a recoverable service-unavailable failure", async () => {
@@ -296,8 +397,14 @@ test("writes only structured whitelist preferences after final approval and supp
   const coach = service();
   const created = await coach.createRun(undefined, { brief: completeBrief });
   const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
-  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, 1, { type: "select_candidate", candidateId: reviewed.candidates[0]!.id });
+  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, { type: "select_candidate", candidateId: reviewed.candidates[0]!.id });
   await coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+  const completed = await coach.getRun(created.sessionToken, reviewed.run.id);
+  assert.equal(completed.run.approvals.length, 1);
+  assert.equal(completed.run.approvals[0]?.status, "approved");
+  assert.equal(completed.run.approvals[0]?.tool, "save_final_choice");
+  const saveCall = completed.run.toolCalls.find((item) => item.tool === "save_final_choice")!;
+  assert.equal(completed.run.toolResults.find((item) => item.callId === saveCall.id)?.status, "success");
   const memory = await coach.getMemory(created.sessionToken);
   assert.ok(memory.entries.some((entry) => entry.key === "default_platform" && entry.value === "douyin"));
   assert.doesNotMatch(JSON.stringify(memory), /AI 周报|hook text|产品经理/);
@@ -306,4 +413,16 @@ test("writes only structured whitelist preferences after final approval and supp
   assert.equal((await coach.getMemory(created.sessionToken)).entries.some((entry) => entry.id === item.id), false);
   await coach.clearMemory(created.sessionToken);
   assert.deepEqual((await coach.getMemory(created.sessionToken)).entries, []);
+});
+
+test("explicit empty avoid tags override remembered tags and summaries stay current", async () => {
+  const coach = service();
+  const first = await coach.createRun(undefined, { brief: { ...completeBrief, avoidBadcaseTags: ["too_long"] } });
+  const reviewed = await coach.submitTurn(first.sessionToken, first.response.run.id, 0, { type: "confirm_brief" });
+  const selected = await coach.submitTurn(first.sessionToken, reviewed.run.id, reviewed.run.revision, { type: "select_candidate", candidateId: reviewed.candidates[0]!.id });
+  await coach.submitTurn(first.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+  const second = await coach.createRun(first.sessionToken, { brief: { ...completeBrief, avoidBadcaseTags: [] } });
+  assert.deepEqual(second.response.run.brief?.avoidBadcaseTags, []);
+  assert.equal(second.response.run.summary.status, second.response.run.status);
+  assert.equal(second.response.run.summary.candidateCount, second.response.run.candidates.length);
 });

@@ -246,16 +246,26 @@ function normalizeState(state: AgentState, now = new Date()): void {
 export class MemoryAgentRepository implements AgentRepository {
   readonly mode = "json" as const;
   private state = createInitialAgentState();
-  async initialize(): Promise<void> { normalizeState(this.state); }
-  async read(): Promise<AgentState> { normalizeState(this.state); return structuredClone(this.state); }
+  private queue: Promise<void> = Promise.resolve();
+  private enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    const task = this.queue.then(operation, operation);
+    this.queue = task.then(() => undefined, () => undefined);
+    return task;
+  }
+  async initialize(): Promise<void> { return this.enqueue(async () => { normalizeState(this.state); }); }
+  async read(): Promise<AgentState> {
+    return this.enqueue(async () => { normalizeState(this.state); return structuredClone(this.state); });
+  }
   async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
-    const draft = structuredClone(this.state);
-    validateAgentState(draft);
-    const result = await mutator(draft);
-    validateAgentState(draft);
-    normalizeState(draft);
-    this.state = draft;
-    return result;
+    return this.enqueue(async () => {
+      const draft = structuredClone(this.state);
+      validateAgentState(draft);
+      const result = await mutator(draft);
+      validateAgentState(draft);
+      normalizeState(draft);
+      this.state = draft;
+      return result;
+    });
   }
 }
 

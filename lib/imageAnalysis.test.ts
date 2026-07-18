@@ -323,6 +323,14 @@ test("the Next route wires ARK configuration into the tested handler", async () 
   assert.match(envExample, /^ARK_MODEL_ID=$/m);
 });
 
+test("checks missing Ark configuration before parsing malformed multipart", async () => {
+  const response = await handleAnalyzeImageRequest(new Request("http://localhost/api/analyze-image", {
+    method: "POST", headers: { "content-type": "application/json" }, body: "not-multipart",
+  }), { apiKey: "", model: "" });
+  assert.equal(response.status, 501);
+  assert.match((await response.json()).message, /ARK_API_KEY/);
+});
+
 test("enforces the image deadline when an injected provider ignores abort", async () => {
   const response = await handleAnalyzeImageRequest(analyzeRequest(imageFile("image/jpeg")), {
     apiKey: "test-key",

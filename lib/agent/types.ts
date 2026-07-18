@@ -130,6 +130,11 @@ export interface AgentRun {
     instruction?: string;
     reason?: string;
   };
+  activeOperation?: {
+    id: string;
+    kind: "decision" | "generation" | "image";
+    startedAt: string;
+  };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;
 }

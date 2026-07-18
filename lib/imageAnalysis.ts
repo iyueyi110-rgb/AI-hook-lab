@@ -162,6 +162,9 @@ function jsonError(status: number, error: string, message: string): Response {
 }
 
 export async function handleAnalyzeImageRequest(request: Request, options: AnalyzeImageOptions): Promise<Response> {
+  if (!options.apiKey?.trim() || !options.model?.trim()) {
+    return jsonError(501, "图片分析服务未配置", "请在 .env.local 中配置 ARK_API_KEY 和 ARK_MODEL_ID");
+  }
   let formData: FormData;
   try { formData = await request.formData(); } catch { return jsonError(400, "请求格式错误", "请使用 multipart/form-data 上传图片"); }
   const image = formData.get("image");

@@ -149,6 +149,49 @@ test("rejects oversized JSON before parsing", async () => {
   assert.equal(response.status, 413);
 });
 
+test("stops a chunked JSON body at the 64KB limit without buffering the rest", async () => {
+  const handlers = setup();
+  let cancelled = false;
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls += 1;
+      controller.enqueue(new Uint8Array(16 * 1024).fill(0x20));
+      if (pulls === 10) controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  const response = await handlers.createRun(new Request(`${origin}/api/agent/runs`, {
+    method: "POST", headers: { origin, "content-type": "application/json" }, body: stream, duplex: "half",
+  } as RequestInit & { duplex: "half" }));
+  assert.equal(response.status, 413);
+  assert.equal(cancelled, true);
+  assert.ok(pulls <= 6);
+});
+
+test("stops a chunked multipart body before unbounded formData buffering", async () => {
+  const handlers = setup();
+  let cancelled = false;
+  let pulls = 0;
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      pulls += 1;
+      controller.enqueue(new Uint8Array(1024 * 1024));
+      if (pulls === 10) controller.close();
+    },
+    cancel() { cancelled = true; },
+  });
+  const response = await handlers.image(new Request(`${origin}/api/agent/runs/run/image`, {
+    method: "POST",
+    headers: { origin, "content-type": "multipart/form-data; boundary=x", cookie: "ai-hook-creator-session=fake" },
+    body: stream,
+    duplex: "half",
+  } as RequestInit & { duplex: "half" }), "run");
+  assert.equal(response.status, 413);
+  assert.equal(cancelled, true);
+  assert.ok(pulls <= 7);
+});
+
 test("maps unavailable database connections to a structured 503", async () => {
   const unavailable = createAgentHttpHandlers({
     enabled: true,
