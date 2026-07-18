@@ -19,6 +19,14 @@ interface HookCardProps {
   onToggleAdopted: (id: string) => void;
   onSetSatisfaction: (id: string, rating: PlatformSatisfaction) => void;
   onCopy?: (hook: HookResult) => void;
+  coachActions?: boolean;
+  onRewrite?: (id: string) => void;
+  onSelect?: (id: string) => void;
+  canRewrite?: boolean;
+  canSelect?: boolean;
+  selected?: boolean;
+  recommendationRank?: number;
+  comparisonExplanation?: string;
 }
 
 const scoreLabels: Array<{ key: keyof NonNullable<HookResult["scores"]>; label: string }> = [
@@ -37,6 +45,14 @@ export function HookCard({
   onToggleAdopted,
   onSetSatisfaction,
   onCopy,
+  coachActions = false,
+  onRewrite,
+  onSelect,
+  canRewrite = false,
+  canSelect = false,
+  selected = false,
+  recommendationRank,
+  comparisonExplanation,
 }: HookCardProps) {
   const [copied, setCopied] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -89,6 +105,11 @@ export function HookCard({
               </span>
             )}
             <span className="text-xs font-extrabold text-[var(--color-accent)]">{hook.style}</span>
+            {coachActions && recommendationRank && (
+              <span className="rounded-full border border-[var(--color-accent)] px-2 py-1 text-[11px] font-extrabold text-[var(--color-accent)]">
+                推荐 {recommendationRank}
+              </span>
+            )}
             {hook.adopted && (
               <span className="inline-flex items-center gap-1 rounded-full bg-[var(--color-success-soft)] px-2 py-1 text-[11px] font-bold text-[var(--color-success)]">
                 <CheckCircle aria-hidden="true" size={13} weight="fill" />
@@ -113,25 +134,56 @@ export function HookCard({
           {copied ? <Check aria-hidden="true" size={16} weight="bold" /> : <Copy aria-hidden="true" size={16} weight="bold" />}
           {copied ? "已复制" : "复制"}
         </button>
-        <button
-          aria-pressed={isFavorited}
-          className={`button-secondary ${isFavorited ? "border-[var(--color-accent)] text-[var(--color-accent)]" : ""}`}
-          onClick={() => onToggleFavorite(hook.id)}
-          type="button"
-        >
-          <Heart aria-hidden="true" size={16} weight={isFavorited ? "fill" : "bold"} />
-          {isFavorited ? "已收藏" : "收藏"}
-        </button>
-        <button
-          aria-pressed={Boolean(hook.adopted)}
-          className={`button-secondary ${hook.adopted ? "border-[var(--color-success)] text-[var(--color-success)]" : ""}`}
-          onClick={() => onToggleAdopted(hook.id)}
-          type="button"
-        >
-          <CheckCircle aria-hidden="true" size={16} weight={hook.adopted ? "fill" : "bold"} />
-          {hook.adopted ? "取消采用" : "标记采用"}
-        </button>
+        {coachActions ? (
+          <>
+            <button
+              className="button-secondary"
+              disabled={!canRewrite}
+              onClick={() => onRewrite?.(hook.id)}
+              type="button"
+            >
+              改写这条
+            </button>
+            <button
+              aria-pressed={selected}
+              className={`button-secondary ${selected ? "border-[var(--color-success)] text-[var(--color-success)]" : ""}`}
+              disabled={!canSelect}
+              onClick={() => onSelect?.(hook.id)}
+              type="button"
+            >
+              <CheckCircle aria-hidden="true" size={16} weight={selected ? "fill" : "bold"} />
+              {selected ? "已选择" : "选择采用"}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              aria-pressed={isFavorited}
+              className={`button-secondary ${isFavorited ? "border-[var(--color-accent)] text-[var(--color-accent)]" : ""}`}
+              onClick={() => onToggleFavorite(hook.id)}
+              type="button"
+            >
+              <Heart aria-hidden="true" size={16} weight={isFavorited ? "fill" : "bold"} />
+              {isFavorited ? "已收藏" : "收藏"}
+            </button>
+            <button
+              aria-pressed={Boolean(hook.adopted)}
+              className={`button-secondary ${hook.adopted ? "border-[var(--color-success)] text-[var(--color-success)]" : ""}`}
+              onClick={() => onToggleAdopted(hook.id)}
+              type="button"
+            >
+              <CheckCircle aria-hidden="true" size={16} weight={hook.adopted ? "fill" : "bold"} />
+              {hook.adopted ? "取消采用" : "标记采用"}
+            </button>
+          </>
+        )}
       </div>
+
+      {coachActions && comparisonExplanation && (
+        <p className="mt-3 border-l-2 border-[var(--color-accent)] pl-3 text-xs leading-5 text-[var(--color-graphite)]">
+          {comparisonExplanation}
+        </p>
+      )}
 
       {(hook.scores || hook.reasoning || hook.badcaseTags?.length) && (
         <details className="group mt-4 border-t border-[var(--color-line)] pt-3">
