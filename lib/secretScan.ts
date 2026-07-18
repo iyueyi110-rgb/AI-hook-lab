@@ -21,18 +21,21 @@ const PLACEHOLDERS = new Set([
   "sk-your-key-here",
   "ark-your-key-here",
   "placeholder",
-  "<secret>",
-  "<placeholder>",
+  "secret",
   "example",
 ]);
 
 function normalizeAssignmentValue(raw: string): string {
-  const trimmed = raw.trim();
-  const first = trimmed[0];
-  if ((first === "'" || first === '"') && trimmed.length >= 2 && trimmed.at(-1) === first) {
-    return trimmed.slice(1, -1).trim();
+  let normalized = raw.trim();
+  const first = normalized[0];
+  if ((first === "'" || first === '"') && normalized.length >= 2 && normalized.at(-1) === first) {
+    normalized = normalized.slice(1, -1).trim();
   }
-  return trimmed;
+  if (normalized.startsWith("<") && normalized.endsWith(">")) {
+    const inner = normalized.slice(1, -1).trim();
+    if (inner && !/[<>]/.test(inner)) normalized = inner;
+  }
+  return normalized;
 }
 
 function matchingRule(line: string): SecretFinding["rule"] | undefined {

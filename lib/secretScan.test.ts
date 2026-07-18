@@ -63,3 +63,27 @@ test("tracked secret scan normalizes one matching quote pair only and rejects ne
   assert.equal(JSON.stringify(findings).includes(realDeepSeek), false);
   assert.equal(JSON.stringify(findings).includes(realArk), false);
 });
+
+test("tracked secret scan unwraps exactly one angle-bracket placeholder layer", () => {
+  assert.deepEqual(findTrackedSecretFindings([
+    { path: "angle-placeholders.env", content: [
+      "DEEPSEEK_API_KEY=<your_api_key>",
+      "ARK_API_KEY=<your_ark_api_key>",
+      "DEEPSEEK_API_KEY=<your_deepseek_api_key>",
+    ].join("\n") },
+  ]), []);
+
+  const realDeepSeek = ["sk", "aabbccddeeff00112233445566778899"].join("-");
+  const realArk = ["ark", "aabbccdd-eeff-0011-2233-445566778899-live"].join("-");
+  const findings = findTrackedSecretFindings([
+    { path: "unsafe-angle.env", content: [
+      "DEEPSEEK_API_KEY=<<your_api_key>>",
+      "ARK_API_KEY=<your_ark_api_key>_prod",
+      `DEEPSEEK_API_KEY=<${realDeepSeek}>`,
+      `ARK_API_KEY=<${realArk}>`,
+    ].join("\n") },
+  ]);
+  assert.equal(findings.length, 4);
+  assert.equal(JSON.stringify(findings).includes(realDeepSeek), false);
+  assert.equal(JSON.stringify(findings).includes(realArk), false);
+});
