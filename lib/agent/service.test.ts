@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { GenerationError } from "../generation/service.ts";
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
-import { MemoryAgentRepository } from "./repository.ts";
+import { JsonAgentRepository, MemoryAgentRepository, type AgentRepository } from "./repository.ts";
 import {
   AgentInputError,
   AgentProviderError,
@@ -53,10 +56,13 @@ function service(overrides: {
   generate?: (request: CoachGenerationRequest) => Promise<GenerateResponse>;
   analyzeImage?: (file: File) => Promise<ImageAnalysisResult>;
   decideBriefPatch?: (input: { message: string; missingField: "topic" | "platform" | "contentType" }) => Promise<Record<string, unknown>>;
+  repository?: AgentRepository;
+  now?: () => Date;
+  operationLeaseMs?: number;
 } = {}) {
   let sequence = 0;
   return createCreativeCoachService({
-    repository: new MemoryAgentRepository(),
+    repository: overrides.repository ?? new MemoryAgentRepository(),
     generate: overrides.generate ?? (async (request) => generated(request)),
     analyzeImage: overrides.analyzeImage ?? (async () => ({
       topic: "图片主题",
@@ -66,10 +72,160 @@ function service(overrides: {
       suggestedEmotionTone: "curious",
     })),
     decideBriefPatch: overrides.decideBriefPatch,
-    now: () => new Date("2026-07-18T00:00:00.000Z"),
+    now: overrides.now ?? (() => new Date("2026-07-18T00:00:00.000Z")),
+    operationLeaseMs: overrides.operationLeaseMs,
     id: (prefix) => `${prefix}-${++sequence}`,
   });
 }
+
+test("recovers one expired generation lease atomically and rejects the old result", async () => {
+  let currentTime = new Date("2026-07-18T00:00:00.000Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({
+    now: () => currentTime,
+    operationLeaseMs: 1_000,
+    generate: async (request) => { await gate; return generated(request); },
+  });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const original = coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" })
+    .then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+
+  const active = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(active.run.revision, 1);
+  assert.ok(active.run.activeOperation?.expiresAt);
+  currentTime = new Date("2026-07-18T00:00:01.001Z");
+  const staleTurn = coach.submitTurn(created.sessionToken, created.response.run.id, 1, { type: "confirm_brief" })
+    .then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
+  const recovered = await Promise.all(Array.from({ length: 6 }, () => coach.getRun(created.sessionToken, created.response.run.id)));
+  const conflict = await staleTurn;
+
+  assert.equal(conflict.ok, false);
+  assert.match(String(conflict.ok ? "" : conflict.error), /Expected revision/);
+  assert.ok(recovered.every((response) => response.run.revision === 2));
+  assert.ok(recovered.every((response) => response.run.status === "failed"));
+  assert.deepEqual(recovered[0]!.allowedCommands, ["retry"]);
+  const expired = recovered[0]!.run.toolResults.filter((result) => result.error?.code === "operation_expired");
+  assert.equal(expired.length, 1);
+  assert.equal(expired[0]!.callId, recovered[0]!.run.toolCalls[0]!.id);
+
+  release();
+  const oldResult = await original;
+  assert.equal(oldResult.ok, false);
+  const final = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(final.run.toolResults.filter((result) => result.error?.code === "operation_expired").length, 1);
+  assert.equal(final.candidates.length, 0);
+});
+
+test("recovers an expired decision without persisting the abandoned user message", async () => {
+  let currentTime = new Date("2026-07-18T00:00:00.000Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({
+    now: () => currentTime,
+    operationLeaseMs: 1_000,
+    decideBriefPatch: async () => { await gate; return { platform: "douyin" }; },
+  });
+  const created = await coach.createRun(undefined, { brief: { topic: "AI report", contentType: "video" } });
+  const original = coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "message", text: "post it there" })
+    .then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  currentTime = new Date("2026-07-18T00:00:01.001Z");
+
+  const recovered = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(recovered.run.status, "understanding");
+  assert.equal(recovered.run.revision, 2);
+  assert.equal(recovered.run.activeOperation, undefined);
+  assert.equal(recovered.run.messages.some((message) => message.content === "post it there"), false);
+  assert.deepEqual(recovered.allowedCommands, ["message"]);
+
+  release();
+  assert.equal((await original).ok, false);
+});
+
+test("recovers an expired image lease and retry explicitly requests a re-upload", async () => {
+  let currentTime = new Date("2026-07-18T00:00:00.000Z");
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({
+    now: () => currentTime,
+    operationLeaseMs: 1_000,
+    analyzeImage: async () => { await gate; return {
+      topic: "image", imageDescription: "safe image", suggestedPlatform: "douyin", suggestedContentType: "video", suggestedEmotionTone: "curious",
+    }; },
+  });
+  const created = await coach.createRun(undefined, { brief: completeBrief, hasImage: true });
+  const file = new File([new Uint8Array([0xff, 0xd8, 0xff])], "image.jpg", { type: "image/jpeg" });
+  const original = coach.uploadImage(created.sessionToken, created.response.run.id, 0, file)
+    .then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  currentTime = new Date("2026-07-18T00:00:01.001Z");
+
+  const recovered = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(recovered.run.status, "failed");
+  assert.equal(recovered.run.resumeStatus, "analyzing_image");
+  assert.equal(recovered.run.toolResults.at(-1)?.error?.code, "operation_expired");
+  const retry = await coach.submitTurn(created.sessionToken, created.response.run.id, recovered.run.revision, { type: "retry" });
+  assert.equal(retry.run.status, "analyzing_image");
+  assert.equal(retry.needsInput, true);
+
+  release();
+  assert.equal((await original).ok, false);
+  const reuploaded = await coach.uploadImage(created.sessionToken, created.response.run.id, retry.run.revision, file);
+  assert.equal(reuploaded.run.status, "awaiting_brief_confirmation");
+});
+
+test("recovers a legacy startedAt-only lease after JSON repository restart and persists it once", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "agent-lease-"));
+  const file = path.join(directory, "agent.json");
+  const repository = new JsonAgentRepository(file);
+  const first = service({ repository, now: () => new Date("2026-07-19T00:00:00.000Z"), operationLeaseMs: 1_000 });
+  const created = await first.createRun(undefined, { brief: completeBrief });
+  await repository.transaction((state) => {
+    const run = state.runs.find((item) => item.id === created.response.run.id)!;
+    run.status = "generating";
+    run.revision = 7;
+    run.pendingGeneration = { kind: "initial", count: 10 };
+    run.activeOperation = { id: "operation-from-dead-process", kind: "generation", startedAt: "2020-01-01T00:00:00.000Z" };
+    run.toolCalls.push({ id: "call-from-dead-process", tool: "generate_hooks", input: { expectedCount: 10 }, status: "requested", createdAt: "2020-01-01T00:00:00.000Z" });
+  });
+
+  const restarted = service({
+    repository: new JsonAgentRepository(file),
+    now: () => new Date("2026-07-19T00:00:00.000Z"),
+    operationLeaseMs: 1_000,
+  });
+  const responses = await Promise.all(Array.from({ length: 4 }, () => restarted.getRun(created.sessionToken, created.response.run.id)));
+  assert.ok(responses.every((response) => response.run.revision === 8));
+  assert.equal(responses[0]!.run.toolResults.filter((result) => result.error?.code === "operation_expired").length, 1);
+  const persisted = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(persisted.runs[0].revision, 8);
+  assert.equal(persisted.runs[0].summary.status, "failed");
+  assert.equal(persisted.runs[0].toolResults.filter((result: { error?: { code?: string } }) => result.error?.code === "operation_expired").length, 1);
+});
+
+test("keeps a non-expired lease locked while allowing explicit cancellation", async () => {
+  let release!: () => void;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  const coach = service({
+    operationLeaseMs: 60_000,
+    generate: async (request) => { await gate; return generated(request); },
+  });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const original = coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" })
+    .then((value) => ({ ok: true as const, value }), (error) => ({ ok: false as const, error }));
+  await new Promise((resolve) => setTimeout(resolve, 5));
+  const active = await coach.getRun(created.sessionToken, created.response.run.id);
+  await assert.rejects(
+    () => coach.submitTurn(created.sessionToken, created.response.run.id, active.run.revision, { type: "confirm_brief" }),
+    /in flight/,
+  );
+  const cancelled = await coach.cancelRun(created.sessionToken, created.response.run.id, active.run.revision);
+  assert.equal(cancelled.run.status, "cancelled");
+  release();
+  assert.equal((await original).ok, false);
+});
 
 test("a complete brief reaches confirmation without an unnecessary clarification", async () => {
   const coach = service();

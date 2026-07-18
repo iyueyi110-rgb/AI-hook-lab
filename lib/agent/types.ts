@@ -134,6 +134,7 @@ export interface AgentRun {
     id: string;
     kind: "decision" | "generation" | "image";
     startedAt: string;
+    expiresAt?: string;
   };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;

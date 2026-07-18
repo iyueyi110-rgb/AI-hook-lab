@@ -28,6 +28,7 @@ import {
 import type { AgentCommand, Candidate, CreativeBrief, MemoryKey, Message, ToolName } from "./types.ts";
 
 export const MAX_AGENT_MESSAGE_LENGTH = 2_000;
+export const DEFAULT_AGENT_OPERATION_LEASE_MS = 120_000;
 
 export interface CoachGenerationRequest {
   kind: "initial" | "rewrite" | "regenerate";
@@ -89,6 +90,7 @@ export interface CreativeCoachDependencies {
   }) => Promise<Record<string, unknown>>;
   now?: () => Date;
   id?: (prefix: string) => string;
+  operationLeaseMs?: number;
 }
 
 function defaultId(prefix: string): string {
@@ -113,13 +115,17 @@ function toCandidate(hook: HookResult, index: number): Candidate {
   };
 }
 
-function asResponse(run: StoredAgentRun, messages: Message[] = [], finalizedResponse?: GenerateResponse): CoachRunResponse {
+function syncRunSummary(run: StoredAgentRun): void {
   run.summary = {
     messageCount: Math.max(run.summary?.messageCount ?? 0, run.messages.length),
     latestMessageAt: run.messages.at(-1)?.createdAt ?? run.summary?.latestMessageAt,
     candidateCount: run.candidates.length,
     status: run.status,
   };
+}
+
+function asResponse(run: StoredAgentRun, messages: Message[] = [], finalizedResponse?: GenerateResponse): CoachRunResponse {
+  syncRunSummary(run);
   const comparison = compareCandidates(run.candidates);
   const publicRun = structuredClone(run) as CoachRunState & { creatorSessionId?: string };
   delete publicRun.creatorSessionId;
@@ -248,6 +254,57 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   const { repository } = dependencies;
   const now = dependencies.now ?? (() => new Date());
   const id = dependencies.id ?? defaultId;
+  const operationLeaseMs = Number.isFinite(dependencies.operationLeaseMs) && dependencies.operationLeaseMs! > 0
+    ? dependencies.operationLeaseMs!
+    : DEFAULT_AGENT_OPERATION_LEASE_MS;
+
+  function activeOperation(kind: NonNullable<StoredAgentRun["activeOperation"]>["kind"], timestamp: string): NonNullable<StoredAgentRun["activeOperation"]> {
+    return {
+      id: id("operation"),
+      kind,
+      startedAt: timestamp,
+      expiresAt: new Date(Date.parse(timestamp) + operationLeaseMs).toISOString(),
+    };
+  }
+
+  function operationExpired(run: StoredAgentRun, current: Date): boolean {
+    if (!run.activeOperation) return false;
+    const explicitExpiry = Date.parse(run.activeOperation.expiresAt ?? "");
+    if (Number.isFinite(explicitExpiry)) return explicitExpiry <= current.getTime();
+    const startedAt = Date.parse(run.activeOperation.startedAt);
+    return !Number.isFinite(startedAt) || startedAt + operationLeaseMs <= current.getTime();
+  }
+
+  function recoverExpiredOperation(run: StoredAgentRun, current: Date): boolean {
+    const operation = run.activeOperation;
+    if (!operation || !operationExpired(run, current)) return false;
+    if (operation.kind === "decision") {
+      run.status = "understanding";
+      run.recoverable = undefined;
+      run.resumeStatus = undefined;
+    } else {
+      const resumeStatus = operation.kind === "image"
+        ? "analyzing_image" as const
+        : run.status === "generating" ? "generating" as const : "revising" as const;
+      const expectedTool = operation.kind === "image" ? "analyze_image" : undefined;
+      const call = [...run.toolCalls].reverse().find((item) => item.status === "requested" && (!expectedTool || item.tool === expectedTool));
+      if (call) call.status = "completed";
+      run.toolResults.push({
+        callId: call?.id,
+        tool: call?.tool ?? (operation.kind === "image" ? "analyze_image" : "generate_hooks"),
+        status: "error",
+        error: { code: "operation_expired", message: "Agent operation lease expired" },
+      });
+      run.status = "failed";
+      run.recoverable = true;
+      run.resumeStatus = resumeStatus;
+    }
+    run.activeOperation = undefined;
+    run.updatedAt = current.toISOString();
+    run.revision += 1;
+    syncRunSummary(run);
+    return true;
+  }
 
   async function sessionFromToken(token: string | undefined, create: boolean): Promise<{ session: CreatorSession; token?: string }> {
     return repository.transaction((state) => {
@@ -259,10 +316,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     });
   }
 
-  async function readOwned(token: string | undefined, runId: string): Promise<StoredAgentRun> {
-    const owner = await sessionFromToken(token, false);
-    const state = await repository.read();
-    return structuredClone(findOwnedRun(state, runId, owner.session.id));
+  async function recoverOwnedRun(ownerId: string, runId: string): Promise<StoredAgentRun> {
+    return repository.transaction((state) => {
+      const run = findOwnedRun(state, runId, ownerId);
+      recoverExpiredOperation(run, now());
+      return structuredClone(run);
+    });
   }
 
   async function completeGeneration(ownerId: string, runId: string, request: CoachGenerationRequest, revision: number, operationId: string): Promise<CoachRunResponse> {
@@ -277,6 +336,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       }
     } catch (error) {
       const mapped = providerStatus(error);
+      await recoverOwnedRun(ownerId, runId);
       const response = await repository.transaction((state) => {
         const run = findOwnedRun(state, runId, ownerId);
         assertExpectedRevision(run, revision);
@@ -295,6 +355,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       });
       throw new AgentProviderError(mapped.status, mapped.code, response);
     }
+    await recoverOwnedRun(ownerId, runId);
     return repository.transaction((state) => {
       const run = findOwnedRun(state, runId, ownerId);
       assertExpectedRevision(run, revision);
@@ -355,11 +416,13 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     },
 
     async getRun(sessionToken: string | undefined, runId: string): Promise<CoachRunResponse> {
-      return asResponse(await readOwned(sessionToken, runId));
+      const owner = await sessionFromToken(sessionToken, false);
+      return asResponse(await recoverOwnedRun(owner.session.id, runId));
     },
 
     async cancelRun(sessionToken: string | undefined, runId: string, expectedRevision: number): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
+      await recoverOwnedRun(owner.session.id, runId);
       return repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, expectedRevision);
@@ -385,6 +448,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       if (command.type === "rewrite_candidate") assertSafeText(command.instruction, "instruction", 1_000);
       if (command.type === "reject_batch") assertSafeText(command.reason, "reason", 1_000);
       const owner = await sessionFromToken(sessionToken, false);
+      await recoverOwnedRun(owner.session.id, runId);
       const prepared = await repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, expectedRevision);
@@ -401,8 +465,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const direct = normalizeBrief({ ...currentBrief, ...directPatch }, run.clarificationAttempts ?? 0);
           const directMissing = direct.kind === "complete" ? undefined : direct.missing[0];
           if (missingField && dependencies.decideBriefPatch && direct.kind !== "complete" && directMissing === missingField) {
-            const operationId = id("operation");
-            run.activeOperation = { id: operationId, kind: "decision", startedAt: timestamp };
+            const operation = activeOperation("decision", timestamp);
+            const operationId = operation.id;
+            run.activeOperation = operation;
             run.revision += 1;
             run.updatedAt = timestamp;
             asResponse(run);
@@ -431,8 +496,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           if (!run.pendingGeneration || !run.brief) throw new AgentConflictError("Retry context is missing");
           const pending = run.pendingGeneration;
           const sourceCandidate = pending.sourceCandidateId ? run.candidates.find((item) => item.id === pending.sourceCandidateId) : undefined;
-          const operationId = id("operation");
-          run.activeOperation = { id: operationId, kind: "generation", startedAt: timestamp };
+          const operation = activeOperation("generation", timestamp);
+          const operationId = operation.id;
+          run.activeOperation = operation;
           const tool: ToolName = pending.kind === "initial" ? "generate_hooks" : pending.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, retry: true }, status: "requested", createdAt: timestamp });
           asResponse(run);
@@ -444,8 +510,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.status = transition(run.status, command);
           run.revision += 1;
           run.pendingGeneration = { kind: "initial", count: 10 };
-          const operationId = id("operation");
-          run.activeOperation = { id: operationId, kind: "generation", startedAt: timestamp };
+          const operation = activeOperation("generation", timestamp);
+          const operationId = operation.id;
+          run.activeOperation = operation;
           run.toolCalls.push({ id: id("tool"), tool: "generate_hooks", input: { expectedCount: 10 }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -464,8 +531,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
             ? { kind: "rewrite" as const, count: 3 as const, sourceCandidateId: sourceCandidate!.id, instruction: command.instruction }
             : { kind: "regenerate" as const, count: 10 as const, reason: command.reason };
           run.pendingGeneration = pending;
-          const operationId = id("operation");
-          run.activeOperation = { id: operationId, kind: "generation", startedAt: timestamp };
+          const operation = activeOperation("generation", timestamp);
+          const operationId = operation.id;
+          run.activeOperation = operation;
           const tool: ToolName = command.type === "rewrite_candidate" ? "rewrite_hook" : "regenerate_batch";
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, ...(command.type === "rewrite_candidate" ? { candidateId: sourceCandidate!.id } : { hasReason: Boolean(command.reason) }) }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
@@ -546,6 +614,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           // Fall back to the deterministic answer path; the operation is still
           // completed through the same CAS and no hidden reasoning is persisted.
         }
+        await recoverOwnedRun(owner.session.id, runId);
         return repository.transaction((state) => {
           const run = findOwnedRun(state, runId, owner.session.id);
           assertExpectedRevision(run, prepared.revision);
@@ -561,6 +630,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
 
     async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
+      await recoverOwnedRun(owner.session.id, runId);
       const preview = findOwnedRun(await repository.read(), runId, owner.session.id);
       assertExpectedRevision(preview, expectedRevision);
       if (preview.status !== "analyzing_image" || preview.activeOperation) throw new AgentConflictError("Image is not expected in this state");
@@ -573,8 +643,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         if (run.activeOperation) throw new AgentConflictError("An image operation is already in flight");
         run.revision += 1;
         const callId = id("tool");
-        const operationId = id("operation");
-        run.activeOperation = { id: operationId, kind: "image", startedAt: now().toISOString() };
+        const operation = activeOperation("image", now().toISOString());
+        const operationId = operation.id;
+        run.activeOperation = operation;
         run.toolCalls.push({ id: callId, tool: "analyze_image", input: { mimeType: file.type, size: file.size }, status: "requested", createdAt: now().toISOString() });
         run.updatedAt = now().toISOString();
         asResponse(run);
@@ -588,6 +659,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       } catch (error) {
         const providerStatusCode = typeof error === "object" && error && "status" in error && typeof error.status === "number" ? error.status : 502;
         const status = providerStatusCode === 501 ? 503 : providerStatusCode;
+        await recoverOwnedRun(owner.session.id, runId);
         const response = await repository.transaction((state) => {
           const run = findOwnedRun(state, runId, owner.session.id);
           assertExpectedRevision(run, reserved.revision);
@@ -602,6 +674,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         });
         throw new AgentProviderError(status, "image_provider_error", response);
       }
+      await recoverOwnedRun(owner.session.id, runId);
       return repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, reserved.revision);
