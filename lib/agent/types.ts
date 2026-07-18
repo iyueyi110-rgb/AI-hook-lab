@@ -108,6 +108,7 @@ export interface Memory {
 
 export interface AgentRun {
   id: string;
+  revision: number;
   status: AgentRunStatus;
   brief?: CreativeBrief;
   messages: Message[];

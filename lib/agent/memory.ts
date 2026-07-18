@@ -2,7 +2,8 @@ import { PLATFORM_STYLES } from "../constants.ts";
 import { findSensitiveInputHints } from "../promptTemplates.ts";
 import type { EmotionTone, Platform } from "../types.ts";
 import { MEMORY_WORD_LIMIT_BANDS } from "./brief.ts";
-import type { CreativeBrief, Memory, MemoryEntry, MemoryKey } from "./types.ts";
+import { assertExpectedRevision } from "./machine.ts";
+import type { AgentRun, CreativeBrief, Memory, MemoryEntry, MemoryKey } from "./types.ts";
 
 const PLATFORMS: Platform[] = ["xiaohongshu", "douyin", "bilibili", "youtube", "x"];
 const TONES: EmotionTone[] = ["urgent", "curious", "humorous", "emotional", "authoritative", "rebellious"];
@@ -23,7 +24,7 @@ function conflicts(entries: MemoryEntry[], key: MemoryKey, value: string): boole
   return Boolean(opposite && entries.some((entry) => entry.key === opposite && entry.value === value));
 }
 
-export function recordMemory(memory: Memory, update: { key: MemoryKey; value: string }): { memory: Memory; accepted: boolean } {
+function updateMemory(memory: Memory, update: { key: MemoryKey; value: string }): { memory: Memory; accepted: boolean } {
   if (!isAllowedValue(update.key, update.value) || conflicts(memory.entries, update.key, update.value)) {
     return { memory, accepted: false };
   }
@@ -35,6 +36,19 @@ export function recordMemory(memory: Memory, update: { key: MemoryKey; value: st
     };
   }
   return { accepted: true, memory: { entries: [...memory.entries, { ...update, confidence: 0.6 }] } };
+}
+
+export function recordMemory(
+  run: AgentRun,
+  expectedRevision: number,
+  update: { key: MemoryKey; value: string }
+): { run: AgentRun; accepted: boolean } {
+  assertExpectedRevision(run, expectedRevision);
+  const result = updateMemory(run.memory, update);
+  return {
+    accepted: result.accepted,
+    run: result.accepted ? { ...run, memory: result.memory, revision: run.revision + 1 } : run,
+  };
 }
 
 const BRIEF_FIELD: Partial<Record<MemoryKey, keyof CreativeBrief>> = {

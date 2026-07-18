@@ -1,5 +1,5 @@
 import { AGENT_BUDGET } from "./budget.ts";
-import type { AgentCommand, AgentRunStatus, ToolName } from "./types.ts";
+import type { AgentCommand, AgentRun, AgentRunStatus, ToolName } from "./types.ts";
 
 export class AgentConflictError extends Error {
   readonly code = "agent_conflict" as const;
@@ -7,6 +7,12 @@ export class AgentConflictError extends Error {
   constructor(message: string) {
     super(message);
     this.name = "AgentConflictError";
+  }
+}
+
+export function assertExpectedRevision(run: AgentRun, expectedRevision: number): void {
+  if (!Number.isInteger(expectedRevision) || run.revision !== expectedRevision) {
+    throw new AgentConflictError(`Expected revision ${expectedRevision}, found ${run.revision}`);
   }
 }
 
@@ -85,4 +91,17 @@ export function transition(
   if (command.type === "select_candidate") return "awaiting_final_confirmation";
   if (command.type === "confirm_final") return "completed";
   return status;
+}
+
+export function applyCommand(run: AgentRun, expectedRevision: number, command: AgentCommand): AgentRun {
+  assertExpectedRevision(run, expectedRevision);
+  const status = transition(run.status, command, {
+    recoverable: run.recoverable,
+    resumeStatus: run.resumeStatus,
+    revisionRounds: run.revisionRounds,
+  });
+  const revisionRounds = command.type === "rewrite_candidate" || command.type === "reject_batch"
+    ? run.revisionRounds + 1
+    : run.revisionRounds;
+  return { ...run, status, revisionRounds, revision: run.revision + 1 };
 }

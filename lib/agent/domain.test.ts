@@ -3,19 +3,27 @@ import test from "node:test";
 import { PLATFORM_STYLES } from "../constants.ts";
 import {
   AGENT_BUDGET,
+  AgentBudgetError,
   AgentConflictError,
   MEMORY_WORD_LIMIT_BANDS,
   TOOL_REGISTRY,
+  applyCommand,
   compareCandidates,
+  consumeStep,
+  createAgentTurnBudgetCounters,
   createToolResult,
   getAllowedCommands,
   getAllowedTools,
   normalizeBrief,
+  recordFormatAndCountRetry,
+  recordGenerationCall,
   recordMemory,
+  recordModelCall,
   resolveMemoryPreference,
+  trimRecentMessages,
   transition,
   type Candidate,
-  type Memory,
+  type AgentRun,
 } from "./index.ts";
 
 const baseCandidate = (id: string, overallScore: number, badcaseTags: string[] = []): Candidate => ({
@@ -27,6 +35,22 @@ const baseCandidate = (id: string, overallScore: number, badcaseTags: string[] =
   scores: { impact: overallScore, platformFit: overallScore, actionability: overallScore, shareability: overallScore },
   badcaseTags,
 });
+
+function baseRun(overrides: Partial<AgentRun> = {}): AgentRun {
+  return {
+    id: "run-1",
+    revision: 0,
+    status: "awaiting_brief_confirmation",
+    messages: [],
+    candidates: [],
+    toolCalls: [],
+    toolResults: [],
+    approvals: [],
+    memory: { entries: [] },
+    revisionRounds: 0,
+    ...overrides,
+  };
+}
 
 test("exposes the fixed per-turn budgets", () => {
   assert.deepEqual(AGENT_BUDGET, {
@@ -83,10 +107,33 @@ test("blocks every tool outside its exact approved state", () => {
   }
 });
 
-test("enforces revision conflicts and the three-round limit", () => {
+test("enforces revision round limits without conflating them with run revisions", () => {
   assert.throws(() => transition("reviewing", { type: "rewrite_candidate", candidateId: "a" }, { revisionRounds: 3 }), AgentConflictError);
   assert.equal(transition("reviewing", { type: "rewrite_candidate", candidateId: "a" }, { revisionRounds: 2 }), "revising");
   assert.throws(() => transition("revising", { type: "rewrite_candidate", candidateId: "a" }, { revisionRounds: -1 }), AgentConflictError);
+});
+
+test("rejects stale expected revisions before a command mutation and increments successful revisions", () => {
+  const initial = baseRun({ status: "awaiting_final_confirmation" });
+  const updated = applyCommand(initial, 0, { type: "message", text: "first" });
+  assert.equal(updated.status, "awaiting_final_confirmation");
+  assert.equal(updated.revision, 1);
+  assert.equal(applyCommand(updated, 1, { type: "message", text: "fresh" }).revision, 2);
+  assert.throws(() => applyCommand(updated, 0, { type: "message", text: "stale" }), AgentConflictError);
+});
+
+test("enforces executable turn budgets at boundaries and trims recent messages", () => {
+  let counters = createAgentTurnBudgetCounters();
+  for (let index = 0; index < 4; index += 1) counters = consumeStep(counters);
+  assert.throws(() => consumeStep(counters), AgentBudgetError);
+  for (let index = 0; index < 2; index += 1) counters = recordModelCall(counters);
+  assert.throws(() => recordModelCall(counters), AgentBudgetError);
+  counters = recordGenerationCall(counters);
+  assert.throws(() => recordGenerationCall(counters), AgentBudgetError);
+  for (let index = 0; index < 2; index += 1) counters = recordFormatAndCountRetry(counters);
+  assert.throws(() => recordFormatAndCountRetry(counters), AgentBudgetError);
+  const messages = Array.from({ length: 21 }, (_, index) => ({ id: String(index), role: "user" as const, content: String(index), createdAt: String(index) }));
+  assert.deepEqual(trimRecentMessages(messages).map((message) => message.id), Array.from({ length: 20 }, (_, index) => String(index + 1)));
 });
 
 test("creates all structured tool result outcomes", () => {
@@ -110,21 +157,22 @@ test("ranks a stable Top 3 from model-provided scores and known bad-case tags on
   assert.doesNotMatch(result.explanations.join(" "), /click|CTR|performance|表现/i);
 });
 
-test("stores only whitelist memory, resolves conflicts, and lets current briefs override it", () => {
-  let memory: Memory = { entries: [] };
-  ({ memory } = recordMemory(memory, { key: "default_platform", value: "douyin" }));
-  ({ memory } = recordMemory(memory, { key: "preferred_tone", value: "curious" }));
-  ({ memory } = recordMemory(memory, { key: "preferred_tone", value: "curious" }));
-  assert.equal(memory.entries.find((entry) => entry.key === "preferred_tone")?.confidence, 0.7);
-  for (let index = 0; index < 3; index += 1) ({ memory } = recordMemory(memory, { key: "preferred_tone", value: "curious" }));
-  assert.equal(memory.entries.find((entry) => entry.key === "preferred_tone")?.confidence, 0.9);
-  assert.equal(resolveMemoryPreference(memory, "default_platform", { platform: "x" }), "x");
-  assert.equal(resolveMemoryPreference(memory, "preferred_tone", { emotionTone: "urgent" }), "urgent");
-  assert.equal(recordMemory(memory, { key: "preferred_style", value: "not-a-platform-style" }).accepted, false);
-  assert.equal(recordMemory(memory, { key: "default_platform", value: "person@example.com" }).accepted, false);
+test("stores only whitelist memory through revision-checked mutations and lets current briefs override it", () => {
+  let run = baseRun();
+  run = recordMemory(run, 0, { key: "default_platform", value: "douyin" }).run;
+  run = recordMemory(run, 1, { key: "preferred_tone", value: "curious" }).run;
+  run = recordMemory(run, 2, { key: "preferred_tone", value: "curious" }).run;
+  assert.equal(run.memory.entries.find((entry) => entry.key === "preferred_tone")?.confidence, 0.7);
+  for (let index = 0; index < 3; index += 1) run = recordMemory(run, run.revision, { key: "preferred_tone", value: "curious" }).run;
+  assert.equal(run.memory.entries.find((entry) => entry.key === "preferred_tone")?.confidence, 0.9);
+  assert.equal(resolveMemoryPreference(run.memory, "default_platform", { platform: "x" }), "x");
+  assert.equal(resolveMemoryPreference(run.memory, "preferred_tone", { emotionTone: "urgent" }), "urgent");
+  assert.equal(recordMemory(run, run.revision, { key: "preferred_style", value: "not-a-platform-style" }).accepted, false);
+  assert.equal(recordMemory(run, run.revision, { key: "default_platform", value: "person@example.com" }).accepted, false);
   const style = PLATFORM_STYLES.douyin[0]!;
-  ({ memory } = recordMemory(memory, { key: "preferred_style", value: style }));
-  assert.equal(recordMemory(memory, { key: "avoided_style", value: style }).accepted, false);
+  run = recordMemory(run, run.revision, { key: "preferred_style", value: style }).run;
+  assert.equal(recordMemory(run, run.revision, { key: "avoided_style", value: style }).accepted, false);
+  assert.throws(() => recordMemory(run, 0, { key: "default_platform", value: "x" }), AgentConflictError);
   assert.ok(MEMORY_WORD_LIMIT_BANDS.length === 4);
 });
 
@@ -134,4 +182,21 @@ test("normalizes defaults and stops after two clarification questions", () => {
   if (ready.kind === "complete") assert.equal(ready.brief.wordLimitBand, MEMORY_WORD_LIMIT_BANDS[1]);
   assert.deepEqual(normalizeBrief({ topic: "topic" }, 1), { kind: "needs_clarification", missing: ["platform", "contentType"] });
   assert.deepEqual(normalizeBrief({ topic: "topic" }, 2), { kind: "requires_form_completion", missing: ["platform", "contentType"] });
+});
+
+test("does not complete briefs with invalid platform, content type, tone, or preferred style input", () => {
+  for (const input of [
+    { topic: "topic", platform: "made-up", contentType: "video" },
+    { topic: "topic", platform: "douyin", contentType: "made-up" },
+    { topic: "topic", platform: "douyin", contentType: "video", emotionTone: "made-up" },
+    { topic: "topic", platform: "made-up", contentType: "video", preferredStyle: "anything" },
+  ]) {
+    const result = normalizeBrief(input);
+    assert.notEqual(result.kind, "complete");
+    const invalidFields = "invalidFields" in result ? result.invalidFields ?? [] : [];
+    assert.ok(invalidFields.length > 0);
+  }
+  const exhausted = normalizeBrief({ topic: "topic", platform: "made-up", contentType: "video" }, 2);
+  assert.equal(exhausted.kind, "requires_form_completion");
+  assert.deepEqual(exhausted.invalidFields, ["platform"]);
 });
