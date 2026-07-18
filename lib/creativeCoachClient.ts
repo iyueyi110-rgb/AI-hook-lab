@@ -41,6 +41,61 @@ export interface StorageLike {
   removeItem(key: string): void;
 }
 
+export interface CoachToolEvent {
+  callId: string;
+  tool: AgentRun["toolCalls"][number]["tool"];
+  status: "completed" | "error" | "denied" | "requested";
+}
+
+export interface CoachWriteGate {
+  run<T>(operation: () => Promise<T>): Promise<T>;
+}
+
+export function createCoachWriteGate(): CoachWriteGate {
+  let active: Promise<unknown> | null = null;
+  return {
+    run<T>(operation: () => Promise<T>): Promise<T> {
+      if (active) return active as Promise<T>;
+      const started = operation();
+      const guarded = started.finally(() => {
+        if (active === guarded) active = null;
+      });
+      active = guarded;
+      return guarded;
+    },
+  };
+}
+
+export function collectCoachToolEvents(response: CoachClientResponse, seen: Set<string>): CoachToolEvent[] {
+  const exactResults = new Map(response.run.toolResults
+    .filter((result) => result.callId)
+    .map((result) => [result.callId!, result]));
+  const legacyResults = response.run.toolResults.filter((result) => !result.callId);
+  const usedLegacy = new Set<number>();
+  const events: CoachToolEvent[] = [];
+  for (const call of response.run.toolCalls) {
+    if (seen.has(call.id) || call.status !== "completed") continue;
+    let result = exactResults.get(call.id);
+    if (!result) {
+      const legacyIndex = legacyResults.findIndex((item, index) => !usedLegacy.has(index) && item.tool === call.tool);
+      if (legacyIndex >= 0) {
+        usedLegacy.add(legacyIndex);
+        result = legacyResults[legacyIndex];
+      }
+    }
+    const status = result?.status === "error"
+      ? "error" as const
+      : result?.status === "denied"
+        ? "denied" as const
+        : result?.status === "approval_required"
+          ? "requested" as const
+          : "completed" as const;
+    seen.add(call.id);
+    events.push({ callId: call.id, tool: call.tool, status });
+  }
+  return events;
+}
+
 export class CoachClientError extends Error {
   readonly status: number;
   readonly code: string;

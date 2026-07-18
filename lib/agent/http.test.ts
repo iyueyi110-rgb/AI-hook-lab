@@ -91,6 +91,25 @@ test("validates the strict turn union, message size, state, and expected revisio
   assert.equal(long.status, 413);
 });
 
+test("confirm_brief accepts only a strict optional brief patch", async () => {
+  const handlers = setup();
+  const created = await createRun(handlers);
+  const id = created.body.run.id;
+  const accepted = await handlers.turn(jsonRequest(`/api/agent/runs/${id}/turns`, {
+    expectedRevision: 0,
+    command: { type: "confirm_brief", briefPatch: { imageDescription: "用户确认的图片内容" } },
+  }, created.cookie), id);
+  assert.equal(accepted.status, 200);
+  assert.equal((await accepted.json()).run.brief.imageDescription, "用户确认的图片内容");
+
+  const second = await createRun(handlers);
+  const rejected = await handlers.turn(jsonRequest(`/api/agent/runs/${second.body.run.id}/turns`, {
+    expectedRevision: 0,
+    command: { type: "confirm_brief", briefPatch: { imageDescription: "安全描述", unknown: "no" } },
+  }, second.cookie), second.body.run.id);
+  assert.equal(rejected.status, 400);
+});
+
 test("turn responses use the unified contract and cancellation is revision checked", async () => {
   const handlers = setup();
   const created = await createRun(handlers);

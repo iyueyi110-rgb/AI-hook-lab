@@ -122,7 +122,15 @@ function parseCommand(value: unknown): AgentCommand {
     case "message":
       exactKeys(command, ["type", "text"], ["type", "text"]);
       return { type: "message", text: nonEmpty(command.text, "message", MAX_AGENT_MESSAGE_LENGTH) };
-    case "confirm_brief": case "confirm_final": case "retry":
+    case "confirm_brief": {
+      exactKeys(command, ["type", "briefPatch"], ["type"]);
+      if (command.briefPatch === undefined) return { type: "confirm_brief" };
+      if (!command.briefPatch || typeof command.briefPatch !== "object" || Array.isArray(command.briefPatch)) {
+        throw new HttpError(400, "briefPatch must be an object");
+      }
+      return { type: "confirm_brief", briefPatch: command.briefPatch } as AgentCommand;
+    }
+    case "confirm_final": case "retry":
       exactKeys(command, ["type"], ["type"]);
       return { type: command.type };
     case "select_candidate":

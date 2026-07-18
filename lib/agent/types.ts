@@ -14,7 +14,7 @@ export type AgentRunStatus =
 
 export type AgentCommand =
   | { type: "message"; text: string }
-  | { type: "confirm_brief" }
+  | { type: "confirm_brief"; briefPatch?: Partial<CreativeBrief> }
   | { type: "select_candidate"; candidateId: string }
   | { type: "rewrite_candidate"; candidateId: string; instruction?: string }
   | { type: "reject_batch"; reason?: string }
@@ -123,6 +123,7 @@ export interface AgentRun {
   clarificationAttempts?: number;
   requiresFormCompletion?: boolean;
   selectedCandidateId?: string;
+  finalizedAt?: string;
   pendingGeneration?: {
     kind: "initial" | "rewrite" | "regenerate";
     count: 3 | 10;

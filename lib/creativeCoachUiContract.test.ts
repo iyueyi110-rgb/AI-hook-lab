@@ -37,7 +37,7 @@ test("coach workspace has responsive three-column, drawer and full-screen access
   assert.match(workspace, /allowedCommands/);
   assert.match(workspace, /needsInput/);
   assert.match(workspace, /xl:!hidden/);
-  assert.match(workspace, /openButtonRef\.current\?\.focus/);
+  assert.match(workspace, /returnTarget\?\.focus/);
 });
 
 test("coach image, memory and finalized history flows stay on their intended boundaries", async () => {
@@ -63,4 +63,40 @@ test("classic Hook cards remain default while coach actions are optional", async
   assert.match(card, /coachActions \?/);
   assert.match(grid, /canReject/);
   assert.match(grid, /!coachActions\.canReject/);
+});
+
+test("failed recoverable runs expose retry independently of transient client errors", async () => {
+  const workspace = await source("components/CreativeCoachWorkspace.tsx");
+  assert.match(workspace, /run\?\.status === "failed"/);
+  assert.match(workspace, /run\.recoverable/);
+  assert.match(workspace, /allowed\(allowedCommands, "retry"\)/);
+  assert.doesNotMatch(workspace, /coach\.error[^}]+allowed\(allowedCommands, "retry"\)/s);
+});
+
+test("image understanding is editable and sent in confirm_brief briefPatch", async () => {
+  const workspace = await source("components/CreativeCoachWorkspace.tsx");
+  assert.match(workspace, /coach-image-description/);
+  assert.match(workspace, /briefPatch/);
+  assert.match(workspace, /type: "confirm_brief"/);
+});
+
+test("modal coach drawer traps focus, makes background inert, and restores the opening focus", async () => {
+  const workspace = await source("components/CreativeCoachWorkspace.tsx");
+  assert.match(workspace, /previousFocusRef/);
+  assert.match(workspace, /event\.key !== "Tab"/);
+  assert.match(workspace, /shiftKey/);
+  assert.match(workspace, /inert=/);
+  assert.match(workspace, /aria-hidden=/);
+});
+
+test("coach candidates do not render no-op satisfaction controls", async () => {
+  const card = await source("components/HookCard.tsx");
+  assert.match(card, /!coachActions &&/);
+});
+
+test("coach restoration forwards a completed finalized response to history", async () => {
+  const hook = await source("hooks/useCreativeCoach.ts");
+  assert.match(hook, /next\.finalizedResponse/);
+  assert.match(hook, /onFinalized\?\.\(next\.finalizedResponse\)/);
+  assert.match(hook, /writeGateRef/);
 });

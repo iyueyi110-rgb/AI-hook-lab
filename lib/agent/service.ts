@@ -124,6 +124,24 @@ function syncRunSummary(run: StoredAgentRun): void {
   };
 }
 
+function finalizedResponseForRun(run: StoredAgentRun): GenerateResponse | undefined {
+  if (run.status !== "completed" || !run.brief || !run.selectedCandidateId || !run.finalizedAt) return undefined;
+  const selected = run.candidates.find((candidate) => candidate.id === run.selectedCandidateId);
+  if (!selected) return undefined;
+  return {
+    taskId: run.id,
+    hooks: [{ ...selected, clickScore: selected.overallScore * 10 }],
+    generatedAt: run.finalizedAt,
+    topic: run.brief.topic,
+    platform: run.brief.platform,
+    contentType: run.brief.contentType,
+    targetAudience: run.brief.targetAudience,
+    emotionTone: run.brief.emotionTone,
+    wordLimit: wordLimitFor(run.brief.wordLimitBand),
+    model: "creative-coach",
+  };
+}
+
 function asResponse(run: StoredAgentRun, messages: Message[] = [], finalizedResponse?: GenerateResponse): CoachRunResponse {
   syncRunSummary(run);
   const comparison = compareCandidates(run.candidates);
@@ -146,7 +164,7 @@ function asResponse(run: StoredAgentRun, messages: Message[] = [], finalizedResp
       || run.status === "reviewing" || run.status === "awaiting_final_confirmation"
       || (run.status === "failed" && Boolean(run.recoverable && run.resumeStatus))
     ),
-    ...(finalizedResponse ? { finalizedResponse } : {}),
+    ...((finalizedResponse ?? finalizedResponseForRun(run)) ? { finalizedResponse: finalizedResponse ?? finalizedResponseForRun(run) } : {}),
   };
 }
 
@@ -447,6 +465,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       if (command.type === "message") assertSafeText(command.text, "message", MAX_AGENT_MESSAGE_LENGTH);
       if (command.type === "rewrite_candidate") assertSafeText(command.instruction, "instruction", 1_000);
       if (command.type === "reject_batch") assertSafeText(command.reason, "reason", 1_000);
+      if (command.type === "confirm_brief") assertSafeBriefInput(command.briefPatch ?? {});
       const owner = await sessionFromToken(sessionToken, false);
       await recoverOwnedRun(owner.session.id, runId);
       const prepared = await repository.transaction((state) => {
@@ -507,6 +526,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
 
         if (command.type === "confirm_brief") {
           if (!run.brief) throw new AgentConflictError("Brief is incomplete");
+          if (command.briefPatch) {
+            const normalized = normalizeBrief({ ...run.brief, ...command.briefPatch }, run.clarificationAttempts ?? 0);
+            if (normalized.kind !== "complete") throw new AgentInputError("Brief correction is incomplete or invalid");
+            run.brief = normalized.brief;
+            run.briefDraft = normalized.brief;
+          }
           run.status = transition(run.status, command);
           run.revision += 1;
           run.pendingGeneration = { kind: "initial", count: 10 };
@@ -569,14 +594,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           ]) recordCreatorMemory(state, owner.session.id, update, now());
           run.status = transition(run.status, command);
           run.revision += 1;
+          run.finalizedAt = timestamp;
           run.updatedAt = timestamp;
-          const finalizedResponse: GenerateResponse = {
-            hooks: [{ ...selected, clickScore: selected.overallScore * 10 }], generatedAt: timestamp,
-            topic: run.brief.topic, platform: run.brief.platform, contentType: run.brief.contentType,
-            targetAudience: run.brief.targetAudience, emotionTone: run.brief.emotionTone,
-            wordLimit: wordLimitFor(run.brief.wordLimitBand), model: "creative-coach",
-          };
-          return { kind: "response" as const, response: asResponse(run, [], finalizedResponse) };
+          return { kind: "response" as const, response: asResponse(run) };
         }
 
         if (command.type === "message") {

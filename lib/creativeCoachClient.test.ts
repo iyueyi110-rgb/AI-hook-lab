@@ -11,6 +11,7 @@ import {
   saveCoachRunId,
   type CoachClientResponse,
 } from "./creativeCoachClient.ts";
+import * as coachClient from "./creativeCoachClient.ts";
 
 function response(allowedCommands: CoachClientResponse["allowedCommands"]): CoachClientResponse {
   return {
@@ -89,4 +90,44 @@ test("a stale write refreshes once and is never replayed", async () => {
   );
   assert.equal(writes, 1);
   assert.equal(refreshes, 1);
+});
+
+test("a synchronous coach write gate coalesces double clicks without aborting or replaying the write", async () => {
+  const createGate = (coachClient as unknown as { createCoachWriteGate?: () => { run<T>(operation: () => Promise<T>): Promise<T> } }).createCoachWriteGate;
+  assert.equal(typeof createGate, "function");
+  const gate = createGate!();
+  let writes = 0;
+  let release!: (value: string) => void;
+  const pending = new Promise<string>((resolve) => { release = resolve; });
+  const first = gate.run(async () => { writes += 1; return pending; });
+  const second = gate.run(async () => { writes += 1; return "duplicate"; });
+  assert.equal(first, second);
+  assert.equal(writes, 1);
+  release("saved");
+  assert.equal(await second, "saved");
+});
+
+test("tool analytics correlate results by callId and emit failures once", () => {
+  const collect = (coachClient as unknown as {
+    collectCoachToolEvents?: (response: CoachClientResponse, seen: Set<string>) => Array<{ callId: string; status: string; tool: string }>;
+  }).collectCoachToolEvents;
+  assert.equal(typeof collect, "function");
+  const current = response([]);
+  current.run.toolCalls = [
+    { id: "success-call", tool: "generate_hooks", input: {}, status: "completed", createdAt: "2026-01-01" },
+    { id: "error-call", tool: "analyze_image", input: {}, status: "completed", createdAt: "2026-01-01" },
+    { id: "denied-call", tool: "save_final_choice", input: {}, status: "completed", createdAt: "2026-01-01" },
+  ];
+  current.run.toolResults = [
+    { callId: "error-call", tool: "analyze_image", status: "error" },
+    { callId: "success-call", tool: "generate_hooks", status: "success" },
+    { callId: "denied-call", tool: "save_final_choice", status: "denied" },
+  ];
+  const seen = new Set<string>();
+  assert.deepEqual(collect!(current, seen).map(({ callId, status }) => ({ callId, status })), [
+    { callId: "success-call", status: "completed" },
+    { callId: "error-call", status: "error" },
+    { callId: "denied-call", status: "denied" },
+  ]);
+  assert.deepEqual(collect!(current, seen), []);
 });

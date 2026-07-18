@@ -7,6 +7,8 @@ import {
   CoachClientError,
   buildCoachEndpoint,
   canSubmitCoachCommand,
+  collectCoachToolEvents,
+  createCoachWriteGate,
   loadCoachRunId,
   performCoachWrite,
   readCoachResponse,
@@ -78,7 +80,9 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
   const [loadingAction, setLoadingAction] = React.useState<string | null>(null);
   const [restoring, setRestoring] = React.useState(true);
   const [error, setError] = React.useState<CreativeCoachError | null>(null);
-  const requestRef = React.useRef<AbortController | null>(null);
+  const readRequestRef = React.useRef<AbortController | null>(null);
+  const writeRequestRef = React.useRef<AbortController | null>(null);
+  const writeGateRef = React.useRef(createCoachWriteGate());
   const memoryRequestRef = React.useRef<AbortController | null>(null);
   const mountedRef = React.useRef(true);
   const seenToolCalls = React.useRef(new Set<string>());
@@ -86,12 +90,10 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     for (const call of next.run.toolCalls) seenToolCalls.current.add(call.id);
   }, []);
   const recordToolEvents = React.useCallback((next: CoachClientResponse) => {
-    for (const call of next.run.toolCalls) {
-      if (seenToolCalls.current.has(call.id) || call.status !== "completed") continue;
-      seenToolCalls.current.add(call.id);
+    for (const event of collectCoachToolEvents(next, seenToolCalls.current)) {
       track?.("agent_tool_call", {
-        status: call.status,
-        tool: call.tool,
+        status: event.status,
+        tool: event.tool,
         candidateCount: next.candidates.length,
       });
     }
@@ -123,9 +125,9 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
       setRestoring(false);
       return null;
     }
-    requestRef.current?.abort();
+    readRequestRef.current?.abort();
     const controller = new AbortController();
-    requestRef.current = controller;
+    readRequestRef.current = controller;
     if (!preserveError) setError(null);
     try {
       const next = await fetchRun(selected, controller.signal);
@@ -133,6 +135,9 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
         setResponse(next);
         saveCoachRunId(window.localStorage, next.run.id);
         rememberToolCalls(next);
+        if (next.finalizedResponse) {
+          onFinalized?.(next.finalizedResponse);
+        }
       }
       return next;
     } catch (caught) {
@@ -145,43 +150,42 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
       }
       return null;
     } finally {
-      if (requestRef.current === controller) requestRef.current = null;
+      if (readRequestRef.current === controller) readRequestRef.current = null;
       if (mountedRef.current) setRestoring(false);
     }
-  }, [fetchRun, rememberToolCalls]);
+  }, [fetchRun, onFinalized, rememberToolCalls]);
 
-  const executeWrite = React.useCallback(async (
+  const executeWrite = React.useCallback((
     action: string,
     runId: string | undefined,
     requestFactory: (signal: AbortSignal) => Promise<Response>,
-  ) => {
-    requestRef.current?.abort();
-    const controller = new AbortController();
-    requestRef.current = controller;
-    setLoadingAction(action);
-    setError(null);
-    try {
-      const next = await performCoachWrite(
-        () => requestFactory(controller.signal),
-        async () => {
-          if (!runId) return;
-          const latest = await fetchRun(runId, controller.signal);
-          acceptResponse(latest);
-        },
-      );
-      acceptResponse(next);
-      return next;
-    } catch (caught) {
-      if (controller.signal.aborted) return null;
-      const view = errorView(caught);
-      if (caught instanceof CoachClientError && caught.response) acceptResponse(caught.response);
-      if (mountedRef.current) setError(view);
-      return null;
-    } finally {
-      if (requestRef.current === controller) requestRef.current = null;
-      if (mountedRef.current) setLoadingAction(null);
-    }
-  }, [acceptResponse, fetchRun]);
+  ) => writeGateRef.current.run(async () => {
+      const controller = new AbortController();
+      writeRequestRef.current = controller;
+      setLoadingAction(action);
+      setError(null);
+      try {
+        const next = await performCoachWrite(
+          () => requestFactory(controller.signal),
+          async () => {
+            if (!runId) return;
+            const latest = await fetchRun(runId, controller.signal);
+            acceptResponse(latest);
+          },
+        );
+        acceptResponse(next);
+        return next;
+      } catch (caught) {
+        if (controller.signal.aborted) return null;
+        const view = errorView(caught);
+        if (caught instanceof CoachClientError && caught.response) acceptResponse(caught.response);
+        if (mountedRef.current) setError(view);
+        return null;
+      } finally {
+        if (writeRequestRef.current === controller) writeRequestRef.current = null;
+        if (mountedRef.current) setLoadingAction(null);
+      }
+    }), [acceptResponse, fetchRun]);
 
   const refreshMemory = React.useCallback(async () => {
     memoryRequestRef.current?.abort();
@@ -213,7 +217,8 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     void restore();
     return () => {
       mountedRef.current = false;
-      requestRef.current?.abort();
+      readRequestRef.current?.abort();
+      writeRequestRef.current?.abort();
       memoryRequestRef.current?.abort();
     };
   }, [refreshMemory, refreshRun]);
@@ -363,7 +368,8 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     clearMemory,
     clearError: () => setError(null),
     reset: () => {
-      requestRef.current?.abort();
+      readRequestRef.current?.abort();
+      writeRequestRef.current?.abort();
       saveCoachRunId(window.localStorage, null);
       setResponse(null);
       setError(null);

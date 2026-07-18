@@ -2,9 +2,9 @@
 
 import { useState, useCallback } from "react";
 import type { HistoryItem, GenerateResponse, HookResult } from "@/lib/types";
+import { mergeHistoryItem } from "@/lib/history";
 
 const STORAGE_KEY = "ai-hook-lab-history";
-const MAX_HISTORY = 50;
 
 function loadHistory(): HistoryItem[] {
   if (typeof window === "undefined") return [];
@@ -22,7 +22,7 @@ function loadHistory(): HistoryItem[] {
 function saveHistory(items: HistoryItem[]): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(items.slice(0, MAX_HISTORY)));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(items));
   } catch {
     // localStorage full or unavailable — silently ignore
   }
@@ -33,13 +33,8 @@ export function useHistory() {
   const [loaded] = useState(() => typeof window !== "undefined");
 
   const addToHistory = useCallback((item: GenerateResponse) => {
-    const historyItem: HistoryItem = {
-      ...item,
-      id: crypto.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
-      isFavorited: false,
-    };
     setHistory((prev) => {
-      const updated = [historyItem, ...prev];
+      const updated = mergeHistoryItem(prev, item);
       saveHistory(updated);
       return updated;
     });

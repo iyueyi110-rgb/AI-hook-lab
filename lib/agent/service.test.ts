@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { GenerationError } from "../generation/service.ts";
+import { collectCoachToolEvents } from "../creativeCoachClient.ts";
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
 import { JsonAgentRepository, MemoryAgentRepository, type AgentRepository } from "./repository.ts";
 import {
@@ -419,6 +420,54 @@ test("requires selection and a separate final confirmation before returning a cl
   assert.equal(final.finalizedResponse?.topic, completeBrief.topic);
 });
 
+test("rebuilds the finalized response from a completed run after the confirmation response is lost", async () => {
+  const coach = service();
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
+    type: "select_candidate", candidateId: reviewed.candidates[0]!.id,
+  });
+  await coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+
+  const recovered = await coach.getRun(created.sessionToken, reviewed.run.id);
+  assert.equal(recovered.run.status, "completed");
+  assert.equal(recovered.finalizedResponse?.taskId, reviewed.run.id);
+  assert.equal(recovered.finalizedResponse?.hooks[0]?.id, reviewed.candidates[0]!.id);
+  assert.equal(recovered.finalizedResponse?.generatedAt, recovered.run.finalizedAt);
+});
+
+test("a double final confirmation writes once and the stale confirmation recovers the same final", async () => {
+  const coach = service();
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
+    type: "select_candidate", candidateId: reviewed.candidates[0]!.id,
+  });
+  await coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+  await assert.rejects(
+    () => coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" }),
+    /Expected revision/,
+  );
+  const recovered = await coach.getRun(created.sessionToken, reviewed.run.id);
+  assert.equal(recovered.run.toolCalls.filter((call) => call.tool === "save_final_choice").length, 1);
+  assert.equal(recovered.finalizedResponse?.taskId, reviewed.run.id);
+});
+
+test("applies an edited image description before confirmed generation", async () => {
+  let generationRequest: CoachGenerationRequest | undefined;
+  const coach = service({ generate: async (request) => {
+    generationRequest = request;
+    return generated(request);
+  } });
+  const created = await coach.createRun(undefined, { brief: { ...completeBrief, imageDescription: "原始图片理解" } });
+  await coach.submitTurn(created.sessionToken, created.response.run.id, 0, {
+    type: "confirm_brief",
+    briefPatch: { imageDescription: "用户修正后的图片理解" },
+  } as never);
+
+  assert.equal(generationRequest?.brief.imageDescription, "用户修正后的图片理解");
+});
+
 test("a final-confirmation change request returns to candidate review", async () => {
   const coach = service();
   const created = await coach.createRun(undefined, { brief: completeBrief });
@@ -443,10 +492,15 @@ test("persists recoverable provider failures and retry resumes the interrupted g
     },
   });
   const created = await coach.createRun(undefined, { brief: completeBrief });
-  await assert.rejects(
-    () => coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" }),
-    (error: unknown) => error instanceof AgentProviderError && error.status === 504 && error.response.run.resumeStatus === "generating"
-  );
+  let providerFailure: AgentProviderError | undefined;
+  try {
+    await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  } catch (error) {
+    if (error instanceof AgentProviderError) providerFailure = error;
+  }
+  assert.equal(providerFailure?.status, 504);
+  assert.equal(providerFailure?.response.run.resumeStatus, "generating");
+  assert.deepEqual(collectCoachToolEvents(providerFailure!.response, new Set()).map((event) => event.status), ["error"]);
   const failed = await coach.getRun(created.sessionToken, created.response.run.id);
   assert.deepEqual(failed.allowedCommands, ["retry"]);
   assert.equal(failed.needsInput, true);

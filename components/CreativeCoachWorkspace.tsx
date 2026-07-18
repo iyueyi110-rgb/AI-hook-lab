@@ -83,8 +83,11 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const [rejectOpen, setRejectOpen] = React.useState(false);
   const [rejectReason, setRejectReason] = React.useState("");
   const [coachOpen, setCoachOpen] = React.useState(false);
+  const [modalViewport, setModalViewport] = React.useState(false);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
   const openButtonRef = React.useRef<HTMLButtonElement>(null);
+  const coachPanelRef = React.useRef<HTMLElement>(null);
+  const previousFocusRef = React.useRef<HTMLElement | null>(null);
 
   const current = coach.response;
   const run = current?.run;
@@ -99,27 +102,69 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const displayedTargetAudience = run ? briefEdits.targetAudience ?? run.briefDraft?.targetAudience ?? "" : targetAudience;
   const displayedEmotionTone = run ? briefEdits.emotionTone ?? run.briefDraft?.emotionTone ?? emotionTone : emotionTone;
   const displayedWordLimitBand = run ? briefEdits.wordLimitBand ?? run.briefDraft?.wordLimitBand ?? wordLimitBand : wordLimitBand;
+  const displayedImageDescription = run ? briefEdits.imageDescription ?? run.briefDraft?.imageDescription ?? "" : "";
+  const modalOpen = coachOpen && modalViewport;
 
   React.useEffect(() => () => {
     if (imagePreview) URL.revokeObjectURL(imagePreview);
   }, [imagePreview]);
 
   React.useEffect(() => {
-    if (coachOpen) closeButtonRef.current?.focus();
-  }, [coachOpen]);
-
-  const closeCoach = React.useCallback(() => {
-    setCoachOpen(false);
-    queueMicrotask(() => openButtonRef.current?.focus());
+    const media = window.matchMedia("(max-width: 1279px)");
+    const update = () => setModalViewport(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
   }, []);
 
   React.useEffect(() => {
-    const close = (event: KeyboardEvent) => {
-      if (event.key === "Escape" && coachOpen) closeCoach();
+    if (modalOpen) closeButtonRef.current?.focus();
+  }, [modalOpen]);
+
+  const openCoach = React.useCallback(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    setCoachOpen(true);
+  }, []);
+
+  const closeCoach = React.useCallback(() => {
+    const returnTarget = previousFocusRef.current ?? openButtonRef.current;
+    setCoachOpen(false);
+    queueMicrotask(() => returnTarget?.focus());
+  }, []);
+
+  React.useEffect(() => {
+    const handleDialogKey = (event: KeyboardEvent) => {
+      if (!modalOpen) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeCoach();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const panel = coachPanelRef.current;
+      if (!panel) return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => !element.hidden && element.getAttribute("aria-hidden") !== "true");
+      if (focusable.length === 0) {
+        event.preventDefault();
+        panel.focus();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable.at(-1)!;
+      const active = document.activeElement;
+      if (event.shiftKey && (active === first || !panel.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
-  }, [closeCoach, coachOpen]);
+    window.addEventListener("keydown", handleDialogKey);
+    return () => window.removeEventListener("keydown", handleDialogKey);
+  }, [closeCoach, modalOpen]);
 
   const brief = React.useMemo<Partial<CreativeBrief>>(() => ({
     topic: displayedTopic.trim(),
@@ -129,17 +174,13 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     emotionTone: displayedEmotionTone,
     wordLimitBand: displayedWordLimitBand,
     avoidBadcaseTags: [],
-  }), [displayedContentType, displayedEmotionTone, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand]);
+    ...(displayedImageDescription.trim() ? { imageDescription: displayedImageDescription.trim() } : {}),
+  }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand]);
 
   const start = async () => {
     if (!displayedTopic.trim() || coach.loading) return;
     const created = await coach.createRun({ brief, hasImage: Boolean(imageFile), ignoreMemory });
     if (created && imageFile) await coach.uploadImage(imageFile, created);
-  };
-
-  const submitBriefCorrection = () => {
-    if (!allowed(allowedCommands, "message")) return;
-    void coach.submitCommand({ type: "message", text: JSON.stringify(brief) });
   };
 
   const submitMessage = () => {
@@ -238,11 +279,18 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
             </select>
           </label>
         </div>
-        {run?.brief?.imageDescription && (
+        {run?.briefDraft?.imageDescription && (
           <div className="rounded-[10px] border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
-            <p className="text-[11px] font-extrabold">图片结构化理解</p>
-            <p className="mt-1 text-xs leading-5 text-[var(--color-graphite)]">{run.brief.imageDescription}</p>
-            <p className="mt-2 text-[10px] text-[var(--color-muted)]">如理解有偏差，可修改上方简报后保存修正。</p>
+            <label className="text-[11px] font-extrabold" htmlFor="coach-image-description">图片结构化理解</label>
+            <textarea
+              className="control-base mt-2 min-h-24 w-full resize-y px-3 py-2 text-xs leading-5"
+              disabled={coach.loading || !briefEditable}
+              id="coach-image-description"
+              maxLength={500}
+              onChange={(event) => setBriefEdits((currentEdits) => ({ ...currentEdits, imageDescription: event.target.value }))}
+              value={displayedImageDescription}
+            />
+            <p className="mt-2 text-[10px] text-[var(--color-muted)]">如理解有偏差，请在确认简报前直接修正；生成会使用这里的内容。</p>
           </div>
         )}
         {!run && (
@@ -256,8 +304,6 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
             <ChatCircleDots aria-hidden="true" size={18} weight="bold" />
             {coach.loading ? "正在创建…" : "开始创作教练"}
           </button>
-        ) : allowed(allowedCommands, "message") && run.status === "awaiting_brief_confirmation" ? (
-          <button className="button-secondary w-full" disabled={coach.loading} onClick={submitBriefCorrection} type="button">保存简报修正</button>
         ) : null}
       </div>
     </section>
@@ -278,7 +324,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
           <h2 className="mt-3 text-2xl font-black">{run.status === "awaiting_brief_confirmation" ? "请确认简报" : run.status === "analyzing_image" ? "正在理解图片" : "教练正在准备下一步"}</h2>
           <p className="mt-2 text-sm leading-6 text-[var(--color-graphite)]">所有生成与改写都需要明确状态和人工确认，不会在后台无限迭代。</p>
           {current?.pendingConfirmation === "brief" && (
-            <button className="button-primary mt-5" disabled={!needsInput || !allowed(allowedCommands, "confirm_brief") || coach.loading} onClick={() => void coach.submitCommand({ type: "confirm_brief" })} type="button"><CheckCircle aria-hidden="true" size={17} weight="bold" />确认简报并生成 10 条</button>
+            <button className="button-primary mt-5" disabled={!needsInput || !allowed(allowedCommands, "confirm_brief") || coach.loading} onClick={() => void coach.submitCommand({ type: "confirm_brief", briefPatch: brief })} type="button"><CheckCircle aria-hidden="true" size={17} weight="bold" />确认简报并生成 10 条</button>
           )}
         </div>
       )}
@@ -333,9 +379,11 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const coachPanel = (
     <aside
       aria-label="创作教练对话"
-      aria-modal={coachOpen || undefined}
+      aria-modal={modalOpen || undefined}
       className={`editorial-panel z-40 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden xl:sticky xl:top-24 max-xl:fixed max-xl:bottom-4 max-xl:right-4 max-xl:top-24 max-xl:w-[360px] max-xl:shadow-[var(--shadow-panel)] max-md:inset-0 max-md:max-h-none max-md:w-auto max-md:rounded-none ${coachOpen ? "max-xl:flex" : "max-xl:hidden"}`}
-      role={coachOpen ? "dialog" : undefined}
+      ref={coachPanelRef}
+      role={modalOpen ? "dialog" : undefined}
+      tabIndex={modalOpen ? -1 : undefined}
     >
       <div className="flex items-center justify-between border-b border-[var(--color-line)] p-4">
         <div><p className="text-xs font-extrabold text-[var(--color-accent)]">创作教练</p><p className="mt-1 text-sm font-black">{run ? STATUS_LABELS[run.status] : "等待开始"}</p></div>
@@ -345,7 +393,14 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         {!run && <p className="rounded-[10px] bg-[var(--color-surface-subtle)] p-3 text-xs leading-5">填写左侧简报后开始。我会按当前状态补问、比较和改写，不展示隐藏推理。</p>}
         {run?.messages.filter((item) => item.role !== "tool").map((item) => <div className={`max-w-[92%] rounded-[10px] px-3 py-2 text-xs leading-5 ${item.role === "user" ? "ml-auto bg-[var(--color-ink)] text-white" : "bg-[var(--color-surface-subtle)]"}`} key={item.id}>{item.content}</div>)}
         {run?.toolCalls.slice(-4).map((call) => <p className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]" key={call.id}><ListChecks aria-hidden="true" size={14} />{call.tool === "analyze_image" ? "图片分析" : call.tool === "compare_candidates" ? "候选比较" : call.tool === "save_final_choice" ? "保存最终选择" : "生成候选"}：{call.status === "completed" ? "已完成" : "进行中"}</p>)}
-        {coach.error && <div className="rounded-[10px] bg-[var(--color-danger-soft)] p-3 text-xs leading-5 text-[var(--color-danger)]" role="alert"><p className="font-extrabold">{coach.error.title}</p><p className="mt-1">{coach.error.message}</p>{allowed(allowedCommands, "retry") && <button className="button-secondary mt-3" disabled={coach.loading} onClick={() => run?.resumeStatus === "analyzing_image" ? void retryImageOperation() : void coach.submitCommand({ type: "retry" })} type="button"><ArrowClockwise aria-hidden="true" size={15} />重试</button>}</div>}
+        {coach.error && <div className="rounded-[10px] bg-[var(--color-danger-soft)] p-3 text-xs leading-5 text-[var(--color-danger)]" role="alert"><p className="font-extrabold">{coach.error.title}</p><p className="mt-1">{coach.error.message}</p></div>}
+        {run?.status === "failed" && run.recoverable && allowed(allowedCommands, "retry") && (
+          <div className="rounded-[10px] border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs leading-5">
+            <p className="font-extrabold">上一步可以安全重试</p>
+            {run.resumeStatus === "analyzing_image" && !imageFile && <p className="mt-1 text-[var(--color-graphite)]">请先在简报区重新选择原图片。</p>}
+            <button className="button-secondary mt-3" disabled={coach.loading || !needsInput || (run.resumeStatus === "analyzing_image" && !imageFile)} onClick={() => run.resumeStatus === "analyzing_image" ? void retryImageOperation() : void coach.submitCommand({ type: "retry" })} type="button"><ArrowClockwise aria-hidden="true" size={15} />重试</button>
+          </div>
+        )}
         {coach.loading && <p className="soft-pulse text-xs font-bold text-[var(--color-accent)]">教练正在处理…</p>}
       </div>
       {run && needsInput && allowed(allowedCommands, "message") && run.status === "understanding" && (
@@ -365,10 +420,14 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
 
   return (
     <main className="mx-auto grid w-full max-w-[1600px] gap-5 px-4 py-6 pb-20 md:px-6 md:py-8 xl:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.28fr)_360px] xl:items-start">
-      {briefPanel}
-      {candidatePanel}
+      <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
+        {briefPanel}
+        {candidatePanel}
+      </div>
       {coachPanel}
-      <button aria-expanded={coachOpen} aria-label="打开创作教练面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={() => setCoachOpen(true)} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />教练</button>
+      <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
+        <button aria-expanded={coachOpen} aria-label="打开创作教练面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />教练</button>
+      </div>
       {coachOpen && <button aria-label="关闭创作教练遮罩" className="fixed inset-0 z-30 bg-black/25 max-md:hidden xl:hidden" onClick={closeCoach} type="button" />}
     </main>
   );

@@ -218,7 +218,7 @@ export function HookCard({
                 </div>
               )}
             </div>
-            <fieldset>
+            {!coachActions && <fieldset>
               <legend className="text-[11px] font-bold text-[var(--color-muted)]">人工平台适配</legend>
               <div className="mt-2 flex gap-1">
                 {([1, 2, 3, 4, 5] as PlatformSatisfaction[]).map((rating) => (
@@ -238,7 +238,7 @@ export function HookCard({
                   </button>
                 ))}
               </div>
-            </fieldset>
+            </fieldset>}
           </div>
         </details>
       )}
