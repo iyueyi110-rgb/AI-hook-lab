@@ -14,6 +14,7 @@ import {
   createCreativeCoachService,
   type CoachGenerationRequest,
 } from "./service.ts";
+import * as coachServiceModule from "./service.ts";
 
 const completeBrief = {
   topic: "用 AI 写周报",
@@ -451,13 +452,44 @@ test("recovers a legacy completed run without finalizedAt from memory and fails 
   assert.equal(recovered.finalizedResponse?.generatedAt, recovered.run.updatedAt);
   assert.equal(recovered.finalizedResponse?.taskId, reviewed.run.id);
 
-  await repository.transaction((state) => { state.runs[0]!.updatedAt = "not-a-date"; });
-  assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse, undefined);
+  await repository.transaction((state) => { state.runs[0]!.updatedAt = "2026-07-19T00:00:00.000Z"; });
+  assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse?.generatedAt, "2026-07-19T00:00:00.000Z");
+  for (const invalidTimestamp of [
+    "2026-02-31T00:00:00.000Z",
+    "0",
+    "07/19/2026",
+    "2026-07-19T08:00:00+08:00",
+    "invalid",
+    0,
+  ]) {
+    await repository.transaction((state) => {
+      state.runs[0]!.finalizedAt = invalidTimestamp as string;
+    });
+    assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse, undefined);
+  }
   await repository.transaction((state) => {
+    delete state.runs[0]!.finalizedAt;
     state.runs[0]!.updatedAt = "2026-07-18T00:00:00.000Z";
     state.runs[0]!.candidates = [];
   });
   assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse, undefined);
+});
+
+test("accepts only canonical toISOString timestamps", () => {
+  const isCanonicalIsoTimestamp = (coachServiceModule as unknown as {
+    isCanonicalIsoTimestamp?: (value: unknown) => boolean;
+  }).isCanonicalIsoTimestamp;
+  assert.equal(typeof isCanonicalIsoTimestamp, "function");
+  assert.equal(isCanonicalIsoTimestamp!("2026-07-19T00:00:00.000Z"), true);
+  for (const value of [
+    "2026-02-31T00:00:00.000Z",
+    "0",
+    "07/19/2026",
+    "2026-07-19T08:00:00+08:00",
+    "invalid",
+    0,
+    null,
+  ]) assert.equal(isCanonicalIsoTimestamp!(value), false);
 });
 
 test("recovers finalizedResponse when a JSON legacy completed run is loaded without finalizedAt", async () => {

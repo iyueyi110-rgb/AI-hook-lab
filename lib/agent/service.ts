@@ -124,12 +124,24 @@ function syncRunSummary(run: StoredAgentRun): void {
   };
 }
 
+const CANONICAL_ISO_TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+export function isCanonicalIsoTimestamp(value: unknown): value is string {
+  if (typeof value !== "string" || !CANONICAL_ISO_TIMESTAMP.test(value)) return false;
+  try {
+    return new Date(value).toISOString() === value;
+  } catch (error) {
+    if (error instanceof RangeError) return false;
+    throw error;
+  }
+}
+
 function finalizedResponseForRun(run: StoredAgentRun): GenerateResponse | undefined {
   if (run.status !== "completed" || !run.brief || !run.selectedCandidateId) return undefined;
   const selected = run.candidates.find((candidate) => candidate.id === run.selectedCandidateId);
   if (!selected) return undefined;
   const generatedAt = run.finalizedAt ?? run.updatedAt;
-  if (!Number.isFinite(Date.parse(generatedAt))) return undefined;
+  if (!isCanonicalIsoTimestamp(generatedAt)) return undefined;
   return {
     taskId: run.id,
     hooks: [{ ...selected, clickScore: selected.overallScore * 10 }],
