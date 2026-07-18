@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -434,6 +434,53 @@ test("rebuilds the finalized response from a completed run after the confirmatio
   assert.equal(recovered.finalizedResponse?.taskId, reviewed.run.id);
   assert.equal(recovered.finalizedResponse?.hooks[0]?.id, reviewed.candidates[0]!.id);
   assert.equal(recovered.finalizedResponse?.generatedAt, recovered.run.finalizedAt);
+});
+
+test("recovers a legacy completed run without finalizedAt from memory and fails closed on invalid legacy metadata", async () => {
+  const repository = new MemoryAgentRepository();
+  const coach = service({ repository });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  const reviewed = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  const selected = await coach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
+    type: "select_candidate", candidateId: reviewed.candidates[0]!.id,
+  });
+  await coach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+  await repository.transaction((state) => { delete state.runs[0]!.finalizedAt; });
+
+  const recovered = await coach.getRun(created.sessionToken, reviewed.run.id);
+  assert.equal(recovered.finalizedResponse?.generatedAt, recovered.run.updatedAt);
+  assert.equal(recovered.finalizedResponse?.taskId, reviewed.run.id);
+
+  await repository.transaction((state) => { state.runs[0]!.updatedAt = "not-a-date"; });
+  assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse, undefined);
+  await repository.transaction((state) => {
+    state.runs[0]!.updatedAt = "2026-07-18T00:00:00.000Z";
+    state.runs[0]!.candidates = [];
+  });
+  assert.equal((await coach.getRun(created.sessionToken, reviewed.run.id)).finalizedResponse, undefined);
+});
+
+test("recovers finalizedResponse when a JSON legacy completed run is loaded without finalizedAt", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "agent-legacy-finalized-"));
+  const file = path.join(directory, "agent-store.json");
+  try {
+    const firstRepository = new JsonAgentRepository(file);
+    const firstCoach = service({ repository: firstRepository });
+    const created = await firstCoach.createRun(undefined, { brief: completeBrief });
+    const reviewed = await firstCoach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+    const selected = await firstCoach.submitTurn(created.sessionToken, reviewed.run.id, reviewed.run.revision, {
+      type: "select_candidate", candidateId: reviewed.candidates[0]!.id,
+    });
+    await firstCoach.submitTurn(created.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+    await firstRepository.transaction((state) => { delete state.runs[0]!.finalizedAt; });
+
+    const restartedCoach = service({ repository: new JsonAgentRepository(file) });
+    const recovered = await restartedCoach.getRun(created.sessionToken, reviewed.run.id);
+    assert.equal(recovered.finalizedResponse?.generatedAt, recovered.run.updatedAt);
+    assert.equal(recovered.finalizedResponse?.hooks[0]?.id, reviewed.candidates[0]!.id);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("a double final confirmation writes once and the stale confirmation recovers the same final", async () => {

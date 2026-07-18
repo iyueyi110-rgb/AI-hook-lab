@@ -125,13 +125,15 @@ function syncRunSummary(run: StoredAgentRun): void {
 }
 
 function finalizedResponseForRun(run: StoredAgentRun): GenerateResponse | undefined {
-  if (run.status !== "completed" || !run.brief || !run.selectedCandidateId || !run.finalizedAt) return undefined;
+  if (run.status !== "completed" || !run.brief || !run.selectedCandidateId) return undefined;
   const selected = run.candidates.find((candidate) => candidate.id === run.selectedCandidateId);
   if (!selected) return undefined;
+  const generatedAt = run.finalizedAt ?? run.updatedAt;
+  if (!Number.isFinite(Date.parse(generatedAt))) return undefined;
   return {
     taskId: run.id,
     hooks: [{ ...selected, clickScore: selected.overallScore * 10 }],
-    generatedAt: run.finalizedAt,
+    generatedAt,
     topic: run.brief.topic,
     platform: run.brief.platform,
     contentType: run.brief.contentType,

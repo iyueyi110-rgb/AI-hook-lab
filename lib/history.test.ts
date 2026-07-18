@@ -5,7 +5,7 @@ import type { GenerateResponse, HistoryItem } from "./types.ts";
 
 const historyModuleUrl = new URL("./history.ts", import.meta.url).href;
 
-test("agent finalized history is idempotent by stable task id", async () => {
+test("client history applies direct, recovered, and refreshed finalized responses once by stable task id", async () => {
   const historyLib = await import(historyModuleUrl).catch(() => ({})) as {
     mergeHistoryItem?: (history: HistoryItem[], response: GenerateResponse) => HistoryItem[];
   };
@@ -21,6 +21,8 @@ test("agent finalized history is idempotent by stable task id", async () => {
   const once = historyLib.mergeHistoryItem!([], response);
   const twice = historyLib.mergeHistoryItem!(once, structuredClone(response));
   const refreshed = historyLib.mergeHistoryItem!(twice, structuredClone(response));
+  assert.equal(twice, once);
+  assert.equal(refreshed, once);
   assert.equal(refreshed.length, 1);
   assert.equal(refreshed[0]?.id, "agent-run:run-1");
 });
