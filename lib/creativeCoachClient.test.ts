@@ -39,7 +39,7 @@ function response(allowedCommands: CoachClientResponse["allowedCommands"]): Coac
   };
 }
 
-test("creative coach feature flag is enabled only by the exact public true value", () => {
+test("Creative Agent feature flag is enabled only by the exact public true value", () => {
   assert.equal(isCreativeCoachEnabled("true"), true);
   assert.equal(isCreativeCoachEnabled("TRUE"), false);
   assert.equal(isCreativeCoachEnabled("1"), false);

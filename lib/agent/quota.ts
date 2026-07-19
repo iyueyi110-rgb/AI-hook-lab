@@ -41,7 +41,7 @@ export class AgentQuotaError extends Error {
   readonly code = "agent_quota_exceeded" as const;
   readonly retryAfterSeconds: number;
   constructor(retryAfterSeconds: number) {
-    super("Creative coach quota exceeded");
+    super("Creative Agent quota exceeded");
     this.name = "AgentQuotaError";
     this.retryAfterSeconds = retryAfterSeconds;
   }

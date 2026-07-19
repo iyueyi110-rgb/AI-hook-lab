@@ -81,7 +81,7 @@ function usableSecret(value: string | undefined, production = false): string {
 }
 
 function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
-  const secret = usableSecret(env.AGENT_IP_HASH_SECRET, production) || (production ? "" : "creative-coach-development-ip-hash");
+  const secret = usableSecret(env.AGENT_IP_HASH_SECRET, production) || (production ? "" : "creative-agent-development-ip-hash");
   if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
   const headerName = (env.AGENT_TRUSTED_IP_HEADER?.trim().toLowerCase() || (production ? "x-vercel-forwarded-for" : "x-real-ip"));
   if (!/^[a-z0-9-]{1,64}$/.test(headerName)) throw new HttpError(503, "Agent trusted IP header is invalid");
@@ -197,7 +197,7 @@ function errorResponse(error: unknown): Response {
     const status = error.code === "rate_limit" ? 429 : error.code === "timeout" ? 504 : error.code === "missing_key" ? 503 : 502;
     return json({ error: error.code, message: "Generation provider failed" }, status);
   }
-  return json({ error: "internal_error", message: "The creative coach could not process this request" }, 500);
+  return json({ error: "internal_error", message: "The Creative Agent could not process this request" }, 500);
 }
 
 export function createAgentHttpHandlers(options: HandlerOptions = {}) {

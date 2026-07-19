@@ -1,10 +1,10 @@
-# Creative Coach Agent
+# Creative Agent
 
-Creative Coach is an optional, single-Agent workflow layered on top of the existing Hook generator. The classic one-request/10-Hook mode remains available and keeps its original API and UI behavior.
+Creative Agent is an optional, single-Agent workflow layered on top of the existing Hook generator. The classic one-request/10-Hook mode remains available and keeps its original API and UI behavior.
 
 ## Enablement and storage
 
-- Set `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` to expose the coach UI and Agent APIs. It defaults to `false` for gradual rollout.
+- Set `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` to expose the Creative Agent UI and APIs. It defaults to `false` for gradual rollout.
 - Anonymous ownership uses the HttpOnly `ai-hook-creator-session` cookie. The cookie is `SameSite=Lax`, `Secure` in production, and expires after 180 days; storage contains only its SHA-256 digest.
 - Local development uses `data/agent-store.json` (or `AGENT_STORE_PATH`) when `DATABASE_URL` is empty. Production fails closed unless PostgreSQL is configured.
 - Every inactive run, including abandoned non-terminal and orphaned runs, messages and candidates, is removed after 30 days. A non-expired operation lease is preserved; expired 180-day sessions cascade their runs, preference memory and quota usage. Production must schedule the authenticated cleanup endpoint; retention work is deliberately kept off interactive request latency.
