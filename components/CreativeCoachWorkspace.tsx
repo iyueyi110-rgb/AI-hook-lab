@@ -15,7 +15,7 @@ import {
 import { HookGrid } from "@/components/HookGrid";
 import { useCreativeCoach } from "@/hooks/useCreativeCoach";
 import type { AnalyticsEventType } from "@/hooks/useAnalytics";
-import { CONTENT_TYPE_CONFIG, EMOTION_TONE_CONFIG, PLATFORM_CONFIG } from "@/lib/constants";
+import { CONTENT_TYPE_CONFIG, EMOTION_TONE_CONFIG, PLATFORM_CONFIG, PLATFORM_STYLES } from "@/lib/constants";
 import type { AgentCommand, AgentRunStatus, CreativeBrief, WordLimitBand } from "@/lib/agent/types";
 import type { ContentType, EmotionTone, GenerateResponse, HookResult, Platform } from "@/lib/types";
 import { buildCoachBriefInput, canEditCoachBrief } from "@/lib/creativeCoachClient";
@@ -196,15 +196,19 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     rememberedTone,
     rememberedWordBand,
   }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand, emotionToneTouched, ignoreMemory, platformTouched, rememberedPlatform, rememberedTone, rememberedWordBand, wordLimitTouched]);
-  const structuredBrief = React.useMemo<Partial<CreativeBrief>>(() => ({
-    ...(run?.briefDraft ?? {}),
-    ...brief,
-    topic: displayedTopic.trim(),
-    platform: displayedPlatform,
-    contentType: displayedContentType,
-    emotionTone: displayedEmotionTone,
-    wordLimitBand: displayedWordLimitBand,
-  }), [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand, run?.briefDraft]);
+  const structuredBrief = React.useMemo<Partial<CreativeBrief>>(() => {
+    const merged: Partial<CreativeBrief> = {
+      ...(run?.briefDraft ?? {}),
+      ...brief,
+      topic: displayedTopic.trim(),
+      platform: displayedPlatform,
+      contentType: displayedContentType,
+      emotionTone: displayedEmotionTone,
+      wordLimitBand: displayedWordLimitBand,
+    };
+    if (merged.preferredStyle && !PLATFORM_STYLES[displayedPlatform].includes(merged.preferredStyle)) delete merged.preferredStyle;
+    return merged;
+  }, [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand, run?.briefDraft]);
 
   const start = async () => {
     if (!displayedTopic.trim() || coach.loading) return;

@@ -8,11 +8,11 @@ export interface AgentMigration {
 }
 
 const SHARD_LEGACY_STATE_SQL = `
+DELETE FROM agent_run item WHERE NOT EXISTS (SELECT 1 FROM creator_session owner WHERE owner.id = item.creator_session_id);
 DELETE FROM agent_message item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
 DELETE FROM agent_candidate item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
 DELETE FROM agent_tool_call item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
 DELETE FROM agent_approval item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
-DELETE FROM agent_run item WHERE NOT EXISTS (SELECT 1 FROM creator_session owner WHERE owner.id = item.creator_session_id);
 DELETE FROM creator_memory item WHERE NOT EXISTS (SELECT 1 FROM creator_session owner WHERE owner.id = item.creator_session_id);
 
 DO $$ BEGIN

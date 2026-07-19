@@ -13,6 +13,7 @@ export interface BriefDecisionOptions {
   apiKey?: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
+  onAttempt?: (attempt: number) => void;
 }
 
 const PATCH_FIELDS = new Set(["topic", "platform", "contentType", "targetAudience", "emotionTone", "wordLimitBand", "preferredStyle", "avoidBadcaseTags"]);
@@ -42,6 +43,7 @@ export async function decideBriefPatch(request: BriefDecisionRequest, options: B
     temperature: 0.2,
     maxTokens: 600,
     maxRetries: 1,
+    onAttempt: options.onAttempt,
   });
   const decision = generated.candidates[0];
   if (!decision || typeof decision !== "object" || Array.isArray(decision)) throw new GenerationError("invalid_json");

@@ -71,7 +71,13 @@ function safeSecretEqual(supplied: string, expected: string): boolean {
 function usableSecret(value: string | undefined, production = false): string {
   const secret = value?.trim() ?? "";
   if (!secret || /^[<'"]|[>'"]$/.test(secret) || /^(replace_me|change_me|your_api_key|your_secret|placeholder)$/i.test(secret)) return "";
-  return production && secret.length < 32 ? "" : secret;
+  if (production && (
+    secret.length < 32
+    || new Set(secret).size < 8
+    || /^(.{1,16})\1+$/.test(secret)
+    || /(?:0123456789|1234567890|abcdefghijklmnopqrstuvwxyz)/i.test(secret)
+  )) return "";
+  return secret;
 }
 
 function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
@@ -211,10 +217,12 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         generate: (request, execution) => generateCoachHooks(request, {
           apiKey: env.DEEPSEEK_API_KEY,
           timeoutMs: execution.timeoutMs,
+          onAttempt: execution.recordModelAttempt,
         }),
         decideBriefPatch: (request, execution) => decideBriefPatch(request, {
           apiKey: env.DEEPSEEK_API_KEY,
           timeoutMs: execution.timeoutMs,
+          onAttempt: execution.recordModelAttempt,
         }),
         analyzeImage: (file) => analyzeImageFile(file, { apiKey: env.ARK_API_KEY, model: env.ARK_MODEL_ID }),
         turnTimeoutMs: DEFAULT_AGENT_TURN_TIMEOUT_MS,

@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 
 import { GenerationError } from "../generation/service.ts";
+import { PLATFORM_STYLES } from "../constants.ts";
 import { validateImageUpload } from "../imageAnalysis.ts";
 import {
   MAX_IMAGE_DESCRIPTION_LENGTH,
@@ -58,6 +59,7 @@ export interface CoachGenerationRequest {
 
 export interface AgentExecutionOptions {
   timeoutMs: number;
+  recordModelAttempt: () => void;
 }
 
 export type CoachRunState = Omit<StoredAgentRun, "creatorSessionId">;
@@ -342,6 +344,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   async function withinTurnDeadline<T>(
     deadlineAt: number,
     operation: (execution: AgentExecutionOptions) => Promise<T>,
+    recordModelAttempt: () => void = () => undefined,
   ): Promise<T> {
     const timeoutMs = Math.max(0, Math.ceil(deadlineAt - monotonicNow()));
     if (timeoutMs === 0) throw new GenerationError("timeout");
@@ -351,7 +354,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     });
     try {
       return await Promise.race([
-        Promise.resolve().then(() => operation({ timeoutMs })),
+        Promise.resolve().then(() => operation({ timeoutMs, recordModelAttempt })),
         deadline,
       ]);
     } finally {
@@ -492,10 +495,14 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     assertAuthorizationTicket(reservedRun, operationId, reservedRun.status, generationTool);
     assertAuthorizationTicket(reservedRun, operationId, "reviewing", "compare_candidates");
     let candidates: Candidate[];
-    let actualModelCalls = 1;
+    let actualModelCalls = 0;
     try {
-      const generated = await withinTurnDeadline(deadlineAt, (execution) => dependencies.generate(request, execution));
-      actualModelCalls = Math.max(1, Math.min(2, generated.modelAttempts ?? 1));
+      const generated = await withinTurnDeadline(
+        deadlineAt,
+        (execution) => dependencies.generate(request, execution),
+        () => { actualModelCalls = Math.min(2, actualModelCalls + 1); },
+      );
+      actualModelCalls = Math.max(1, Math.min(2, actualModelCalls || generated.modelAttempts || 1));
       if (generated.hooks.length !== request.count) throw new GenerationError("invalid_count");
       candidates = generated.hooks.map(toCandidate);
       if (candidates.some((candidate) => !candidate.text)) throw new GenerationError("invalid_json");
@@ -516,7 +523,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.resumeStatus = resumeStatus;
         const call = [...run.toolCalls].reverse().find((item) => item.status === "requested");
         if (call) call.status = "completed";
-        const failedModelCalls = error instanceof GenerationError ? Math.max(1, Math.min(2, error.attempts ?? 1)) : 1;
+        const failedModelCalls = Math.max(1, Math.min(2, actualModelCalls || (error instanceof GenerationError ? error.attempts ?? 1 : 1)));
         run.toolResults.push({
           callId: call?.id,
           tool: call?.tool ?? "generate_hooks",
@@ -662,7 +669,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
             try { submitted = JSON.parse(command.text); } catch { throw new AgentInputError("Complete the structured brief form before continuing"); }
             if (!submitted || typeof submitted !== "object" || Array.isArray(submitted)) throw new AgentInputError("Structured brief must be an object");
             assertSafeBriefInput(submitted as Record<string, unknown>);
-            const normalized = normalizeBrief({ ...(run.briefDraft ?? {}), ...(submitted as Record<string, unknown>) }, run.clarificationAttempts ?? 0);
+            const merged = { ...(run.briefDraft ?? {}), ...(submitted as Record<string, unknown>) };
+            if (
+              typeof merged.preferredStyle === "string"
+              && (typeof merged.platform !== "string" || !(PLATFORM_STYLES[merged.platform as keyof typeof PLATFORM_STYLES] ?? []).includes(merged.preferredStyle))
+            ) delete merged.preferredStyle;
+            const normalized = normalizeBrief(merged, run.clarificationAttempts ?? 0);
             if (normalized.kind !== "complete") throw new AgentInputError("Structured brief is incomplete or invalid");
             run.brief = normalized.brief;
             run.briefDraft = normalized.brief;

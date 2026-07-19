@@ -254,6 +254,8 @@ test("scheduled cleanup is hidden without configuration and requires its bearer 
   assert.deepEqual(Object.keys(await response.json()).sort(), ["removedMemory", "removedRuns", "removedSessions", "removedUsage"]);
   const wrapped = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production", AGENT_CLEANUP_TOKEN: "<replace_me>" } as NodeJS.ProcessEnv });
   assert.equal((await wrapped.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer <replace_me>" } }))).status, 404);
+  const weak = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production", AGENT_CLEANUP_TOKEN: "a".repeat(32) } as NodeJS.ProcessEnv });
+  assert.equal((await weak.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: `Bearer ${"a".repeat(32)}` } }))).status, 404);
 
   let cleanupCalls = 0;
   const explicitOnly = createAgentHttpHandlers({
@@ -278,12 +280,14 @@ test("production requires an IP hash secret and same-IP cookie rotation cannot b
   });
   const missingSecret = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production" } as NodeJS.ProcessEnv });
   assert.equal((await missingSecret.createRun(jsonRequest("/api/agent/runs", { brief }))).status, 503);
+  const weakSecret = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "1234567890".repeat(4) } as NodeJS.ProcessEnv });
+  assert.equal((await weakSecret.createRun(jsonRequest("/api/agent/runs", { brief }))).status, 503);
 
   const handlers = createAgentHttpHandlers({
     service,
     enabled: true,
     production: true,
-    env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "0123456789abcdef0123456789abcdef", AGENT_TRUSTED_IP_HEADER: "x-real-ip" } as NodeJS.ProcessEnv,
+    env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "7f2a9c4e1b6d8f3a5c0e7b2d9a4f6c1e", AGENT_TRUSTED_IP_HEADER: "x-real-ip" } as NodeJS.ProcessEnv,
   });
   const first = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }, undefined, "POST", origin, { "x-forwarded-for": "spoof-1", "x-real-ip": "trusted-client" }));
   const second = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }, undefined, "POST", origin, { "x-forwarded-for": "spoof-2", "x-real-ip": "trusted-client" }));

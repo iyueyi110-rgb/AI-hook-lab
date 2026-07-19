@@ -438,22 +438,76 @@ export class PostgresAgentRepository implements AgentRepository {
   }
   async cleanup(now = new Date(), options: AgentCleanupOptions = {}): Promise<AgentCleanupResult> {
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
-    const cursor = options.cursor ?? "";
+    const marker = options.cursor === undefined
+      ? await this.pool.query<{ payload: { lastCursor?: string } }>("SELECT payload FROM agent_state WHERE id = '__cleanup__'")
+      : { rows: [] as Array<{ payload: { lastCursor?: string } }> };
+    const cursor = options.cursor ?? marker.rows[0]?.payload.lastCursor ?? "";
     const rows = await this.pool.query<{ id: string }>(
       "SELECT id FROM agent_state WHERE (id LIKE 'session:%' OR id LIKE 'ip:%') AND id > $1 ORDER BY id LIMIT $2",
       [cursor, limit],
     );
     const total: AgentCleanupResult = { removedRunIds: [], removedSessionIds: [], removedMemoryCount: 0, removedUsageCount: 0 };
     for (const row of rows.rows) {
-      const scope = row.id.startsWith("session:") ? { sessionDigest: row.id.slice(8) } : { ipDigest: row.id.slice(3) };
-      const result = await this.transaction((state) => cleanupExpiredAgentData(state, now), scope);
+      const result = await this.cleanupShard(row.id, now);
       total.removedRunIds.push(...result.removedRunIds);
       total.removedSessionIds.push(...result.removedSessionIds);
       total.removedMemoryCount += result.removedMemoryCount;
       total.removedUsageCount += result.removedUsageCount;
+      total.nextCursor = row.id;
+      await this.pool.query(
+        "INSERT INTO agent_state (id, schema_version, payload, updated_at) VALUES ('__cleanup__', 1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload, updated_at=NOW()",
+        [JSON.stringify({ lastCursor: row.id })],
+      );
     }
-    if (rows.rows.length === limit) total.nextCursor = rows.rows.at(-1)!.id;
+    if (rows.rows.length < limit) {
+      total.nextCursor = undefined;
+      await this.pool.query(
+        "INSERT INTO agent_state (id, schema_version, payload, updated_at) VALUES ('__cleanup__', 1, $1::jsonb, NOW()) ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload, updated_at=NOW()",
+        [JSON.stringify({ lastCursor: "" })],
+      );
+    }
     return total;
+  }
+
+  private async cleanupShard(shardId: string, now: Date): Promise<AgentCleanupResult> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const row = await client.query<{ payload: AgentState; schema_version: number }>(
+        "SELECT schema_version, payload FROM agent_state WHERE id = $1 FOR UPDATE",
+        [shardId],
+      );
+      if (!row.rows[0]) {
+        await client.query("COMMIT");
+        return { removedRunIds: [], removedSessionIds: [], removedMemoryCount: 0, removedUsageCount: 0 };
+      }
+      const before = row.rows[0].payload;
+      validateAgentState(before, row.rows[0].schema_version);
+      const state = structuredClone(before);
+      const result = cleanupExpiredAgentData(state, now);
+      normalizeState(state);
+      if (isEmptyShard(state)) await client.query("DELETE FROM agent_state WHERE id = $1", [shardId]);
+      else if (JSON.stringify(state) !== JSON.stringify(before)) await client.query(
+        "UPDATE agent_state SET payload=$2::jsonb, updated_at=NOW() WHERE id=$1",
+        [shardId, JSON.stringify(state)],
+      );
+      if (shardId.startsWith("session:")) {
+        const previousSession = before.creatorSessions[0];
+        const currentSession = state.creatorSessions[0];
+        if (previousSession && !currentSession) await client.query("DELETE FROM creator_session WHERE id=$1", [previousSession.id]);
+        else if (currentSession && result.removedRunIds.length) await client.query(
+          "DELETE FROM agent_run WHERE creator_session_id=$1 AND id = ANY($2::text[])",
+          [currentSession.id, result.removedRunIds],
+        );
+      }
+      await client.query("COMMIT");
+      return result;
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
   }
 }
 

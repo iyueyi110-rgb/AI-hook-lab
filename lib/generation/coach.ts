@@ -11,6 +11,7 @@ export interface GenerateCoachHooksOptions {
   maxRetries?: number;
   temperature?: number;
   maxTokens?: number;
+  onAttempt?: (attempt: number) => void;
 }
 
 function clamp(value: unknown, fallback = 7): number {
@@ -105,6 +106,7 @@ export async function generateCoachHooks(
     maxRetries: Math.min(1, Math.max(0, options.maxRetries ?? 1)),
     temperature: options.temperature,
     maxTokens: options.maxTokens,
+    onAttempt: options.onAttempt,
   });
   return {
     hooks: result.candidates.map((candidate, index) => toHook(candidate, index, request)),

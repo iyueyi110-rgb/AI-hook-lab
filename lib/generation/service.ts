@@ -37,6 +37,7 @@ export interface GenerateCandidatesInput extends ProviderGenerationInput {
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
   now?: () => number;
+  onAttempt?: (attempt: number) => void;
 }
 
 export interface GenerateCandidatesResult {
@@ -212,6 +213,7 @@ export async function generateCandidates(
   const deadlineAt = now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
+    input.onAttempt?.(attempt);
     const controller = new AbortController();
     const deadline = createDeadline(controller, deadlineAt, now);
     try {

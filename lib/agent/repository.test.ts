@@ -297,6 +297,7 @@ test("postgres persistence uses versioned shard migrations and scoped incrementa
   assert.match(AGENT_MIGRATIONS[1]!.sql, /DELETE FROM agent_run item WHERE NOT EXISTS/);
   assert.match(AGENT_MIGRATIONS[1]!.sql, /VALIDATE CONSTRAINT agent_run_creator_session_fk/);
   assert.match(AGENT_MIGRATIONS[1]!.sql, /conrelid = 'public\.agent_run'::regclass/);
+  assert.ok(AGENT_MIGRATIONS[1]!.sql.indexOf("DELETE FROM agent_run item") < AGENT_MIGRATIONS[1]!.sql.indexOf("DELETE FROM agent_message item"));
   const source = await readFile(new URL("./repository.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /WHERE id = 'default' FOR UPDATE/);
   assert.doesNotMatch(source, /DELETE FROM \$\{table\}(?!\s+WHERE)/);

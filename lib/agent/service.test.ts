@@ -13,6 +13,7 @@ import {
   AgentInputError,
   AgentProviderError,
   createCreativeCoachService,
+  type AgentExecutionOptions,
   type CoachGenerationRequest,
 } from "./service.ts";
 import * as coachServiceModule from "./service.ts";
@@ -57,9 +58,9 @@ function generated(request: CoachGenerationRequest): GenerateResponse {
 }
 
 function service(overrides: {
-  generate?: (request: CoachGenerationRequest, options?: { timeoutMs: number }) => Promise<GenerateResponse>;
+  generate?: (request: CoachGenerationRequest, options: AgentExecutionOptions) => Promise<GenerateResponse>;
   analyzeImage?: (file: File) => Promise<ImageAnalysisResult>;
-  decideBriefPatch?: (input: { message: string; missingField: "topic" | "platform" | "contentType" }, options?: { timeoutMs: number }) => Promise<Record<string, unknown>>;
+  decideBriefPatch?: (input: { message: string; missingField: "topic" | "platform" | "contentType" }, options: AgentExecutionOptions) => Promise<Record<string, unknown>>;
   repository?: AgentRepository;
   now?: () => Date;
   operationLeaseMs?: number;
@@ -378,6 +379,21 @@ test("uses a validated low-temperature decision patch for natural-language clari
   assert.equal(asked, "platform");
   assert.equal(result.run.status, "awaiting_brief_confirmation");
   assert.equal(result.run.brief?.platform, "douyin");
+});
+
+test("structured fallback drops an incompatible hidden preferred style", async () => {
+  const repository = new MemoryAgentRepository();
+  const coach = service({ repository });
+  const created = await coach.createRun(undefined, { brief: { topic: "fallback" } });
+  const first = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "message", text: "not-a-platform" });
+  const second = await coach.submitTurn(created.sessionToken, created.response.run.id, first.run.revision, { type: "message", text: "still-invalid" });
+  await repository.transaction((state) => { state.runs[0]!.briefDraft = { ...state.runs[0]!.briefDraft, preferredStyle: "incompatible-hidden-style" }; });
+  const completed = await coach.submitTurn(created.sessionToken, created.response.run.id, second.run.revision, {
+    type: "message",
+    text: JSON.stringify({ topic: "fallback", platform: "douyin", contentType: "video", emotionTone: "curious", wordLimitBand: "60-80" }),
+  });
+  assert.equal(completed.run.status, "awaiting_brief_confirmation");
+  assert.equal(completed.run.brief?.preferredStyle, undefined);
 });
 
 test("atomically reserves one decision call for concurrent stale turns", async () => {
@@ -712,6 +728,7 @@ test("bounds a hanging coach repair and persists a recoverable generation failur
       return generateCoachHooks(request, {
         provider,
         timeoutMs: options?.timeoutMs ?? 20,
+        onAttempt: options?.recordModelAttempt,
       });
     },
   });
@@ -732,6 +749,8 @@ test("bounds a hanging coach repair and persists a recoverable generation failur
   assert.equal(persisted.run.recoverable, true);
   assert.equal(persisted.run.resumeStatus, "generating");
   assert.equal(persisted.run.activeOperation, undefined);
+  const failedTool = persisted.run.toolResults.find((item) => item.tool === "generate_hooks" && item.status === "error");
+  assert.deepEqual(failedTool?.output, { modelCalls: 2, formatAndCountRetries: 1 });
 });
 
 test("bounds a hanging decision call and completes deterministic fallback through CAS", async () => {
