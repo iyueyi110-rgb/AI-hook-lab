@@ -29,7 +29,7 @@ Anonymous paid operations are protected by persistent session and HMAC-IP quotas
 | `GET /api/agent/memory` | List whitelisted preferences for this browser |
 | `DELETE /api/agent/memory/[memoryId]` | Delete one preference immediately |
 | `DELETE /api/agent/memory` | Delete all preferences immediately |
-| `POST /api/agent/cleanup` | Run a bounded retention batch with a high-entropy `Bearer AGENT_CLEANUP_TOKEN`; repeat with the returned `cursor` |
+| `POST /api/agent/cleanup` | Run a bounded retention batch with a high-entropy `Bearer AGENT_CLEANUP_TOKEN`; repeat while `nextCursor` is present (server-side progress is authoritative) |
 
 Every mutation uses `expectedRevision`; stale updates return `409`. Run IDs are also checked against the anonymous session, so another browser receives `404` rather than run details. Final saving requires candidate selection followed by a separate `confirm_final` command.
 

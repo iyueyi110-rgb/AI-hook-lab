@@ -323,9 +323,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         const authorization = request.headers.get("authorization") ?? "";
         const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
         if (!supplied || !safeSecretEqual(supplied, expected)) return json({ error: "unauthorized", message: "Unauthorized" }, 401);
-        const cursor = new URL(request.url).searchParams.get("cursor") ?? undefined;
-        if (cursor && !/^[A-Za-z0-9:_-]{1,200}$/.test(cursor)) throw new HttpError(400, "Cleanup cursor is invalid");
-        const result = await (await getService()).cleanup(new Date(), { cursor, limit: 50 });
+        const result = await (await getService()).cleanup(new Date(), { limit: 50 });
         return json({
           removedRuns: result.removedRunIds.length,
           removedSessions: result.removedSessionIds.length,

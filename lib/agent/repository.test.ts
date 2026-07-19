@@ -305,6 +305,7 @@ test("postgres persistence uses versioned shard migrations and scoped incrementa
   assert.match(source, /ON CONFLICT \(id\) DO UPDATE/);
   assert.match(source, /deleteMissing\(client, "agent_run", "creator_session_id"/);
   assert.match(source, /ORDER BY id LIMIT \$2/);
+  assert.doesNotMatch(source, /options\.cursor/);
 });
 
 test("migration runner serializes upgrades and records schema version without a ninth table", async () => {

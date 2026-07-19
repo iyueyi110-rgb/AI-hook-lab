@@ -61,7 +61,6 @@ export interface AgentCleanupResult {
 }
 
 export interface AgentCleanupOptions {
-  cursor?: string;
   limit?: number;
 }
 
@@ -438,10 +437,8 @@ export class PostgresAgentRepository implements AgentRepository {
   }
   async cleanup(now = new Date(), options: AgentCleanupOptions = {}): Promise<AgentCleanupResult> {
     const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
-    const marker = options.cursor === undefined
-      ? await this.pool.query<{ payload: { lastCursor?: string } }>("SELECT payload FROM agent_state WHERE id = '__cleanup__'")
-      : { rows: [] as Array<{ payload: { lastCursor?: string } }> };
-    const cursor = options.cursor ?? marker.rows[0]?.payload.lastCursor ?? "";
+    const marker = await this.pool.query<{ payload: { lastCursor?: string } }>("SELECT payload FROM agent_state WHERE id = '__cleanup__'");
+    const cursor = marker.rows[0]?.payload.lastCursor ?? "";
     const rows = await this.pool.query<{ id: string }>(
       "SELECT id FROM agent_state WHERE (id LIKE 'session:%' OR id LIKE 'ip:%') AND id > $1 ORDER BY id LIMIT $2",
       [cursor, limit],
