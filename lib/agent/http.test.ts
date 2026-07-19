@@ -32,13 +32,14 @@ function setup() {
   return createAgentHttpHandlers({ service, enabled: true, production: false });
 }
 
-function jsonRequest(path: string, body: unknown, cookie?: string, method = "POST", requestOrigin = origin): Request {
+function jsonRequest(path: string, body: unknown, cookie?: string, method = "POST", requestOrigin = origin, extraHeaders: Record<string, string> = {}): Request {
   return new Request(`${origin}${path}`, {
     method,
     headers: {
       "content-type": "application/json",
       origin: requestOrigin,
       ...(cookie ? { cookie } : {}),
+      ...extraHeaders,
     },
     body: method === "GET" ? undefined : JSON.stringify(body),
   });
@@ -251,6 +252,19 @@ test("scheduled cleanup is hidden without configuration and requires its bearer 
   const response = await handlers.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer cleanup-secret" } }));
   assert.equal(response.status, 200);
   assert.deepEqual(Object.keys(await response.json()).sort(), ["removedMemory", "removedRuns", "removedSessions", "removedUsage"]);
+  const wrapped = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production", AGENT_CLEANUP_TOKEN: "<replace_me>" } as NodeJS.ProcessEnv });
+  assert.equal((await wrapped.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer <replace_me>" } }))).status, 404);
+
+  let cleanupCalls = 0;
+  const explicitOnly = createAgentHttpHandlers({
+    service: { ...service, cleanup: async () => { cleanupCalls += 1; return { removedRunIds: [], removedSessionIds: [], removedMemoryCount: 0, removedUsageCount: 0 }; } },
+    enabled: true,
+    env: { NODE_ENV: "test", AGENT_CLEANUP_TOKEN: "cleanup-secret" } as NodeJS.ProcessEnv,
+  });
+  await explicitOnly.createRun(jsonRequest("/api/agent/runs", { brief }));
+  assert.equal(cleanupCalls, 0);
+  await explicitOnly.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer cleanup-secret" } }));
+  assert.equal(cleanupCalls, 1);
 });
 
 test("production requires an IP hash secret and same-IP cookie rotation cannot bypass quotas", async () => {
@@ -269,11 +283,11 @@ test("production requires an IP hash secret and same-IP cookie rotation cannot b
     service,
     enabled: true,
     production: true,
-    env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "test-ip-secret" } as NodeJS.ProcessEnv,
+    env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "0123456789abcdef0123456789abcdef", AGENT_TRUSTED_IP_HEADER: "x-real-ip" } as NodeJS.ProcessEnv,
   });
-  const first = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
-  const second = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
-  const rejected = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
+  const first = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }, undefined, "POST", origin, { "x-forwarded-for": "spoof-1", "x-real-ip": "trusted-client" }));
+  const second = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }, undefined, "POST", origin, { "x-forwarded-for": "spoof-2", "x-real-ip": "trusted-client" }));
+  const rejected = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }, undefined, "POST", origin, { "x-forwarded-for": "spoof-3", "x-real-ip": "trusted-client" }));
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
   assert.equal(rejected.status, 429);

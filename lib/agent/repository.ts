@@ -57,6 +57,12 @@ export interface AgentCleanupResult {
   removedSessionIds: string[];
   removedMemoryCount: number;
   removedUsageCount: number;
+  nextCursor?: string;
+}
+
+export interface AgentCleanupOptions {
+  cursor?: string;
+  limit?: number;
 }
 
 export interface AgentRepositoryScope {
@@ -68,7 +74,7 @@ export interface AgentRepository {
   initialize(): Promise<void>;
   read(scope?: AgentRepositoryScope): Promise<AgentState>;
   transaction<T>(mutator: (state: AgentState) => T | Promise<T>, scope?: AgentRepositoryScope): Promise<T>;
-  cleanup(now?: Date): Promise<AgentCleanupResult>;
+  cleanup(now?: Date, options?: AgentCleanupOptions): Promise<AgentCleanupResult>;
   readonly mode: "postgres" | "json";
 }
 
@@ -200,14 +206,9 @@ export function cleanupExpiredAgentData(state: AgentState, now = new Date()): Ag
   const removedSessionIds = new Set(state.creatorSessions
     .filter((session) => !validFutureDate(session.expiresAt, now))
     .map((session) => session.id));
-  const knownSessionIds = new Set(state.creatorSessions.map((session) => session.id));
   const removedRunIds = new Set(state.runs
     .filter((run) => {
       if (removedSessionIds.has(run.creatorSessionId)) return true;
-      // Production runs always have an owning session. Preserve legacy/orphan
-      // records here so a migration can handle them explicitly instead of
-      // silently deleting unknown data.
-      if (!knownSessionIds.has(run.creatorSessionId)) return false;
       const updatedAt = Date.parse(run.updatedAt);
       if (Number.isFinite(updatedAt) && updatedAt >= threshold) return false;
       return !run.activeOperation || !validFutureDate(run.activeOperation.expiresAt, now);
@@ -218,9 +219,12 @@ export function cleanupExpiredAgentData(state: AgentState, now = new Date()): Ag
   const expiredSessionDigests = new Set(state.creatorSessions.filter((session) => removedSessionIds.has(session.id)).map((session) => session.tokenDigest));
   state.creatorSessions = state.creatorSessions.filter((session) => !removedSessionIds.has(session.id));
   state.runs = state.runs.filter((run) => !removedRunIds.has(run.id));
-  state.memories = state.memories.filter((memory) => !removedSessionIds.has(memory.creatorSessionId));
+  const liveSessionIds = new Set(state.creatorSessions.map((session) => session.id));
+  const liveSessionDigests = new Set(state.creatorSessions.map((session) => session.tokenDigest));
+  state.memories = state.memories.filter((memory) => liveSessionIds.has(memory.creatorSessionId));
   state.usage = (state.usage ?? []).filter((usage) => {
     if (usage.scopeType === "session" && expiredSessionDigests.has(usage.scopeId)) return false;
+    if (usage.scopeType === "session" && !liveSessionDigests.has(usage.scopeId)) return false;
     const startedAt = Date.parse(usage.windowStartedAt);
     return Number.isFinite(startedAt) && startedAt >= threshold;
   });
@@ -282,10 +286,9 @@ export function validateAgentState(state: unknown, storedSchemaVersion?: unknown
   }
 }
 
-function normalizeState(state: AgentState, now = new Date()): void {
+function normalizeState(state: AgentState): void {
   validateAgentState(state);
   state.usage ??= [];
-  cleanupExpiredAgentData(state, now);
   state.runs = state.runs.map((run) => {
     const originalMessageCount = run.messages.length;
     const messages = trimRecentMessages(run.messages);
@@ -433,8 +436,13 @@ export class PostgresAgentRepository implements AgentRepository {
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
   }
-  async cleanup(now = new Date()): Promise<AgentCleanupResult> {
-    const rows = await this.pool.query<{ id: string }>("SELECT id FROM agent_state WHERE id LIKE 'session:%' OR id LIKE 'ip:%' ORDER BY id");
+  async cleanup(now = new Date(), options: AgentCleanupOptions = {}): Promise<AgentCleanupResult> {
+    const limit = Math.max(1, Math.min(100, Math.floor(options.limit ?? 50)));
+    const cursor = options.cursor ?? "";
+    const rows = await this.pool.query<{ id: string }>(
+      "SELECT id FROM agent_state WHERE (id LIKE 'session:%' OR id LIKE 'ip:%') AND id > $1 ORDER BY id LIMIT $2",
+      [cursor, limit],
+    );
     const total: AgentCleanupResult = { removedRunIds: [], removedSessionIds: [], removedMemoryCount: 0, removedUsageCount: 0 };
     for (const row of rows.rows) {
       const scope = row.id.startsWith("session:") ? { sessionDigest: row.id.slice(8) } : { ipDigest: row.id.slice(3) };
@@ -444,6 +452,7 @@ export class PostgresAgentRepository implements AgentRepository {
       total.removedMemoryCount += result.removedMemoryCount;
       total.removedUsageCount += result.removedUsageCount;
     }
+    if (rows.rows.length === limit) total.nextCursor = rows.rows.at(-1)!.id;
     return total;
   }
 }

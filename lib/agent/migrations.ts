@@ -8,26 +8,40 @@ export interface AgentMigration {
 }
 
 const SHARD_LEGACY_STATE_SQL = `
+DELETE FROM agent_message item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
+DELETE FROM agent_candidate item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
+DELETE FROM agent_tool_call item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
+DELETE FROM agent_approval item WHERE NOT EXISTS (SELECT 1 FROM agent_run owner WHERE owner.id = item.run_id);
+DELETE FROM agent_run item WHERE NOT EXISTS (SELECT 1 FROM creator_session owner WHERE owner.id = item.creator_session_id);
+DELETE FROM creator_memory item WHERE NOT EXISTS (SELECT 1 FROM creator_session owner WHERE owner.id = item.creator_session_id);
+
 DO $$ BEGIN
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_run_creator_session_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_run_creator_session_fk' AND conrelid = 'public.agent_run'::regclass) THEN
     ALTER TABLE agent_run ADD CONSTRAINT agent_run_creator_session_fk FOREIGN KEY (creator_session_id) REFERENCES creator_session(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_message_run_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_message_run_fk' AND conrelid = 'public.agent_message'::regclass) THEN
     ALTER TABLE agent_message ADD CONSTRAINT agent_message_run_fk FOREIGN KEY (run_id) REFERENCES agent_run(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_candidate_run_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_candidate_run_fk' AND conrelid = 'public.agent_candidate'::regclass) THEN
     ALTER TABLE agent_candidate ADD CONSTRAINT agent_candidate_run_fk FOREIGN KEY (run_id) REFERENCES agent_run(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_tool_call_run_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_tool_call_run_fk' AND conrelid = 'public.agent_tool_call'::regclass) THEN
     ALTER TABLE agent_tool_call ADD CONSTRAINT agent_tool_call_run_fk FOREIGN KEY (run_id) REFERENCES agent_run(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_approval_run_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'agent_approval_run_fk' AND conrelid = 'public.agent_approval'::regclass) THEN
     ALTER TABLE agent_approval ADD CONSTRAINT agent_approval_run_fk FOREIGN KEY (run_id) REFERENCES agent_run(id) ON DELETE CASCADE NOT VALID;
   END IF;
-  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'creator_memory_session_fk') THEN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'creator_memory_session_fk' AND conrelid = 'public.creator_memory'::regclass) THEN
     ALTER TABLE creator_memory ADD CONSTRAINT creator_memory_session_fk FOREIGN KEY (creator_session_id) REFERENCES creator_session(id) ON DELETE CASCADE NOT VALID;
   END IF;
 END $$;
+
+ALTER TABLE agent_run VALIDATE CONSTRAINT agent_run_creator_session_fk;
+ALTER TABLE agent_message VALIDATE CONSTRAINT agent_message_run_fk;
+ALTER TABLE agent_candidate VALIDATE CONSTRAINT agent_candidate_run_fk;
+ALTER TABLE agent_tool_call VALIDATE CONSTRAINT agent_tool_call_run_fk;
+ALTER TABLE agent_approval VALIDATE CONSTRAINT agent_approval_run_fk;
+ALTER TABLE creator_memory VALIDATE CONSTRAINT creator_memory_session_fk;
 
 WITH legacy AS (
   SELECT payload FROM agent_state WHERE id = 'default'

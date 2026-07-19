@@ -365,7 +365,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       kind,
       startedAt: timestamp,
       expiresAt: new Date(Date.parse(timestamp) + operationLeaseMs).toISOString(),
-      ...(budget ? { budget } : {}),
+      ...(budget ? { budgetReservation: budget } : {}),
     };
   }
 
@@ -492,8 +492,10 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     assertAuthorizationTicket(reservedRun, operationId, reservedRun.status, generationTool);
     assertAuthorizationTicket(reservedRun, operationId, "reviewing", "compare_candidates");
     let candidates: Candidate[];
+    let actualModelCalls = 1;
     try {
       const generated = await withinTurnDeadline(deadlineAt, (execution) => dependencies.generate(request, execution));
+      actualModelCalls = Math.max(1, Math.min(2, generated.modelAttempts ?? 1));
       if (generated.hooks.length !== request.count) throw new GenerationError("invalid_count");
       candidates = generated.hooks.map(toCandidate);
       if (candidates.some((candidate) => !candidate.text)) throw new GenerationError("invalid_json");
@@ -514,7 +516,14 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.resumeStatus = resumeStatus;
         const call = [...run.toolCalls].reverse().find((item) => item.status === "requested");
         if (call) call.status = "completed";
-        run.toolResults.push({ callId: call?.id, tool: call?.tool ?? "generate_hooks", status: "error", error: { code: mapped.code, message: "Provider request failed" } });
+        const failedModelCalls = error instanceof GenerationError ? Math.max(1, Math.min(2, error.attempts ?? 1)) : 1;
+        run.toolResults.push({
+          callId: call?.id,
+          tool: call?.tool ?? "generate_hooks",
+          status: "error",
+          output: { modelCalls: failedModelCalls, formatAndCountRetries: failedModelCalls - 1 },
+          error: { code: mapped.code, message: "Provider request failed" },
+        });
         run.updatedAt = now().toISOString();
         run.revision += 1;
         return asResponse(run);
@@ -535,7 +544,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       run.activeOperation = undefined;
       const call = [...run.toolCalls].reverse().find((item) => item.status === "requested");
       if (call) call.status = "completed";
-      run.toolResults.push({ callId: call?.id, tool: request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch", status: "success", output: { count: candidates.length } });
+      run.toolResults.push({
+        callId: call?.id,
+        tool: request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch",
+        status: "success",
+        output: { count: candidates.length, modelCalls: actualModelCalls, formatAndCountRetries: actualModelCalls - 1 },
+      });
       const comparison = compareCandidates(candidates);
       const compareId = id("tool");
       run.toolCalls.push({ id: compareId, tool: "compare_candidates", input: { candidateCount: candidates.length }, status: "completed", createdAt: now().toISOString() });
@@ -547,8 +561,8 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   }
 
   return {
-    async cleanup(cleanupNow = now()): Promise<import("./repository.ts").AgentCleanupResult> {
-      return repository.cleanup(cleanupNow);
+    async cleanup(cleanupNow = now(), options?: import("./repository.ts").AgentCleanupOptions): Promise<import("./repository.ts").AgentCleanupResult> {
+      return repository.cleanup(cleanupNow, options);
     },
 
     async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }, context?: AgentRequestContext): Promise<{ sessionToken: string; response: CoachRunResponse }> {
@@ -648,7 +662,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
             try { submitted = JSON.parse(command.text); } catch { throw new AgentInputError("Complete the structured brief form before continuing"); }
             if (!submitted || typeof submitted !== "object" || Array.isArray(submitted)) throw new AgentInputError("Structured brief must be an object");
             assertSafeBriefInput(submitted as Record<string, unknown>);
-            const normalized = normalizeBrief(submitted as Record<string, unknown>, run.clarificationAttempts ?? 0);
+            const normalized = normalizeBrief({ ...(run.briefDraft ?? {}), ...(submitted as Record<string, unknown>) }, run.clarificationAttempts ?? 0);
             if (normalized.kind !== "complete") throw new AgentInputError("Structured brief is incomplete or invalid");
             run.brief = normalized.brief;
             run.briefDraft = normalized.brief;

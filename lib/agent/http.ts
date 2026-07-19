@@ -26,7 +26,6 @@ import type { AgentCommand } from "./types.ts";
 import { AgentQuotaError, quotaConfigFromEnv, type AgentRequestContext } from "./quota.ts";
 
 export const MAX_AGENT_JSON_BYTES = 64 * 1024;
-export const AGENT_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 
 interface HandlerOptions {
   service?: CreativeCoachService;
@@ -69,16 +68,21 @@ function safeSecretEqual(supplied: string, expected: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-function usableSecret(value: string | undefined): string {
+function usableSecret(value: string | undefined, production = false): string {
   const secret = value?.trim() ?? "";
-  return /^(replace_me|change_me|your_api_key)$/i.test(secret) ? "" : secret;
+  if (!secret || /^[<'"]|[>'"]$/.test(secret) || /^(replace_me|change_me|your_api_key|your_secret|placeholder)$/i.test(secret)) return "";
+  return production && secret.length < 32 ? "" : secret;
 }
 
 function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
-  const secret = usableSecret(env.AGENT_IP_HASH_SECRET) || (production ? "" : "creative-coach-development-ip-hash");
+  const secret = usableSecret(env.AGENT_IP_HASH_SECRET, production) || (production ? "" : "creative-coach-development-ip-hash");
   if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
-  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
-  const address = forwarded || request.headers.get("x-real-ip")?.trim() || "unknown";
+  const headerName = (env.AGENT_TRUSTED_IP_HEADER?.trim().toLowerCase() || (production ? "x-vercel-forwarded-for" : "x-real-ip"));
+  if (!/^[a-z0-9-]{1,64}$/.test(headerName)) throw new HttpError(503, "Agent trusted IP header is invalid");
+  // Only a deployment-controlled header participates in the quota identity.
+  // Generic X-Forwarded-For is deliberately ignored unless explicitly chosen
+  // behind a proxy that overwrites it.
+  const address = request.headers.get(headerName)?.trim() || "unknown";
   return { ipDigest: createHmac("sha256", secret).update(address).digest("hex") };
 }
 
@@ -196,8 +200,6 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
   const production = options.production ?? env.NODE_ENV === "production";
   let service = options.service;
   let ready: Promise<void> | undefined;
-  let lastCleanupAt = 0;
-  let cleanupInFlight: Promise<void> | undefined;
 
   function hidden(): Response | undefined { return enabled ? undefined : json({ error: "not_found", message: "Not found" }, 404); }
   async function getService(): Promise<CreativeCoachService> {
@@ -220,12 +222,6 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
       });
     }
     if (ready) await ready;
-    const cleanupNow = Date.now();
-    if (typeof service.cleanup === "function" && cleanupNow - lastCleanupAt >= AGENT_CLEANUP_INTERVAL_MS && !cleanupInFlight) {
-      lastCleanupAt = cleanupNow;
-      cleanupInFlight = service.cleanup(new Date(cleanupNow)).then(() => undefined).finally(() => { cleanupInFlight = undefined; });
-    }
-    if (cleanupInFlight) await cleanupInFlight;
     return service;
   }
   async function handle(operation: () => Promise<Response>): Promise<Response> {
@@ -314,17 +310,20 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
     },
     async cleanup(request: Request): Promise<Response> {
       return handle(async () => {
-        const expected = usableSecret(env.AGENT_CLEANUP_TOKEN);
+        const expected = usableSecret(env.AGENT_CLEANUP_TOKEN, production);
         if (!expected) return json({ error: "not_found", message: "Not found" }, 404);
         const authorization = request.headers.get("authorization") ?? "";
         const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
         if (!supplied || !safeSecretEqual(supplied, expected)) return json({ error: "unauthorized", message: "Unauthorized" }, 401);
-        const result = await (await getService()).cleanup(new Date());
+        const cursor = new URL(request.url).searchParams.get("cursor") ?? undefined;
+        if (cursor && !/^[A-Za-z0-9:_-]{1,200}$/.test(cursor)) throw new HttpError(400, "Cleanup cursor is invalid");
+        const result = await (await getService()).cleanup(new Date(), { cursor, limit: 50 });
         return json({
           removedRuns: result.removedRunIds.length,
           removedSessions: result.removedSessionIds.length,
           removedMemory: result.removedMemoryCount,
           removedUsage: result.removedUsageCount,
+          ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
         }, 200, { "Cache-Control": "no-store" });
       });
     },

@@ -197,13 +197,14 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     rememberedWordBand,
   }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand, emotionToneTouched, ignoreMemory, platformTouched, rememberedPlatform, rememberedTone, rememberedWordBand, wordLimitTouched]);
   const structuredBrief = React.useMemo<Partial<CreativeBrief>>(() => ({
+    ...(run?.briefDraft ?? {}),
     ...brief,
     topic: displayedTopic.trim(),
     platform: displayedPlatform,
     contentType: displayedContentType,
     emotionTone: displayedEmotionTone,
     wordLimitBand: displayedWordLimitBand,
-  }), [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand]);
+  }), [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand, run?.briefDraft]);
 
   const start = async () => {
     if (!displayedTopic.trim() || coach.loading) return;
@@ -462,7 +463,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         </form>
       )}
       <div className="border-t border-[var(--color-line)] p-4">
-        <div className="flex items-center justify-between"><p className="text-xs font-extrabold">已参考偏好</p>{coach.memory.length > 0 && <button className="text-[11px] font-bold text-[var(--color-danger)]" onClick={() => void coach.clearMemory()} type="button">全部清除</button>}</div>
+        <div className="flex items-center justify-between"><p className="text-xs font-extrabold">偏好记忆{run ? ` · 本轮已参考 ${run.appliedMemoryKeys?.length ?? 0} 项` : ""}</p>{coach.memory.length > 0 && <button className="text-[11px] font-bold text-[var(--color-danger)]" onClick={() => void coach.clearMemory()} type="button">全部清除</button>}</div>
         {coach.memory.length === 0 ? <p className="mt-2 text-[11px] text-[var(--color-muted)]">暂无已保存偏好</p> : <ul className="mt-2 space-y-2">{coach.memory.map((entry) => <li className="flex items-center justify-between gap-2 text-[11px]" key={entry.id}><span className="min-w-0 truncate">{MEMORY_LABELS[entry.key] ?? entry.key}：{entry.value}（{Math.round(entry.confidence * 100)}%）</span><button aria-label={`删除偏好：${MEMORY_LABELS[entry.key] ?? entry.key}`} className="shrink-0 text-[var(--color-danger)]" onClick={() => void coach.deleteMemory(entry.id)} type="button"><Trash aria-hidden="true" size={14} /></button></li>)}</ul>}
         {run && !["completed", "cancelled"].includes(run.status) && <button className="mt-3 text-[11px] font-bold text-[var(--color-muted)] underline" disabled={coach.loading} onClick={() => void coach.cancelRun()} type="button">取消本轮任务</button>}
       </div>

@@ -118,5 +118,6 @@ export async function generateCoachHooks(
     model: base.model,
     templateVersion: base.templateVersion,
     promptVariant: base.promptVariant,
+    modelAttempts: result.attempts,
   };
 }

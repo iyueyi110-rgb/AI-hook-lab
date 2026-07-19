@@ -412,6 +412,8 @@ test("generates 10, rewrites one candidate into 3, and regenerates a batch of 10
   assert.equal(reviewed.run.status, "reviewing");
   assert.equal(reviewed.candidates.length, 10);
   assert.equal(reviewed.topCandidates.length, 3);
+  const generationResult = reviewed.run.toolResults.find((item) => item.tool === "generate_hooks" && item.status === "success");
+  assert.deepEqual(generationResult?.output, { count: 10, modelCalls: 1, formatAndCountRetries: 0 });
   assert.deepEqual(calls.map((call) => [call.kind, call.count]), [["initial", 10]]);
 
   const rewritten = await coach.submitTurn(token, runId, reviewed.run.revision, {
@@ -447,7 +449,7 @@ test("atomically reserves one generation and invalidates the mid-operation revis
   assert.equal(callsBeforeRelease, 1);
   assert.equal(mid.run.status, "generating");
   assert.equal(mid.run.revision, 1);
-  assert.deepEqual(mid.run.activeOperation?.budget, { steps: 1, modelCalls: 2, generationCalls: 1, formatAndCountRetries: 1 });
+  assert.deepEqual(mid.run.activeOperation?.budgetReservation, { steps: 1, modelCalls: 2, generationCalls: 1, formatAndCountRetries: 1 });
   assert.equal(mid.allowedCommands.length, 0);
   const successful = settled.find((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof coach.submitTurn>>> => item.status === "fulfilled")!;
   assert.equal(successful.value.run.revision, 2);

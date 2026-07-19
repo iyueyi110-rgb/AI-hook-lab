@@ -24,6 +24,7 @@ test("creative coach hook owns revision, aborts superseded requests and refreshe
   assert.match(hook, /AbortController/);
   assert.match(hook, /\.status === 409/);
   assert.match(hook, /refreshRun/);
+  assert.match(hook, /runRestoring \|\| memoryRestoring/);
   assert.doesNotMatch(hook, /response\.status === 409[\s\S]{0,500}submitCommand\(/);
 });
 

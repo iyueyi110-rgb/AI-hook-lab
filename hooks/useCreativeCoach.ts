@@ -82,7 +82,8 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
   const [response, setResponse] = React.useState<CoachClientResponse | null>(null);
   const [memory, setMemory] = React.useState<CoachMemoryEntry[]>([]);
   const [loadingAction, setLoadingAction] = React.useState<string | null>(null);
-  const [restoring, setRestoring] = React.useState(true);
+  const [runRestoring, setRunRestoring] = React.useState(true);
+  const [memoryRestoring, setMemoryRestoring] = React.useState(true);
   const [error, setError] = React.useState<CreativeCoachError | null>(null);
   const readRequestRef = React.useRef<AbortController | null>(null);
   const writeRequestRef = React.useRef<AbortController | null>(null);
@@ -126,7 +127,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
   const refreshRun = React.useCallback(async (runId?: string, preserveError = false) => {
     const selected = runId ?? (typeof window === "undefined" ? null : loadCoachRunId(window.localStorage));
     if (!selected) {
-      setRestoring(false);
+      setRunRestoring(false);
       return null;
     }
     readRequestRef.current?.abort();
@@ -155,7 +156,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
       return null;
     } finally {
       if (readRequestRef.current === controller) readRequestRef.current = null;
-      if (mountedRef.current) setRestoring(false);
+      if (mountedRef.current) setRunRestoring(false);
     }
   }, [fetchRun, onFinalized, rememberToolCalls]);
 
@@ -195,6 +196,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     }), [acceptResponse, fetchRun]);
 
   const refreshMemory = React.useCallback(async () => {
+    if (mountedRef.current) setMemoryRestoring(true);
     memoryRequestRef.current?.abort();
     const controller = new AbortController();
     memoryRequestRef.current = controller;
@@ -213,6 +215,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
       }
     } finally {
       if (memoryRequestRef.current === controller) memoryRequestRef.current = null;
+      if (mountedRef.current) setMemoryRestoring(false);
     }
   }, []);
 
@@ -364,7 +367,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     error,
     loadingAction,
     loading: Boolean(loadingAction),
-    restoring,
+    restoring: runRestoring || memoryRestoring,
     createRun,
     refreshRun,
     submitCommand,

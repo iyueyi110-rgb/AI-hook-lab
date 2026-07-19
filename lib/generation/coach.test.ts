@@ -47,6 +47,7 @@ test("coach generation calls the shared strict candidate service for 10/3/10 tas
     const result = await generateCoachHooks(request(kind, count), { provider });
     assert.equal(result.hooks.length, count);
     assert.equal(result.topic, brief.topic);
+    assert.equal(result.modelAttempts, 1);
   }
   assert.match(prompts[1]!, /原始 Hook/);
   assert.match(prompts[1]!, /更具体/);
@@ -67,6 +68,7 @@ test("coach generation forwards shared retry and timeout controls", async () => 
   });
   assert.equal(attempts, 2);
   assert.equal(result.hooks.length, 3);
+  assert.equal(result.modelAttempts, 2);
 });
 
 test("coach generation never exceeds the two-model-call turn budget", async () => {

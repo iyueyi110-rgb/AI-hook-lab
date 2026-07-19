@@ -145,7 +145,7 @@ test("cleanup expires sessions and cascades their runs and memory", () => {
   assert.deepEqual(state.memories.map((item) => item.creatorSessionId), ["live"]);
 });
 
-test("normal repository operations persist stale terminal cleanup but retain active runs, sessions, and memory", async () => {
+test("explicit repository cleanup removes stale runs but retains active runs, sessions, and memory", async () => {
   const repository = new MemoryAgentRepository();
   let sessionId = "";
   await repository.transaction((state) => {
@@ -159,13 +159,14 @@ test("normal repository operations persist stale terminal cleanup but retain act
     old.status = "completed";
     old.updatedAt = "2026-01-01T00:00:00.000Z";
   });
+  await repository.cleanup();
   const state = await repository.read();
   assert.deepEqual(state.runs.map((item) => item.id), ["active"]);
   assert.equal(state.creatorSessions.length, 1);
   assert.equal(listCreatorMemory(state, sessionId).entries.length, 1);
 });
 
-test("JSON reads persist stale cleanup while retaining session and memory state", async () => {
+test("JSON cleanup persists stale removal while retaining session and memory state", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "agent-store-"));
   const file = path.join(directory, "agent.json");
   const state = createInitialAgentState();
@@ -173,11 +174,21 @@ test("JSON reads persist stale cleanup while retaining session and memory state"
   state.memories.push({ creatorSessionId: "session", memory: { entries: [{ key: "default_platform", value: "douyin", confidence: 0.6 }] } });
   state.runs.push(run("old", "session", { status: "failed", updatedAt: "2026-01-01T00:00:00.000Z" }), run("active", "session", { status: "generating", updatedAt: "2098-01-01T00:00:00.000Z" }));
   await writeFile(file, JSON.stringify(state), "utf8");
-  const persisted = await new JsonAgentRepository(file).read();
+  const repository = new JsonAgentRepository(file);
+  await repository.cleanup();
+  const persisted = await repository.read();
   assert.deepEqual(persisted.runs.map((item) => item.id), ["active"]);
   assert.equal(persisted.creatorSessions.length, 1);
   assert.equal(persisted.memories.length, 1);
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")).runs.map((item: StoredAgentRun) => item.id), ["active"]);
+});
+
+test("cleanup applies bounded retention to orphan runs", () => {
+  const state = createInitialAgentState();
+  state.runs.push(run("orphan", "missing-session", { updatedAt: "2026-01-01T00:00:00.000Z" }));
+  const result = cleanupExpiredAgentData(state, new Date("2026-02-01T00:00:00.000Z"));
+  assert.deepEqual(result.removedRunIds, ["orphan"]);
+  assert.equal(state.runs.length, 0);
 });
 
 test("explicit cleanup persists stale nonterminal and expired-session removal in JSON", async () => {
@@ -283,12 +294,16 @@ test("postgres persistence uses versioned shard migrations and scoped incrementa
   assert.deepEqual(AGENT_MIGRATIONS.map((migration) => migration.version), [1, 2]);
   assert.match(AGENT_MIGRATIONS[1]!.sql, /session:/);
   assert.match(AGENT_MIGRATIONS[1]!.sql, /DELETE FROM agent_state WHERE id = 'default'/);
+  assert.match(AGENT_MIGRATIONS[1]!.sql, /DELETE FROM agent_run item WHERE NOT EXISTS/);
+  assert.match(AGENT_MIGRATIONS[1]!.sql, /VALIDATE CONSTRAINT agent_run_creator_session_fk/);
+  assert.match(AGENT_MIGRATIONS[1]!.sql, /conrelid = 'public\.agent_run'::regclass/);
   const source = await readFile(new URL("./repository.ts", import.meta.url), "utf8");
   assert.doesNotMatch(source, /WHERE id = 'default' FOR UPDATE/);
   assert.doesNotMatch(source, /DELETE FROM \$\{table\}(?!\s+WHERE)/);
   assert.match(source, /ORDER BY id FOR UPDATE/);
   assert.match(source, /ON CONFLICT \(id\) DO UPDATE/);
   assert.match(source, /deleteMissing\(client, "agent_run", "creator_session_id"/);
+  assert.match(source, /ORDER BY id LIMIT \$2/);
 });
 
 test("migration runner serializes upgrades and records schema version without a ninth table", async () => {

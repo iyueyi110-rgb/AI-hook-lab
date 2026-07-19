@@ -7,7 +7,7 @@ Creative Coach is an optional, single-Agent workflow layered on top of the exist
 - Set `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` to expose the coach UI and Agent APIs. It defaults to `false` for gradual rollout.
 - Anonymous ownership uses the HttpOnly `ai-hook-creator-session` cookie. The cookie is `SameSite=Lax`, `Secure` in production, and expires after 180 days; storage contains only its SHA-256 digest.
 - Local development uses `data/agent-store.json` (or `AGENT_STORE_PATH`) when `DATABASE_URL` is empty. Production fails closed unless PostgreSQL is configured.
-- Every inactive run, including abandoned non-terminal runs, messages and candidates, is removed after 30 days. A non-expired operation lease is preserved; expired 180-day sessions cascade their runs, preference memory and quota usage. API entry points trigger throttled cleanup, and production should also schedule the authenticated cleanup endpoint.
+- Every inactive run, including abandoned non-terminal and orphaned runs, messages and candidates, is removed after 30 days. A non-expired operation lease is preserved; expired 180-day sessions cascade their runs, preference memory and quota usage. Production must schedule the authenticated cleanup endpoint; retention work is deliberately kept off interactive request latency.
 - The original image file and its binary/base64 bytes are never persisted. The resulting structured understanding (for example `topic`, `imageDescription`, suggested platform/content type/tone) may be stored in the run brief and structured tool result for the same maximum 30-day run lifetime. The tool-call input audit contains only safe upload metadata such as MIME type and byte count.
 - Long-term creator memory is a strict enum/value whitelist (platform, existing style preference/avoidance, tone, word-limit band and avoided Bad Case tag). It never stores an image, image description, topic, Hook, free-form message or personal identity data.
 
@@ -15,7 +15,7 @@ Image analysis requires both `ARK_API_KEY` and `ARK_MODEL_ID`. `ARK_MODEL_ID` is
 
 Production PostgreSQL stores one `agent_state` shard per session digest and separate IP-HMAC quota shards. Transactions lock only the sorted shards involved in a request and update projection rows for that session; the eight-table design is preserved. Versioned migrations split the legacy singleton state and add cascade foreign keys. A live PostgreSQL parity/concurrency job is still required in deployment CI because the local test suite validates migration/query contracts without a database server.
 
-Anonymous paid operations are protected by persistent session and HMAC-IP quotas. Set a dedicated `AGENT_IP_HASH_SECRET` in production; raw IP addresses are never stored. Optional `AGENT_QUOTA_*` environment variables tune the safe defaults. Validation, ownership, revision and authorization failures do not consume provider quota; a provider request that has already started does.
+Anonymous paid operations are protected by persistent session and HMAC-IP quotas. Set a dedicated high-entropy `AGENT_IP_HASH_SECRET` (at least 32 characters) in production; raw IP addresses are never stored. `AGENT_TRUSTED_IP_HEADER` must name a header overwritten by the deployment proxy (`x-vercel-forwarded-for` by default), rather than trusting caller-controlled forwarding data. Optional `AGENT_QUOTA_*` environment variables tune the safe defaults. Validation, ownership, revision and authorization failures do not consume provider quota; a provider request that has already started does.
 
 ## API surface
 
@@ -29,7 +29,7 @@ Anonymous paid operations are protected by persistent session and HMAC-IP quotas
 | `GET /api/agent/memory` | List whitelisted preferences for this browser |
 | `DELETE /api/agent/memory/[memoryId]` | Delete one preference immediately |
 | `DELETE /api/agent/memory` | Delete all preferences immediately |
-| `POST /api/agent/cleanup` | Run scheduled retention cleanup with `Bearer AGENT_CLEANUP_TOKEN` |
+| `POST /api/agent/cleanup` | Run a bounded retention batch with a high-entropy `Bearer AGENT_CLEANUP_TOKEN`; repeat with the returned `cursor` |
 
 Every mutation uses `expectedRevision`; stale updates return `409`. Run IDs are also checked against the anonymous session, so another browser receives `404` rather than run details. Final saving requires candidate selection followed by a separate `confirm_final` command.
 

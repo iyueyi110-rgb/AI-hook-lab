@@ -138,7 +138,7 @@ export interface AgentRun {
     startedAt: string;
     expiresAt?: string;
     authorizationTickets?: Array<{ status: AgentRunStatus; tool: ToolName }>;
-    budget?: import("./budget.ts").AgentTurnBudgetCounters;
+    budgetReservation?: import("./budget.ts").AgentTurnBudgetCounters;
   };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;
