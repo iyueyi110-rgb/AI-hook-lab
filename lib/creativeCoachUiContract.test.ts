@@ -12,13 +12,13 @@ test("home hides the coach mode switch behind the public flag and preserves clas
   const page = await source("app/page.tsx");
   assert.match(page, /NEXT_PUBLIC_AGENT_COACH_ENABLED/);
   assert.match(page, /经典生成/);
-  assert.match(page, /创作教练/);
+  assert.match(page, /创作 Agent/);
   assert.match(page, /mode === "classic"/);
   assert.match(page, /<InputPanel/);
   assert.match(page, /<CreativeCoachWorkspace/);
 });
 
-test("creative coach hook owns revision, aborts superseded requests and refreshes 409 without replay", async () => {
+test("Creative Agent hook owns revision, aborts superseded requests and refreshes 409 without replay", async () => {
   const hook = await source("hooks/useCreativeCoach.ts");
   assert.match(hook, /expectedRevision/);
   assert.match(hook, /AbortController/);

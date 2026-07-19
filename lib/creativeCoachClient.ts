@@ -93,7 +93,7 @@ export interface CoachWriteGate {
 
 export class CoachWriteInFlightError extends Error {
   constructor() {
-    super("Another creative coach action is already in progress");
+    super("Another Creative Agent action is already in progress");
     this.name = "CoachWriteInFlightError";
   }
 }
@@ -220,7 +220,7 @@ export async function readCoachResponse(response: Response): Promise<CoachClient
   throw new CoachClientError(
     response.status,
     structured?.error ?? "request_failed",
-    structured?.message ?? "创作教练暂时无法处理这个操作。",
+    structured?.message ?? "创作 Agent 暂时无法处理这个操作。",
     embedded,
   );
 }

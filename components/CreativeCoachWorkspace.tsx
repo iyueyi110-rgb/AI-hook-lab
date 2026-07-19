@@ -287,7 +287,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
               </label>
               {imageFile && <button aria-label="清除内容截图" className="absolute right-2 top-2 button-secondary !min-h-8 !p-1.5" onClick={clearImage} type="button"><X aria-hidden="true" size={14} /></button>}
             </div>
-            <p className="mt-2 text-[10px] leading-4 text-[var(--color-muted)]">图片走创作教练分析接口，原图不保存，也不会写入浏览器历史。</p>
+            <p className="mt-2 text-[10px] leading-4 text-[var(--color-muted)]">图片走创作 Agent 分析接口，原图不保存，也不会写入浏览器历史。</p>
             {run?.status === "analyzing_image" && (
               <button className="button-secondary mt-3 w-full" disabled={!imageFile || coach.loading} onClick={() => imageFile && void coach.uploadImage(imageFile)} type="button">分析这张图片</button>
             )}
@@ -358,7 +358,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         {!run ? (
           <button className="button-primary w-full" disabled={!displayedTopic.trim() || coach.loading || coach.restoring} onClick={() => void start()} type="button">
             <ChatCircleDots aria-hidden="true" size={18} weight="bold" />
-            {coach.loading ? "正在创建…" : "开始创作教练"}
+            {coach.loading ? "正在创建…" : "开始创作 Agent"}
           </button>
         ) : null}
       </div>
@@ -373,7 +373,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
           <div className="mt-10 grid gap-px overflow-hidden rounded-[10px] border border-[var(--color-line)] bg-[var(--color-line)] sm:grid-cols-3"><div className="bg-white p-4 text-xs leading-5">一次补问一个关键字段</div><div className="bg-white p-4 text-xs leading-5">首轮固定生成 10 条</div><div className="bg-white p-4 text-xs leading-5">单条改写固定返回 3 条</div></div>
         </div>
       )}
-      {coach.restoring && <div className="editorial-panel min-h-[300px] p-6 soft-pulse" aria-label="正在恢复创作教练">正在恢复上次任务…</div>}
+      {coach.restoring && <div className="editorial-panel min-h-[300px] p-6 soft-pulse" aria-label="正在恢复创作 Agent">正在恢复上次任务…</div>}
       {run && candidates.length === 0 && (
         <div className="editorial-panel p-6">
           <p className="text-xs font-extrabold text-[var(--color-accent)]">{STATUS_LABELS[run.status]}</p>
@@ -434,7 +434,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
 
   const coachPanel = (
     <aside
-      aria-label="创作教练对话"
+      aria-label="创作 Agent 对话"
       aria-modal={modalOpen || undefined}
       className={`editorial-panel z-40 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden xl:sticky xl:top-24 max-xl:fixed max-xl:bottom-4 max-xl:right-4 max-xl:top-24 max-xl:w-[360px] max-xl:shadow-[var(--shadow-panel)] max-md:inset-0 max-md:max-h-none max-md:w-auto max-md:rounded-none ${coachOpen ? "max-xl:flex" : "max-xl:hidden"}`}
       ref={coachPanelRef}
@@ -442,8 +442,8 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
       tabIndex={modalOpen ? -1 : undefined}
     >
       <div className="flex items-center justify-between border-b border-[var(--color-line)] p-4">
-        <div><p className="text-xs font-extrabold text-[var(--color-accent)]">创作教练</p><p className="mt-1 text-sm font-black">{run ? STATUS_LABELS[run.status] : "等待开始"}</p></div>
-        <button aria-label="关闭创作教练面板" className="button-secondary !min-h-8 !p-1.5 xl:!hidden" onClick={closeCoach} ref={closeButtonRef} type="button"><X aria-hidden="true" size={16} /></button>
+        <div><p className="text-xs font-extrabold text-[var(--color-accent)]">创作 Agent</p><p className="mt-1 text-sm font-black">{run ? STATUS_LABELS[run.status] : "等待开始"}</p></div>
+        <button aria-label="关闭创作 Agent 面板" className="button-secondary !min-h-8 !p-1.5 xl:!hidden" onClick={closeCoach} ref={closeButtonRef} type="button"><X aria-hidden="true" size={16} /></button>
       </div>
       <div aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
         {!run && <p className="rounded-[10px] bg-[var(--color-surface-subtle)] p-3 text-xs leading-5">填写左侧简报后开始。我会按当前状态补问、比较和改写，不展示隐藏推理。</p>}
@@ -461,7 +461,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
       </div>
       {run && needsInput && allowed(allowedCommands, "message") && run.status === "understanding" && (
         <form className="border-t border-[var(--color-line)] p-3" onSubmit={(event) => { event.preventDefault(); submitMessage(); }}>
-          <label className="sr-only" htmlFor="coach-message">回复创作教练</label>
+          <label className="sr-only" htmlFor="coach-message">回复创作 Agent</label>
           <textarea className="control-base min-h-20 w-full resize-none px-3 py-2 text-sm" id="coach-message" maxLength={2000} onChange={(event) => setMessage(event.target.value)} placeholder="回复缺失信息" value={message} />
           <button className="button-primary mt-2 w-full" disabled={!message.trim() || coach.loading} type="submit">发送回复</button>
         </form>
@@ -482,9 +482,9 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
       </div>
       {coachPanel}
       <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
-        <button aria-expanded={coachOpen} aria-label="打开创作教练面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />教练</button>
+        <button aria-expanded={coachOpen} aria-label="打开创作 Agent 面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />创作 Agent</button>
       </div>
-      {coachOpen && <button aria-label="关闭创作教练遮罩" className="fixed inset-0 z-30 bg-black/25 max-md:hidden xl:hidden" onClick={closeCoach} type="button" />}
+      {coachOpen && <button aria-label="关闭创作 Agent 遮罩" className="fixed inset-0 z-30 bg-black/25 max-md:hidden xl:hidden" onClick={closeCoach} type="button" />}
     </main>
   );
 }

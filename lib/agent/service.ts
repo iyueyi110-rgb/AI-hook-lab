@@ -179,7 +179,7 @@ function finalizedResponseForRun(run: StoredAgentRun): GenerateResponse | undefi
     targetAudience: run.brief.targetAudience,
     emotionTone: run.brief.emotionTone,
     wordLimit: wordLimitFor(run.brief.wordLimitBand),
-    model: "creative-coach",
+    model: "creative-agent",
   };
 }
 

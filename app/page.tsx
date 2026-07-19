@@ -571,7 +571,7 @@ export default function Home() {
         <nav aria-label="创作模式" className="mx-auto flex w-full max-w-7xl px-4 pt-5 md:px-6">
           <div className="inline-flex rounded-[10px] border border-[var(--color-line)] bg-[var(--color-surface)] p-1">
             <button aria-pressed={mode === "classic"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("classic")} type="button">经典生成</button>
-            <button aria-pressed={mode === "coach"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("coach")} type="button">创作教练</button>
+            <button aria-pressed={mode === "coach"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("coach")} type="button">创作 Agent</button>
           </div>
         </nav>
       )}
