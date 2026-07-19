@@ -1,215 +1,262 @@
 # AI Hook Lab
 
-> Creative Coach Agent setup, API, retention, safety, evaluation, and rollout: [docs/creative-coach-agent.md](docs/creative-coach-agent.md). Classic 10-Hook generation remains available when the feature flag is disabled.
+AI Hook Lab 是一个面向内容创作者与内容运营团队的 AI Hook 创作、评测和复盘工作台。项目以 DeepSeek 为主要文本模型，将结构化创作简报、多版本 Hook 生成、人工反馈、离线评测和运营分析连接成一套可验证的内容优化闭环。
 
-AI Hook Lab 是一个面向内容创作者的爆款 Hook 生成工具。输入主题、平台和内容类型后，应用会调用 DeepSeek 生成 10 个不同风格的开头文案，并支持历史记录与收藏。
+项目既保留“一次生成 10 条 Hook”的经典模式，也提供可选的创作教练 Agent、图片理解、管理后台、离线 Prompt 评测系统和管理员专用的运营分析 Agent。
 
-## 功能
+## 核心能力
 
-- 支持小红书、抖音、B 站、YouTube、X 等平台
-- 支持视频、图文、产品广告、教程、观点帖等内容类型
-- 每次生成 10 条不同风格的 Hook
-- 支持目标用户、情绪风格、字数限制等高级输入变量
-- 展示点击欲望、冲击力、平台匹配、可操作性、传播力评分
-- 支持 bad case 标签、生成分析、采用标记和平台适配满意度
-- 本地保存生成历史和收藏
-- 支持一键复制单条或全部 Hook
+| 模块 | 能力 |
+| --- | --- |
+| 经典生成 | 输入主题、平台、内容类型、目标用户、情绪风格和字数限制，一次生成 10 条不同风格的 Hook |
+| 多平台适配 | 支持小红书、抖音、B 站、YouTube 和 X，针对不同平台采用不同的表达策略 |
+| 结果解释 | 提供冲击力、平台匹配、可操作性、传播力等模型评分，以及推荐理由、整体分析和 Bad Case 标签 |
+| 创作资产 | 支持复制、收藏、标记采用、平台满意度反馈，以及浏览器本地历史记录 |
+| 图片理解 | 上传截图或图片，自动提取主题、图片描述，并建议平台、内容类型和情绪风格 |
+| 创作教练 Agent | 通过对话补全创作简报、生成候选、筛选 Top 3、按反馈改写并进行最终确认 |
+| 数据看板 | 按真实用户、离线评测和模拟数据来源查看生成健康度、内容价值与人工反馈 |
+| 离线评测 | 使用固定案例对比 baseline 与 candidate Prompt，支持双人盲评、A/B 对比、第三人裁决、Bad Case 复盘和报告导出 |
+| 运营分析 Agent | 管理员通过只读工具查询看板和评测证据，获得带来源引用的发现、风险和 Prompt 优化建议 |
 
-## 本地运行
+## 产品模式
 
-### 一键启动（macOS）
+### 经典生成
 
-在 Finder 中双击项目根目录下的 `start-ai-hook-mac.command`。
+经典模式使用 `/api/generate` 完成单次生成，适合快速获取和比较多个开头方案。
 
-启动器会自动：
+- 5 个内容平台：小红书、抖音、B 站、YouTube、X
+- 5 类内容：视频、图文、产品广告、教程、观点帖
+- 6 种可选情绪：紧迫、好奇、幽默、情绪共鸣、权威、反常识
+- 每次严格返回 10 条候选，并展示模型判断与推荐理由
+- 历史记录、收藏和采用状态保存在当前浏览器的 `localStorage`
+- 创作者反馈以聚合、白名单字段写入看板，不把模型分数当作真实点击率
 
-- 检查 Node.js、npm、curl 和 lsof
-- 首次运行时安装依赖
-- 从 `.env.local.example` 创建 `.env.local`
-- 优先使用 3000，并在占用时依次检查 3010、3011、3012、3020
-- 等待服务可访问后，同时打开 AI Hook 首页和管理员后台 `/admin/dashboard`
-- 检测并复用已经运行的 AI Hook 服务，避免重复启动
+### 创作教练 Agent
 
-第一次运行前，建议在 `.env.local` 中填写：
+设置 `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` 后，首页会显示“经典生成 / 创作教练”模式切换。
 
-```bash
-DEEPSEEK_API_KEY=your_api_key_here
-```
+创作教练采用受约束的单 Agent 工作流：
 
-本地开发时，`DATABASE_URL` 和 `EVAL_INGEST_TOKEN` 为可选项。没有 `DATABASE_URL` 时，看板和评测系统使用项目目录内的 JSON 文件降级存储；这些本地数据库或 JSON 文件不会对公网暴露。
+1. 根据对话补全结构化创作简报，最多连续追问 2 个缺失项。
+2. 确认简报后生成 10 条候选，并给出稳定的 Top 3。
+3. 支持单条改写或整批重生成，最多进行 3 轮用户可见修改。
+4. 用户选择候选后，需要单独执行最终确认才会完成并写入历史。
+5. 页面刷新后可恢复当前任务；并发写入通过 `expectedRevision` 防止旧请求覆盖新状态。
 
-如果 macOS 提示没有执行权限，在项目目录运行一次：
+长期记忆只保存平台、风格偏好、情绪、字数区间和规避标签等白名单偏好，不保存主题、Hook、自由文本、图片或个人身份信息。详细设计见 [创作教练 Agent 文档](docs/creative-coach-agent.md)。
 
-```bash
-chmod +x start-ai-hook-mac.command
-```
+### 图片理解
 
-如果系统阻止首次打开，可在 Finder 中按住 Control 点击文件，选择“打开”，再确认一次。终端会显示最终使用的端口；按 `Control+C` 可以停止由本次启动器创建的服务。若启动器复用了已有服务，关闭启动器不会停止原服务。
+经典模式和创作教练均可使用火山引擎 Ark 视觉模型理解图片。
 
-### 一键启动（Windows）
+- 支持 JPEG、PNG、WebP
+- 单张图片不超过 5 MB
+- 需要同时配置 `ARK_API_KEY` 和 `ARK_MODEL_ID`
+- 原始图片及其 Base64 内容不会持久化
+- 只保存经过校验的结构化图片描述，并允许用户在生成前修改或确认
 
-双击项目根目录下的 `start-ai-hook-lab.bat`。
+### 管理后台与运营分析 Agent
 
-启动按钮会自动检查依赖、创建 `.env.local`（如果还没有）、打开浏览器，并启动开发服务。
+管理员登录后可访问：
 
-首次使用时，请在弹出的 `.env.local` 中填入 DeepSeek API Key：
+- `/admin/dashboard`：查看生成健康度、内容价值、人工反馈、Bad Case 和数据来源分布
+- `/admin/dashboard/agent`：用自然语言查询看板、评测批次、Prompt 版本和 Bad Case 证据
 
-```bash
-DEEPSEEK_API_KEY=your_api_key_here
-```
+运营分析 Agent 仅提供组织级只读工具，不会修改 Prompt、发布版本、写入评测结果或发送消息。数字结论必须关联数据来源；模拟数据和未完成评测不能形成正式升级结论。该功能由 `OPS_AGENT_ENABLED` 控制，开发环境默认开启，生产环境默认关闭。
 
-### 后台数据看板
+## 快速开始
 
-双击项目根目录下的 `start-ai-hook-dashboard.bat`。
+### 环境要求
 
-后台脚本会使用 3001 端口启动同一个 Next.js 应用，并自动打开：
-
-```bash
-http://localhost:3001/admin/dashboard
-```
-
-首次使用先打开 `/evaluation/login?next=/admin/dashboard` 创建第一个管理员，登录后即可进入受保护的数据看板。看板区分真实操作、评测集和模拟数据来源，并将模型自评分与人工平台满意度分开，模型分不代表真实点击效果。
-
-本地环境的看板事件优先写入 `DATABASE_URL` 指向的 PostgreSQL；未配置数据库时才降级到 `data/dashboard-events.json`。生产环境使用 Vercel Marketplace 提供的 Neon PostgreSQL，必须配置 `DATABASE_URL`，不使用 JSON 降级存储。
+- Node.js `>= 20.9.0`
+- npm
+- DeepSeek API Key（实时生成和 Agent 能力需要）
+- PostgreSQL（生产环境必须；本地开发可使用 JSON 存储）
 
 ### 手动启动
-
-1. 安装依赖：
 
 ```bash
 npm install
 ```
 
-2. 配置环境变量：
-
-复制 `.env.local.example` 为 `.env.local`，并填入 DeepSeek API Key。
+复制环境变量模板：
 
 ```bash
+# macOS / Linux
+cp .env.local.example .env.local
+
+# Windows PowerShell
+Copy-Item .env.local.example .env.local
+```
+
+至少填写：
+
+```dotenv
 DEEPSEEK_API_KEY=your_api_key_here
 ```
 
-3. 启动开发服务：
+启动开发服务：
 
 ```bash
 npm run dev
 ```
 
-打开 [http://localhost:3000](http://localhost:3000) 查看应用。
+打开 [http://localhost:3000](http://localhost:3000)。
 
-后台看板手动启动：
+### Windows 一键启动
 
-```bash
-npm run dev -- -p 3001
+- 双击 `start-ai-hook-lab.bat`：安装缺失依赖、创建 `.env.local`、本地化 Next.js 开发工具并打开首页
+- 双击 `start-ai-hook-dashboard.bat`：在 3001 端口启动应用并打开管理后台
+
+后台也可以直接使用已运行的前端服务访问：
+
+```text
+http://localhost:3000/admin/dashboard
 ```
 
-打开 [http://localhost:3001/admin/dashboard](http://localhost:3001/admin/dashboard) 查看数据看板。如尚未创建管理员，先访问 [http://localhost:3001/evaluation/login?next=/admin/dashboard](http://localhost:3001/evaluation/login?next=/admin/dashboard)。
+### macOS 一键启动
 
-## 常用命令
+在 Finder 中双击 `start-ai-hook-mac.command`。启动器会检查依赖、创建 `.env.local`、寻找可用端口，并同时打开首页和管理后台。
 
-```bash
-npm run dev
-npm run lint
-npm run build
-```
-
-## 评测命令
-
-完整离线评测系统位于：
+如果文件没有执行权限：
 
 ```bash
-http://localhost:3000/evaluation
+chmod +x start-ai-hook-mac.command
 ```
 
-首次使用先初始化存储和 60 条固定案例：
+## 账号与页面入口
+
+| 地址 | 用途 | 权限 |
+| --- | --- | --- |
+| `/` | Hook 创作工作台 | 公开 |
+| `/evaluation/login` | 评测系统登录与首次管理员初始化 | 公开 |
+| `/evaluation` | Prompt 离线评测工作台 | 已登录评测用户 |
+| `/admin/dashboard` | 运营数据看板 | 管理员 |
+| `/admin/dashboard/agent` | 运营分析 Agent | 管理员且功能已开启 |
+
+首次使用评测系统时，打开 `/evaluation/login` 创建第一个管理员。管理员可以继续创建 `admin`、`evaluator` 和 `adjudicator` 角色账号。
+
+## 环境变量
+
+完整模板见 [.env.local.example](.env.local.example)。真实密钥只能放在被 Git 忽略的 `.env.local` 中。
+
+| 变量 | 是否必需 | 说明 |
+| --- | --- | --- |
+| `DEEPSEEK_API_KEY` | 实时生成必需 | Hook 生成、创作教练和运营分析 Agent 使用的 DeepSeek Key |
+| `DATABASE_URL` | 生产必需 | PostgreSQL 连接串；本地留空时使用 JSON 存储，生产环境留空会拒绝提供相关服务 |
+| `EVALUATION_STORE_PATH` | 否 | 覆盖本地评测 JSON 文件路径 |
+| `AGENT_STORE_PATH` | 否 | 覆盖本地创作教练 JSON 文件路径 |
+| `EVAL_INGEST_TOKEN` | 按需 | 评测脚本写入 `evaluation_set` 来源事件时使用 |
+| `ARK_API_KEY` | 图片理解必需 | 火山引擎 Ark API Key |
+| `ARK_MODEL_ID` | 图片理解必需 | 已开通的 Ark 模型或推理接入点 ID |
+| `NEXT_PUBLIC_AGENT_COACH_ENABLED` | 否 | 设置为 `true` 后开放创作教练界面和 API |
+| `AGENT_CLEANUP_TOKEN` | 生产建议配置 | 调用 Agent 数据清理接口时使用的 Bearer Token |
+| `OPS_AGENT_ENABLED` | 否 | 控制管理员运营分析 Agent；生产环境需显式设为 `true` |
+| `AGENT_IP_HASH_SECRET` | 生产必需 | 用于匿名配额 IP HMAC，建议使用至少 32 位独立高熵随机值 |
+| `AGENT_TRUSTED_IP_HEADER` | 否 | 由可信部署代理覆盖的客户端 IP 请求头，默认 `x-vercel-forwarded-for` |
+| `AGENT_QUOTA_*` | 否 | 调整会话/IP 运行次数、模型调用、图片调用和活跃任务配额 |
+
+## 数据存储与安全边界
+
+- 本地开发：看板、评测、创作教练和运营 Agent 可分别使用 `data/` 下的 JSON 文件。
+- 生产环境：必须配置 PostgreSQL；系统不会回退到本地 JSON，以避免多实例下的数据丢失和不一致。
+- 经典历史与收藏：只保存在当前浏览器，不会自动跨设备同步。
+- 数据来源：严格区分 `real_user`、`evaluation_set` 和 `simulation`，避免把模拟或离线数据解释为真实用户行为。
+- Agent 所有权：创作教练使用 HttpOnly 匿名会话 Cookie，服务端只保存摘要；运营 Agent 会话按管理员隔离。
+- 数据保留：创作教练非活跃任务最长保留 30 天，匿名会话最长 180 天；生产环境应定时调用受保护的清理接口。
+- 配额防护：生产环境通过会话和 HMAC 后的 IP 摘要限制付费模型操作，不存储原始 IP。
+- 密钥扫描：提交前可运行 `npm run security:scan`；扫描只报告文件、行号和规则，不打印匹配值。
+
+## 离线评测
+
+评测系统使用 20 个固定主题和 3 个平台组成 60 条固定案例，对比 baseline 与 candidate Prompt。它支持不可变 Prompt 版本、Live/Mock 运行、双人独立评分、A/B 盲评、第三人裁决、Bad Case 分析和七类结果导出。
+
+初始化本地存储与固定案例：
 
 ```bash
 npm run eval:migrate
 npm run eval:seed
 ```
 
-随后打开 `/evaluation/login?next=/admin/dashboard` 创建首个管理员，再创建两名评测员和一名裁决员。系统支持 PostgreSQL 正式存储及仅限本地开发的 JSON 降级、Prompt 不可变版本、360 条候选生成、120 条正式结果、双人独立评分、60 案例 A/B 盲评、第三人裁决、Bad Case 复盘和七类导出。
-
-无 API Key 时必须显式选择 Mock 模式。Mock 数据会明显标注且不能形成 Prompt 升级结论。完整操作说明见 [docs/evaluation-system.md](docs/evaluation-system.md)。
-
-### API Smoke Test
-
-启动开发服务后，可以运行小样本评测：
+运行一个 API Smoke Test：
 
 ```bash
 node eval/run-eval.mjs --limit 1 --platforms xiaohongshu --delay 0
 ```
 
-旧脚本默认对同一主题和平台成对运行 `baseline/candidate`，仅用于接口 Smoke Test，不替代完整人工评测：
+运行旧版脚本评测并汇总：
 
 ```bash
-node eval/run-eval.mjs
+npm run eval:run
 npm run eval:summarize
 ```
 
-## 环境变量
+运行创作教练的确定性验收套件：
 
-| 名称 | 说明 |
+```bash
+npm run eval:agent
+```
+
+Mock 和子集运行只能验证流程，不能形成 Prompt 升级结论。完整规则见 [离线评测系统文档](docs/evaluation-system.md)。
+
+## 常用命令
+
+| 命令 | 用途 |
 | --- | --- |
-| `DEEPSEEK_API_KEY` | DeepSeek API Key，用于服务端生成 Hook |
-| `DATABASE_URL` | PostgreSQL 连接串；生产环境必填（Vercel Marketplace Neon），仅本地开发可留空并使用 JSON 降级 |
-| `EVAL_INGEST_TOKEN` | 评测脚本写入 `evaluation_set` 来源事件的共享令牌 |
+| `npm run dev` | 启动开发服务 |
+| `npm run build` | 创建生产构建 |
+| `npm run start` | 启动生产构建 |
+| `npm run lint` | 运行 ESLint |
+| `npm test` | 运行完整 Node 测试套件 |
+| `npm run eval:agent` | 运行创作教练 Agent 验收测试 |
+| `npm run security:scan` | 扫描 Git 跟踪文件中的凭据风险 |
+| `npm run eval:migrate` | 初始化或迁移评测存储 |
+| `npm run eval:seed` | 写入固定评测案例 |
+
+提交前建议执行：
+
+```bash
+npm test
+npm run lint
+npm run build
+npm run security:scan
+```
 
 ## 技术栈
 
-- Next.js
-- React
+- Next.js 16（App Router）
+- React 19
 - TypeScript
-- Tailwind CSS
+- Tailwind CSS 4
+- PostgreSQL / 本地 JSON 双存储适配
+- DeepSeek 文本模型
+- 火山引擎 Ark 视觉模型
+- Node.js 原生测试运行器
 
-## 产品复盘
+## 项目结构
 
-### 背景
+```text
+app/                    页面与 Route Handlers
+components/             创作台、抽屉、看板和 Agent 组件
+hooks/                  历史、收藏、分析与创作教练状态
+lib/generation/         Hook 生成与结构化输出校验
+lib/agent/              创作教练、运营 Agent、配额和持久化
+lib/evaluation/         离线评测领域逻辑、权限、报告与导出
+db/migrations/          PostgreSQL 评测系统迁移
+eval/                   评测脚本与结果模板
+scripts/                密钥扫描与本地开发辅助脚本
+docs/                   产品、设计、评测与 Agent 说明
+```
 
-短视频和图文创作者在多平台分发时，常见痛点有三类：
+## 进一步阅读
 
-1. 开头 3 秒吸引力不足，用户没有停留动机。
-2. 平台语气难迁移，同一主题在小红书、抖音、B站、YouTube、X 上需要不同表达。
-3. 灵感难复用，生成过的好开头没有沉淀成可再次调用的资产。
+- [创作教练 Agent：架构、安全、评测与发布](docs/creative-coach-agent.md)
+- [离线评测系统说明](docs/evaluation-system.md)
+- [运营分析 Agent 实施说明](docs/codex/add-ops-agent.md)
+- [AI 治理说明](docs/product/ai-governance.md)
+- [指标字典](docs/product/metrics-dictionary.md)
+- [业务闭环](docs/product/business-chain.md)
 
-### 核心路径
+## 说明
 
-AI Hook Lab 定义了“主题输入 - 平台选择 - 多版 Hook 生成 - 评分推荐 - 收藏复用”的主路径。用户输入主题，选择平台和内容类型，可选填写目标用户、情绪风格、字数限制。系统一次生成 10 条不同风格 Hook，并给出评分、推荐理由、bad case 标签和生成分析。
-
-### Prompt 设计
-
-结构化 Prompt 将 `platform`、`topic`、`contentType`、`targetAudience`、`emotionTone`、`wordLimit` 映射到模型输出。输出字段包含 Hook 文案、风格标签、四维评分、综合点击欲望评分、推荐理由和整体分析。推荐理由要求引用具体词句，避免“运用了悬念手法”这类空泛套话。
-
-### 评分体系
-
-评分包含四个维度：
-
-- 冲击力：前 3 秒是否制造信息差、冲突或情绪张力。
-- 平台匹配：语气、节奏、词汇是否像该平台原生内容。
-- 可操作性：读者是否能预期后续内容价值。
-- 传播力：是否具备收藏、截图、引用或转发价值。
-
-综合分用于排序和快速比较，四维评分用于解释为什么某条 Hook 更值得采用。
-
-### 资产沉淀
-
-历史记录保存每次生成结果，收藏夹沉淀高价值 Hook。结果卡片支持复制、收藏、标记已采用和平台适配满意度评分，让工具从“一次性生成器”转为可复盘的创作资产工作台。
-
-### 评估指标
-
-- 生成完成率 = 成功生成次数 / 发起生成次数
-- 收藏率 = 收藏 Hook 数 / 生成 Hook 数
-- 采用率 = 标记采用 Hook 数 / 生成 Hook 数
-- 平台适配满意度 = 用户对 Hook 平台匹配程度的 1-5 分均值
-- Bad case 分布 = 标题过泛、平台语气不匹配、评分理由空泛、过长、标题党风险
-
-### Bad Case 迭代
-
-Demo 测试重点观察 `too_generic`、`platform_mismatch`、`weak_reasoning`、`too_long`、`clickbait_risk`。后续通过 Prompt 约束、示例补充和输出格式限制持续迭代。
-
-### 外部 Skill 参考
-
-本项目不安装外部 GitHub skills，只参考其评测和 Prompt 优化思路：
-
-- `eval-audit` / `write-judge-prompt`：用于把主观质量拆成可判定评测项。
-- `skill-optimizer`：用于检查技能/指令是否过长、触发条件是否清晰。
-- `advanced-evaluation`：用于设计多轮评测和 bad case 复盘流程。
+模型评分用于解释和排序候选，不等于真实点击率、收藏率或传播效果。正式的 Prompt 升级判断应以完整离线评测、人工盲评和明确的数据来源为依据。
