@@ -68,7 +68,7 @@ export const OPS_TOOL_DEFINITIONS: OpsToolDefinition[] = [
   },
   {
     type: "function", risk: "organization_read", timeoutMs: 10_000, maxResultChars: 16_000,
-    function: { name: "comparePromptVersions", description: "比较两个 Prompt 的受限文本差异，以及同一已完成批次中的 head-to-head 表现。禁止跨不同批次拼接指标。", parameters: objectSchema({
+    function: { name: "comparePromptVersions", description: "比较两个 Prompt 的受限文本差异（仅显示新增/删除行，不检测行内修改），以及同一已完成批次中的 head-to-head 表现。禁止跨不同批次拼接指标。", parameters: objectSchema({
       versionA: { type: "string", minLength: 1, maxLength: 100 },
       versionB: { type: "string", minLength: 1, maxLength: 100 },
     }, ["versionA", "versionB"]) },

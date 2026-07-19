@@ -4,9 +4,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { summarizeDashboardEvents } from "../dashboardStore.ts";
-import type { EvaluationState } from "../evaluation/types.ts";
-import type { EvaluationUser } from "../evaluation/types.ts";
+import { summarizeDashboardEvents } from "../dashboardStore";
+import type { EvaluationState } from "../evaluation/types";
+import type { EvaluationUser } from "../evaluation/types";
 import { createOpsAgentHttpHandlers } from "./ops-http.ts";
 import { createDeepSeekOpsProvider, type OpsProvider, type OpsProviderMessage } from "./ops-provider.ts";
 import { OPS_AGENT_EVAL_CASES } from "./ops-evaluation.ts";
@@ -78,6 +78,30 @@ test("DeepSeek provider uses native tools and preserves tool call ids", async ()
   assert.equal(result.toolCalls[0]?.id, "call-7");
   assert.equal(result.assistantMessage.tool_calls?.[0]?.function.name, "listEvaluationRuns");
   assert.ok(Array.isArray(requestBody?.tools));
+  assert.equal(requestBody?.response_format, undefined);
+
+  const finalProvider = createDeepSeekOpsProvider({ apiKey: "test-key", fetch: async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body));
+    return new Response(JSON.stringify({ choices: [{ message: { content: '{"status":"partial"}' } }] }), { status: 200, headers: { "Content-Type": "application/json" } });
+  } });
+  await finalProvider.complete({ messages: [{ role: "user", content: "return json" }], tools: [] });
+  assert.deepEqual(requestBody?.response_format, { type: "json_object" });
+
+  let fetchCalls = 0;
+  const abortedProvider = createDeepSeekOpsProvider({
+    apiKey: "test-key",
+    fetch: async () => {
+      fetchCalls += 1;
+      return new Response("unexpected", { status: 500 });
+    },
+  });
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(
+    () => abortedProvider.complete({ messages: [{ role: "user", content: "runs" }], tools: [], signal: controller.signal }),
+    (error: unknown) => error instanceof Error && error.name === "OpsProviderError" && (error as { code?: string }).code === "timeout",
+  );
+  assert.equal(fetchCalls, 0);
 });
 
 test("ops service executes a native tool loop and persists owner-scoped evidence", async () => {

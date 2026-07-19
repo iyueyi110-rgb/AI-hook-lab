@@ -50,6 +50,7 @@ export function createDeepSeekOpsProvider(options: {
   return {
     async complete(input) {
       if (!apiKey) throw new OpsProviderError("missing_key");
+      if (input.signal?.aborted) throw new OpsProviderError("timeout");
       const controller = new AbortController();
       const abort = () => controller.abort();
       input.signal?.addEventListener("abort", abort, { once: true });
@@ -58,7 +59,9 @@ export function createDeepSeekOpsProvider(options: {
         const toolFields = input.tools.length ? {
           tools: input.tools.map(({ type, function: fn }) => ({ type, function: fn })),
           tool_choice: "auto",
-        } : {};
+        } : {
+          response_format: { type: "json_object" as const },
+        };
         const response = await fetcher(DEEPSEEK_CHAT_COMPLETIONS, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },

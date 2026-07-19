@@ -144,7 +144,7 @@ npm run security:scan
 
 ```dotenv
 OPS_AGENT_ENABLED=true
-DEEPSEEK_API_KEY=...
+DEEPSEEK_API_KEY=<your_deepseek_api_key>
 DATABASE_URL=...
 ```
 

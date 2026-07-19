@@ -73,7 +73,7 @@ function errorResponse(error: unknown): Response {
     const message = cause.code === "missing_key" ? "DEEPSEEK_API_KEY 未配置" : cause.code === "rate_limit" ? "AI 服务请求过于频繁" : cause.code === "timeout" ? "AI 服务响应超时" : "AI 服务暂时不可用";
     return json({ error: cause.code, message, retryable: cause.code !== "missing_key" && cause.code !== "auth", ...context }, status, cause.code === "rate_limit" ? { "Retry-After": "30" } : undefined);
   }
-  if (cause instanceof DatabaseNotConfiguredError || (cause instanceof Error && cause.message.includes("生产环境数据库未配置"))) return json({ error: "database_unavailable", message: "生产环境数据库未配置", retryable: false, ...context }, 503);
+  if (cause instanceof DatabaseNotConfiguredError) return json({ error: "database_unavailable", message: "生产环境数据库未配置", retryable: false, ...context }, 503);
   return json({ error: "internal_error", message: "运营分析 Agent 暂时无法处理请求", retryable: true, ...context }, 500);
 }
 

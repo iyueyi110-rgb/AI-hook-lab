@@ -3,7 +3,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 
-import { getConfiguredDatabaseUrl, getPersistenceMode } from "../persistence";
+import { DatabaseNotConfiguredError, getConfiguredDatabaseUrl, getPersistenceMode } from "../persistence";
 import type { OpsAgentSession } from "./ops-types";
 
 const SESSION_TTL_MS = 24 * 60 * 60 * 1_000;
@@ -155,7 +155,7 @@ let repository: OpsAgentRepository | undefined;
 export function getOpsAgentRepository(): OpsAgentRepository {
   if (repository) return repository;
   const mode = getPersistenceMode();
-  if (mode === "unavailable") throw new Error("生产环境数据库未配置");
+  if (mode === "unavailable") throw new DatabaseNotConfiguredError();
   const databaseUrl = getConfiguredDatabaseUrl();
   repository = databaseUrl ? new PostgresOpsAgentRepository(new Pool({ connectionString: databaseUrl, max: 3 })) : new JsonOpsAgentRepository();
   return repository;
