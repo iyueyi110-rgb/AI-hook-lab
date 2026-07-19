@@ -36,6 +36,7 @@ export interface GenerateCandidatesInput extends ProviderGenerationInput {
   apiKey?: string;
   fetch?: typeof globalThis.fetch;
   timeoutMs?: number;
+  now?: () => number;
 }
 
 export interface GenerateCandidatesResult {
@@ -169,7 +170,11 @@ function withAttempts(error: GenerationError, attempts: number): GenerationError
   return new GenerationError(error.code, { attempts, status: error.status });
 }
 
-function createDeadline(controller: AbortController, timeoutMs: number): {
+function createDeadline(
+  controller: AbortController,
+  deadlineAt: number,
+  now: () => number,
+): {
   promise: Promise<never>;
   clear: () => void;
 } {
@@ -178,7 +183,7 @@ function createDeadline(controller: AbortController, timeoutMs: number): {
     timeout = setTimeout(() => {
       controller.abort();
       reject(new GenerationError("timeout"));
-    }, timeoutMs);
+    }, Math.max(0, deadlineAt - now()));
   });
 
   return {
@@ -203,10 +208,12 @@ export async function generateCandidates(
     });
   const field = input.candidateField ?? "hooks";
   const attemptsAllowed = retryLimit(input.maxRetries) + 1;
+  const now = input.now ?? (() => performance.now());
+  const deadlineAt = now() + (input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
 
   for (let attempt = 1; attempt <= attemptsAllowed; attempt += 1) {
     const controller = new AbortController();
-    const deadline = createDeadline(controller, input.timeoutMs ?? DEFAULT_TIMEOUT_MS);
+    const deadline = createDeadline(controller, deadlineAt, now);
     try {
       const generated = await Promise.race([
         Promise.resolve().then(() =>

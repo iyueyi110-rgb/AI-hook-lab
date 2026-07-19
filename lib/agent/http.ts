@@ -15,6 +15,7 @@ import {
 import {
   AgentInputError,
   AgentProviderError,
+  DEFAULT_AGENT_TURN_TIMEOUT_MS,
   MAX_AGENT_MESSAGE_LENGTH,
   createCreativeCoachService,
   type CreativeCoachService,
@@ -179,9 +180,16 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
       ready = repository.initialize();
       service = createCreativeCoachService({
         repository,
-        generate: (request) => generateCoachHooks(request, { apiKey: env.DEEPSEEK_API_KEY }),
-        decideBriefPatch: (request) => decideBriefPatch(request, { apiKey: env.DEEPSEEK_API_KEY }),
+        generate: (request, execution) => generateCoachHooks(request, {
+          apiKey: env.DEEPSEEK_API_KEY,
+          timeoutMs: execution.timeoutMs,
+        }),
+        decideBriefPatch: (request, execution) => decideBriefPatch(request, {
+          apiKey: env.DEEPSEEK_API_KEY,
+          timeoutMs: execution.timeoutMs,
+        }),
         analyzeImage: (file) => analyzeImageFile(file, { apiKey: env.ARK_API_KEY, model: env.ARK_MODEL_ID }),
+        turnTimeoutMs: DEFAULT_AGENT_TURN_TIMEOUT_MS,
       });
     }
     if (ready) await ready;

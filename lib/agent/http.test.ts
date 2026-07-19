@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { GenerateResponse } from "../types.ts";
@@ -220,4 +221,21 @@ test("maps unavailable database connections to a structured 503", async () => {
   const response = await unavailable.createRun(jsonRequest("/api/agent/runs", { brief }));
   assert.equal(response.status, 503);
   assert.deepEqual(Object.keys(await response.json()).sort(), ["error", "message"]);
+});
+
+test("production model wiring shares the Agent turn budget and the route window is larger", async () => {
+  const serviceSource = await readFile(new URL("./service.ts", import.meta.url), "utf8");
+  const httpSource = await readFile(new URL("./http.ts", import.meta.url), "utf8");
+  const routeSource = await readFile(
+    new URL("../../app/api/agent/runs/[runId]/turns/route.ts", import.meta.url),
+    "utf8",
+  );
+  const turnTimeout = serviceSource.match(/export const DEFAULT_AGENT_TURN_TIMEOUT_MS\s*=\s*([\d_]+)/);
+  const routeDuration = routeSource.match(/export const maxDuration\s*=\s*(\d+)/);
+
+  assert.ok(turnTimeout, "Agent service must export its turn timeout contract");
+  assert.ok(routeDuration, "turn route must export a literal maxDuration");
+  assert.ok(Number(routeDuration[1]) * 1_000 > Number(turnTimeout[1]!.replaceAll("_", "")));
+  assert.match(httpSource, /generate:\s*\(request,\s*execution\)\s*=>[\s\S]*?generateCoachHooks\(request,\s*\{[^}]*timeoutMs:\s*execution\.timeoutMs/);
+  assert.match(httpSource, /decideBriefPatch:\s*\(request,\s*execution\)\s*=>[\s\S]*?decideBriefPatch\(request,\s*\{[^}]*timeoutMs:\s*execution\.timeoutMs/);
 });

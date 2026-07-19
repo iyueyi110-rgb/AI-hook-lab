@@ -5,6 +5,7 @@ import path from "node:path";
 import test from "node:test";
 
 import { GenerationError } from "../generation/service.ts";
+import { generateCoachHooks } from "../generation/coach.ts";
 import { collectCoachToolEvents } from "../creativeCoachClient.ts";
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
 import { JsonAgentRepository, MemoryAgentRepository, type AgentRepository } from "./repository.ts";
@@ -56,12 +57,13 @@ function generated(request: CoachGenerationRequest): GenerateResponse {
 }
 
 function service(overrides: {
-  generate?: (request: CoachGenerationRequest) => Promise<GenerateResponse>;
+  generate?: (request: CoachGenerationRequest, options?: { timeoutMs: number }) => Promise<GenerateResponse>;
   analyzeImage?: (file: File) => Promise<ImageAnalysisResult>;
-  decideBriefPatch?: (input: { message: string; missingField: "topic" | "platform" | "contentType" }) => Promise<Record<string, unknown>>;
+  decideBriefPatch?: (input: { message: string; missingField: "topic" | "platform" | "contentType" }, options?: { timeoutMs: number }) => Promise<Record<string, unknown>>;
   repository?: AgentRepository;
   now?: () => Date;
   operationLeaseMs?: number;
+  turnTimeoutMs?: number;
   authorizeTool?: (status: AgentRunStatus, tool: ToolName) => void;
 } = {}) {
   let sequence = 0;
@@ -78,6 +80,7 @@ function service(overrides: {
     decideBriefPatch: overrides.decideBriefPatch,
     now: overrides.now ?? (() => new Date("2026-07-18T00:00:00.000Z")),
     operationLeaseMs: overrides.operationLeaseMs,
+    turnTimeoutMs: overrides.turnTimeoutMs,
     authorizeTool: overrides.authorizeTool,
     id: (prefix) => `${prefix}-${++sequence}`,
   });
@@ -680,6 +683,74 @@ test("persists recoverable provider failures and retry resumes the interrupted g
   assert.equal(recovered.run.revision, 4);
   assert.equal(recovered.candidates.length, 10);
   assert.equal(calls, 2);
+});
+
+test("bounds a hanging coach repair and persists a recoverable generation failure immediately", async () => {
+  let attempts = 0;
+  let forwardedTimeoutMs: number | undefined;
+  const provider = {
+    async generate() {
+      attempts += 1;
+      if (attempts === 1) return { hooks: [] };
+      return new Promise<never>(() => undefined);
+    },
+  };
+  const coach = service({
+    turnTimeoutMs: 20,
+    generate: async (request, options) => {
+      forwardedTimeoutMs = options?.timeoutMs;
+      return generateCoachHooks(request, {
+        provider,
+        timeoutMs: options?.timeoutMs ?? 20,
+      });
+    },
+  });
+  const created = await coach.createRun(undefined, { brief: completeBrief });
+  let failure: AgentProviderError | undefined;
+
+  try {
+    await coach.submitTurn(created.sessionToken, created.response.run.id, 0, { type: "confirm_brief" });
+  } catch (error) {
+    if (error instanceof AgentProviderError) failure = error;
+  }
+
+  const persisted = await coach.getRun(created.sessionToken, created.response.run.id);
+  assert.equal(failure?.causeCode, "timeout");
+  assert.equal(attempts, 2);
+  assert.ok(forwardedTimeoutMs !== undefined && forwardedTimeoutMs > 0 && forwardedTimeoutMs <= 20);
+  assert.equal(persisted.run.status, "failed");
+  assert.equal(persisted.run.recoverable, true);
+  assert.equal(persisted.run.resumeStatus, "generating");
+  assert.equal(persisted.run.activeOperation, undefined);
+});
+
+test("bounds a hanging decision call and completes deterministic fallback through CAS", async () => {
+  let forwardedTimeoutMs: number | undefined;
+  const coach = service({
+    turnTimeoutMs: 15,
+    decideBriefPatch: async (_request, options) => {
+      forwardedTimeoutMs = options?.timeoutMs;
+      await new Promise((resolve) => setTimeout(resolve, 80));
+      return { platform: "douyin" };
+    },
+  });
+  const created = await coach.createRun(undefined, {
+    brief: { topic: "AI weekly report", contentType: "video" },
+  });
+  const startedAt = performance.now();
+
+  const response = await coach.submitTurn(created.sessionToken, created.response.run.id, 0, {
+    type: "message",
+    text: "not a platform",
+  });
+  const persisted = await coach.getRun(created.sessionToken, created.response.run.id);
+
+  assert.ok(performance.now() - startedAt < 50);
+  assert.ok(forwardedTimeoutMs !== undefined && forwardedTimeoutMs > 0 && forwardedTimeoutMs <= 15);
+  assert.equal(response.run.status, "understanding");
+  assert.equal(response.run.activeOperation, undefined);
+  assert.equal(persisted.run.activeOperation, undefined);
+  assert.equal(persisted.run.revision, response.run.revision);
 });
 
 test("analyzes images without storing raw bytes and preserves explicit brief fields", async () => {

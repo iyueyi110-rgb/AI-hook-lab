@@ -223,6 +223,40 @@ test("returns timeout at the deadline when an injected provider ignores its abor
   assert.ok(performance.now() - startedAt < 100);
 });
 
+test("shares one total timeout window across an invalid initial call and a hanging repair", async () => {
+  let attempts = 0;
+  let monotonicTime = 0;
+  const provider: GenerationProvider = {
+    async generate() {
+      attempts += 1;
+      if (attempts === 1) {
+        monotonicTime = 95;
+        return payload(2);
+      }
+      return new Promise<never>(() => undefined);
+    },
+  };
+  const startedAt = performance.now();
+
+  await assert.rejects(
+    generateCandidates({
+      promptBundle,
+      expectedCount: 3,
+      provider,
+      timeoutMs: 100,
+      now: () => monotonicTime,
+      maxRetries: 1,
+    }),
+    (error: unknown) =>
+      error instanceof GenerationError &&
+      error.code === "timeout" &&
+      error.attempts === 2
+  );
+
+  assert.equal(attempts, 2);
+  assert.ok(performance.now() - startedAt < 60);
+});
+
 test("classifies an HTTP 200 response with empty model content separately", async () => {
   await assert.rejects(
     createDeepSeekProvider({

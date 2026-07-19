@@ -29,6 +29,7 @@ import type { AgentCommand, AgentRunStatus, Candidate, CreativeBrief, MemoryKey,
 
 export const MAX_AGENT_MESSAGE_LENGTH = 2_000;
 export const DEFAULT_AGENT_OPERATION_LEASE_MS = 120_000;
+export const DEFAULT_AGENT_TURN_TIMEOUT_MS = 30_000;
 
 export interface CoachGenerationRequest {
   kind: "initial" | "rewrite" | "regenerate";
@@ -37,6 +38,10 @@ export interface CoachGenerationRequest {
   sourceCandidate?: Candidate;
   instruction?: string;
   reason?: string;
+}
+
+export interface AgentExecutionOptions {
+  timeoutMs: number;
 }
 
 export type CoachRunState = Omit<StoredAgentRun, "creatorSessionId">;
@@ -81,16 +86,18 @@ export class AgentProviderError extends Error {
 
 export interface CreativeCoachDependencies {
   repository: AgentRepository;
-  generate: (request: CoachGenerationRequest) => Promise<GenerateResponse>;
+  generate: (request: CoachGenerationRequest, execution: AgentExecutionOptions) => Promise<GenerateResponse>;
   analyzeImage: (file: File) => Promise<ImageAnalysisResult>;
   decideBriefPatch?: (request: {
     message: string;
     missingField: "topic" | "platform" | "contentType";
     currentBrief: Partial<CreativeBrief>;
-  }) => Promise<Record<string, unknown>>;
+  }, execution: AgentExecutionOptions) => Promise<Record<string, unknown>>;
   now?: () => Date;
+  monotonicNow?: () => number;
   id?: (prefix: string) => string;
   operationLeaseMs?: number;
+  turnTimeoutMs?: number;
   authorizeTool?: (status: StoredAgentRun["status"], tool: ToolName) => void;
 }
 
@@ -295,9 +302,33 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   const now = dependencies.now ?? (() => new Date());
   const id = dependencies.id ?? defaultId;
   const authorizeTool = dependencies.authorizeTool ?? assertToolAllowed;
+  const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
   const operationLeaseMs = Number.isFinite(dependencies.operationLeaseMs) && dependencies.operationLeaseMs! > 0
     ? dependencies.operationLeaseMs!
     : DEFAULT_AGENT_OPERATION_LEASE_MS;
+  const turnTimeoutMs = Number.isFinite(dependencies.turnTimeoutMs) && dependencies.turnTimeoutMs! > 0
+    ? dependencies.turnTimeoutMs!
+    : DEFAULT_AGENT_TURN_TIMEOUT_MS;
+
+  async function withinTurnDeadline<T>(
+    deadlineAt: number,
+    operation: (execution: AgentExecutionOptions) => Promise<T>,
+  ): Promise<T> {
+    const timeoutMs = Math.max(0, Math.ceil(deadlineAt - monotonicNow()));
+    if (timeoutMs === 0) throw new GenerationError("timeout");
+    let timeout: ReturnType<typeof setTimeout>;
+    const deadline = new Promise<never>((_, reject) => {
+      timeout = setTimeout(() => reject(new GenerationError("timeout")), timeoutMs);
+    });
+    try {
+      return await Promise.race([
+        Promise.resolve().then(() => operation({ timeoutMs })),
+        deadline,
+      ]);
+    } finally {
+      clearTimeout(timeout!);
+    }
+  }
 
   function activeOperation(kind: NonNullable<StoredAgentRun["activeOperation"]>["kind"], timestamp: string): NonNullable<StoredAgentRun["activeOperation"]> {
     return {
@@ -390,7 +421,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     });
   }
 
-  async function completeGeneration(ownerId: string, runId: string, request: CoachGenerationRequest, revision: number, operationId: string): Promise<CoachRunResponse> {
+  async function completeGeneration(ownerId: string, runId: string, request: CoachGenerationRequest, revision: number, operationId: string, deadlineAt: number): Promise<CoachRunResponse> {
     const generationTool = request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
     const reservedRun = findOwnedRun(await repository.read(), runId, ownerId);
     assertExpectedRevision(reservedRun, revision);
@@ -398,7 +429,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     assertAuthorizationTicket(reservedRun, operationId, "reviewing", "compare_candidates");
     let candidates: Candidate[];
     try {
-      const generated = await dependencies.generate(request);
+      const generated = await withinTurnDeadline(deadlineAt, (execution) => dependencies.generate(request, execution));
       if (generated.hooks.length !== request.count) throw new GenerationError("invalid_count");
       candidates = generated.hooks.map(toCandidate);
       if (candidates.some((candidate) => !candidate.text)) throw new GenerationError("invalid_json");
@@ -516,6 +547,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     },
 
     async submitTurn(sessionToken: string | undefined, runId: string, expectedRevision: number, command: AgentCommand): Promise<CoachRunResponse> {
+      const deadlineAt = monotonicNow() + turnTimeoutMs;
       if (command.type === "message" && command.text.length > MAX_AGENT_MESSAGE_LENGTH) throw new AgentInputError("Message is too long");
       if (command.type === "message") assertSafeText(command.text, "message", MAX_AGENT_MESSAGE_LENGTH);
       if (command.type === "rewrite_candidate") assertSafeText(command.instruction, "instruction", 1_000);
@@ -685,7 +717,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       if (prepared.kind === "decision") {
         let patch: Record<string, unknown> = prepared.directPatch;
         try {
-          const proposed = await dependencies.decideBriefPatch!(prepared.request);
+          const proposed = await withinTurnDeadline(deadlineAt, (execution) => dependencies.decideBriefPatch!(prepared.request, execution));
           assertSafeBriefInput(proposed);
           patch = proposed;
         } catch {
@@ -703,7 +735,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           return asResponse(run, messages);
         });
       }
-      return completeGeneration(owner.session.id, runId, prepared.request, prepared.revision, prepared.operationId);
+      return completeGeneration(owner.session.id, runId, prepared.request, prepared.revision, prepared.operationId, deadlineAt);
     },
 
     async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File): Promise<CoachRunResponse> {
