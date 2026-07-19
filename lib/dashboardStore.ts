@@ -16,6 +16,10 @@ export interface DashboardFeedbackFilters {
   platform?: string;
   promptVersion?: string;
   trigger?: string;
+  /** Inclusive RFC 3339 lower bound. */
+  from?: string;
+  /** Exclusive RFC 3339 upper bound. */
+  to?: string;
 }
 
 export type DashboardEventType =
@@ -693,8 +697,13 @@ export function summarizeDashboardEvents(
   origin: DashboardDataOrigin = "real_user",
   feedbackFilters: DashboardFeedbackFilters = {},
 ): DashboardSummary {
+  const fromMs = feedbackFilters.from ? Date.parse(feedbackFilters.from) : undefined;
+  const toMs = feedbackFilters.to ? Date.parse(feedbackFilters.to) : undefined;
   const events = allEvents.filter((event) => {
     if (event.dataOrigin !== origin) return false;
+    const timestampMs = Date.parse(event.timestamp);
+    if (fromMs !== undefined && timestampMs < fromMs) return false;
+    if (toMs !== undefined && timestampMs >= toMs) return false;
     if (feedbackFilters.platform && event.payload?.platform !== feedbackFilters.platform) return false;
     if (
       feedbackFilters.promptVersion &&

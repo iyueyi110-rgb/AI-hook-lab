@@ -135,6 +135,22 @@ test("dashboard feedback filters narrow platform, prompt version and trigger", (
   assert.deepEqual(summary.feedback.reasonDistribution, { too_generic: 1 });
 });
 
+test("dashboard time window is inclusive at from and exclusive at to", () => {
+  const events: DashboardEvent[] = [
+    { id: "before", type: "generation_start", timestamp: "2026-07-01T23:59:59.999Z", dataOrigin: "real_user" },
+    { id: "from", type: "generation_start", timestamp: "2026-07-02T00:00:00.000Z", dataOrigin: "real_user" },
+    { id: "inside", type: "generation_complete", timestamp: "2026-07-03T00:00:00.000Z", dataOrigin: "real_user", payload: { hookCount: 3 } },
+    { id: "to", type: "generation_complete", timestamp: "2026-07-04T00:00:00.000Z", dataOrigin: "real_user", payload: { hookCount: 9 } },
+  ];
+  const summary = summarizeDashboardEvents(events, "real_user", {
+    from: "2026-07-02T00:00:00.000Z",
+    to: "2026-07-04T00:00:00.000Z",
+  });
+  assert.equal(summary.totals.events, 2);
+  assert.equal(summary.totals.generationsStarted, 1);
+  assert.equal(summary.totals.hooksGenerated, 3);
+});
+
 test("feedback response rate only links submissions to prompts recorded as shown", () => {
   const events: DashboardEvent[] = [
     { id: "1", type: "creator_feedback", timestamp: "2026-07-01T00:00:00Z", dataOrigin: "real_user", payload: { promptId: "shown-only", status: "shown", trigger: "explicit_batch_reject", scope: "batch", taskId: "t1" } },
