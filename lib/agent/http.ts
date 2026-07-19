@@ -69,8 +69,13 @@ function safeSecretEqual(supplied: string, expected: string): boolean {
   return timingSafeEqual(left, right);
 }
 
+function usableSecret(value: string | undefined): string {
+  const secret = value?.trim() ?? "";
+  return /^(replace_me|change_me|your_api_key)$/i.test(secret) ? "" : secret;
+}
+
 function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
-  const secret = env.AGENT_IP_HASH_SECRET?.trim() || (production ? "" : "creative-coach-development-ip-hash");
+  const secret = usableSecret(env.AGENT_IP_HASH_SECRET) || (production ? "" : "creative-coach-development-ip-hash");
   if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
   const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
   const address = forwarded || request.headers.get("x-real-ip")?.trim() || "unknown";
@@ -309,7 +314,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
     },
     async cleanup(request: Request): Promise<Response> {
       return handle(async () => {
-        const expected = env.AGENT_CLEANUP_TOKEN?.trim();
+        const expected = usableSecret(env.AGENT_CLEANUP_TOKEN);
         if (!expected) return json({ error: "not_found", message: "Not found" }, 404);
         const authorization = request.headers.get("authorization") ?? "";
         const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";

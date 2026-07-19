@@ -297,6 +297,7 @@ test("migration runner serializes upgrades and records schema version without a 
   const client = {
     async query(sql: string) {
       queries.push(sql);
+      if (sql.startsWith("SELECT to_regclass")) return { rows: [{ name: null }] };
       if (sql.startsWith("SELECT payload FROM agent_state")) return { rows: [] };
       return { rows: [] };
     },
@@ -310,6 +311,20 @@ test("migration runner serializes upgrades and records schema version without a 
   assert.equal(queries.at(-1), "COMMIT");
   assert.equal(released, true);
   assert.equal(AGENT_SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS/g)?.length, 8);
+
+  const existingQueries: string[] = [];
+  const existingClient = {
+    async query(sql: string) {
+      existingQueries.push(sql);
+      if (sql.startsWith("SELECT to_regclass")) return { rows: [{ name: "agent_state" }] };
+      if (sql.startsWith("SELECT payload FROM agent_state")) return { rows: [{ payload: { databaseVersion: 2 } }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+  await runAgentMigrations({ async connect() { return existingClient as never; } });
+  assert.equal(existingQueries.some((query) => query.includes("CREATE TABLE IF NOT EXISTS")), false);
+  assert.equal(existingQueries.some((query) => query.includes("WITH legacy AS")), false);
 });
 
 test("tool call projection embeds the matching structured result without a ninth table", () => {

@@ -82,10 +82,15 @@ export async function runAgentMigrations(pool: Pool | MigrationPool): Promise<vo
   try {
     await client.query("BEGIN");
     await client.query("SELECT pg_advisory_xact_lock(hashtext('ai-hook-lab-agent-migrations'))");
-    // Migration 1 creates agent_state, so its marker can only be read after it.
-    await client.query(AGENT_MIGRATIONS[0]!.sql);
-    const marker = await client.query<{ payload: { databaseVersion?: number } }>("SELECT payload FROM agent_state WHERE id = '__schema__' FOR UPDATE");
-    let current = Number(marker.rows[0]?.payload?.databaseVersion ?? 1);
+    const relation = await client.query<{ name: string | null }>("SELECT to_regclass('public.agent_state')::text AS name");
+    let current = 0;
+    if (!relation.rows[0]?.name) {
+      await client.query(AGENT_MIGRATIONS[0]!.sql);
+      current = 1;
+    } else {
+      const marker = await client.query<{ payload: { databaseVersion?: number } }>("SELECT payload FROM agent_state WHERE id = '__schema__' FOR UPDATE");
+      current = Number(marker.rows[0]?.payload?.databaseVersion ?? 1);
+    }
     for (const migration of AGENT_MIGRATIONS) {
       if (migration.version <= current) continue;
       await client.query(migration.sql);
