@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   COACH_RUN_STORAGE_KEY,
   buildCoachEndpoint,
+  buildCoachBriefInput,
+  canEditCoachBrief,
   canSubmitCoachCommand,
   isCreativeCoachEnabled,
   loadCoachRunId,
@@ -92,17 +94,18 @@ test("a stale write refreshes once and is never replayed", async () => {
   assert.equal(refreshes, 1);
 });
 
-test("a synchronous coach write gate coalesces double clicks without aborting or replaying the write", async () => {
-  const createGate = (coachClient as unknown as { createCoachWriteGate?: () => { run<T>(operation: () => Promise<T>): Promise<T> } }).createCoachWriteGate;
+test("a synchronous coach write gate coalesces identical writes and rejects a different action", async () => {
+  const createGate = (coachClient as unknown as { createCoachWriteGate?: () => { run<T>(key: string, operation: () => Promise<T>): Promise<T> } }).createCoachWriteGate;
   assert.equal(typeof createGate, "function");
   const gate = createGate!();
   let writes = 0;
   let release!: (value: string) => void;
   const pending = new Promise<string>((resolve) => { release = resolve; });
-  const first = gate.run(async () => { writes += 1; return pending; });
-  const second = gate.run(async () => { writes += 1; return "duplicate"; });
+  const first = gate.run("run:confirm", async () => { writes += 1; return pending; });
+  const second = gate.run("run:confirm", async () => { writes += 1; return "duplicate"; });
   assert.equal(first, second);
   assert.equal(writes, 1);
+  await assert.rejects(gate.run("run:cancel", async () => "cancelled"), /already in progress/);
   release("saved");
   assert.equal(await second, "saved");
 });
@@ -130,4 +133,27 @@ test("tool analytics correlate results by callId and emit failures once", () => 
     { callId: "denied-call", status: "denied" },
   ]);
   assert.deepEqual(collect!(current, seen), []);
+});
+
+test("untouched coach defaults defer to remembered values and structured fallback stays editable", () => {
+  const form = { topic: " topic ", platform: "xiaohongshu" as const, contentType: "video" as const, targetAudience: "", emotionTone: "curious" as const, wordLimitBand: "60-80" as const };
+  const deferred = buildCoachBriefInput(form, {
+    ignoreMemory: false, platformTouched: false, emotionToneTouched: false, wordLimitTouched: false,
+    rememberedPlatform: "douyin", rememberedTone: "urgent", rememberedWordBand: "30-50",
+  });
+  assert.deepEqual(deferred, { topic: "topic", contentType: "video" });
+  const explicit = buildCoachBriefInput(form, {
+    ignoreMemory: true, platformTouched: false, emotionToneTouched: false, wordLimitTouched: false,
+    rememberedPlatform: "douyin", rememberedTone: "urgent", rememberedWordBand: "30-50",
+  });
+  assert.equal(explicit.platform, "xiaohongshu");
+  assert.equal(explicit.emotionTone, "curious");
+  assert.equal(explicit.wordLimitBand, "60-80");
+
+  const run = response(["message"]).run;
+  run.status = "understanding";
+  run.requiresFormCompletion = true;
+  assert.equal(canEditCoachBrief(run, ["message"], true), true);
+  run.requiresFormCompletion = false;
+  assert.equal(canEditCoachBrief(run, ["message"], true), false);
 });

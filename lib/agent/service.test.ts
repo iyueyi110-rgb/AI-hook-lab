@@ -357,6 +357,13 @@ test("clarifies one required field at a time and stops after two questions", asy
   assert.equal(invalid2.needsInput, true);
   assert.equal(invalid1.run.clarificationAttempts, 2);
   assert.equal(invalid2.run.clarificationAttempts, 2);
+  const structured = await coach.submitTurn(exhausted.sessionToken, exhausted.response.run.id, invalid2.run.revision, {
+    type: "message",
+    text: JSON.stringify({ topic: "完整主题", platform: "douyin", contentType: "video", emotionTone: "curious", wordLimitBand: "60-80" }),
+  });
+  assert.equal(structured.run.status, "awaiting_brief_confirmation");
+  assert.equal(structured.run.requiresFormCompletion, false);
+  assert.equal(structured.run.brief?.platform, "douyin");
 });
 
 test("uses a validated low-temperature decision patch for natural-language clarification", async () => {
@@ -440,6 +447,7 @@ test("atomically reserves one generation and invalidates the mid-operation revis
   assert.equal(callsBeforeRelease, 1);
   assert.equal(mid.run.status, "generating");
   assert.equal(mid.run.revision, 1);
+  assert.deepEqual(mid.run.activeOperation?.budget, { steps: 1, modelCalls: 2, generationCalls: 1, formatAndCountRetries: 1 });
   assert.equal(mid.allowedCommands.length, 0);
   const successful = settled.find((item): item is PromiseFulfilledResult<Awaited<ReturnType<typeof coach.submitTurn>>> => item.status === "fulfilled")!;
   assert.equal(successful.value.run.revision, 2);
@@ -875,8 +883,15 @@ test("explicit empty avoid tags override remembered tags and summaries stay curr
   const reviewed = await coach.submitTurn(first.sessionToken, first.response.run.id, 0, { type: "confirm_brief" });
   const selected = await coach.submitTurn(first.sessionToken, reviewed.run.id, reviewed.run.revision, { type: "select_candidate", candidateId: reviewed.candidates[0]!.id });
   await coach.submitTurn(first.sessionToken, reviewed.run.id, selected.run.revision, { type: "confirm_final" });
+  const remembered = await coach.createRun(first.sessionToken, { brief: { topic: "memory", contentType: "video" } });
+  assert.equal(remembered.response.run.brief?.platform, "douyin");
+  assert.ok(remembered.response.run.appliedMemoryKeys?.includes("default_platform"));
+  assert.ok(remembered.response.run.appliedMemoryKeys?.includes("preferred_tone"));
+  assert.ok(remembered.response.run.appliedMemoryKeys?.includes("word_limit_band"));
+  assert.ok(remembered.response.run.appliedMemoryKeys?.includes("avoid_badcase_tag"));
   const second = await coach.createRun(first.sessionToken, { brief: { ...completeBrief, avoidBadcaseTags: [] } });
   assert.deepEqual(second.response.run.brief?.avoidBadcaseTags, []);
+  assert.equal(second.response.run.appliedMemoryKeys?.includes("avoid_badcase_tag"), false);
   assert.equal(second.response.run.summary.status, second.response.run.status);
   assert.equal(second.response.run.summary.candidateCount, second.response.run.candidates.length);
 });

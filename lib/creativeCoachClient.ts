@@ -1,5 +1,6 @@
 import type { GenerateResponse } from "./types.ts";
-import type { AgentCommand, AgentRun, Candidate, MemoryKey, Message } from "./agent/types.ts";
+import type { AgentCommand, AgentRun, Candidate, CreativeBrief, MemoryKey, Message, WordLimitBand } from "./agent/types.ts";
+import type { ContentType, EmotionTone, Platform } from "./types.ts";
 
 export const COACH_RUN_STORAGE_KEY = "ai-hook-lab-coach-run-id";
 
@@ -47,20 +48,69 @@ export interface CoachToolEvent {
   status: "completed" | "error" | "denied" | "requested";
 }
 
+export interface CoachBriefFormState {
+  topic: string;
+  platform: Platform;
+  contentType: ContentType;
+  targetAudience: string;
+  emotionTone: EmotionTone;
+  wordLimitBand: WordLimitBand;
+  imageDescription?: string;
+}
+
+export function buildCoachBriefInput(
+  form: CoachBriefFormState,
+  options: {
+    ignoreMemory: boolean;
+    platformTouched: boolean;
+    emotionToneTouched: boolean;
+    wordLimitTouched: boolean;
+    rememberedPlatform?: string;
+    rememberedTone?: string;
+    rememberedWordBand?: string;
+  },
+): Partial<CreativeBrief> {
+  return {
+    topic: form.topic.trim(),
+    contentType: form.contentType,
+    ...((options.ignoreMemory || options.platformTouched || !options.rememberedPlatform) ? { platform: form.platform } : {}),
+    ...(form.targetAudience.trim() ? { targetAudience: form.targetAudience.trim() } : {}),
+    ...((options.ignoreMemory || options.emotionToneTouched || !options.rememberedTone) ? { emotionTone: form.emotionTone } : {}),
+    ...((options.ignoreMemory || options.wordLimitTouched || !options.rememberedWordBand) ? { wordLimitBand: form.wordLimitBand } : {}),
+    ...(form.imageDescription?.trim() ? { imageDescription: form.imageDescription.trim() } : {}),
+  };
+}
+
+export function canEditCoachBrief(run: AgentRun | undefined, allowedCommands: AgentCommand["type"][], needsInput: boolean): boolean {
+  if (!run) return true;
+  if (run.status === "awaiting_brief_confirmation") return needsInput && allowedCommands.includes("message");
+  return run.status === "understanding" && Boolean(run.requiresFormCompletion) && allowedCommands.includes("message");
+}
+
 export interface CoachWriteGate {
-  run<T>(operation: () => Promise<T>): Promise<T>;
+  run<T>(key: string, operation: () => Promise<T>): Promise<T>;
+}
+
+export class CoachWriteInFlightError extends Error {
+  constructor() {
+    super("Another creative coach action is already in progress");
+    this.name = "CoachWriteInFlightError";
+  }
 }
 
 export function createCoachWriteGate(): CoachWriteGate {
-  let active: Promise<unknown> | null = null;
+  let active: { key: string; promise: Promise<unknown> } | null = null;
   return {
-    run<T>(operation: () => Promise<T>): Promise<T> {
-      if (active) return active as Promise<T>;
+    run<T>(key: string, operation: () => Promise<T>): Promise<T> {
+      if (active) {
+        if (active.key === key) return active.promise as Promise<T>;
+        return Promise.reject(new CoachWriteInFlightError());
+      }
       const started = operation();
       const guarded = started.finally(() => {
-        if (active === guarded) active = null;
+        if (active?.promise === guarded) active = null;
       });
-      active = guarded;
+      active = { key, promise: guarded };
       return guarded;
     },
   };

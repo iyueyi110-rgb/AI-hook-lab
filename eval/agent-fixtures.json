@@ -10,7 +10,7 @@
     { "id": "rewrite_three", "evaluation": "deterministic", "evidenceTest": "offline fixtures meet the measurable acceptance thresholds through real coach behavior", "includedInMachineMetrics": true },
     { "id": "regenerate_ten", "evaluation": "deterministic", "evidenceTest": "offline fixtures meet the measurable acceptance thresholds through real coach behavior", "includedInMachineMetrics": true },
     { "id": "three_revision_stop", "evaluation": "deterministic", "evidenceTest": "enforces the three-revision ceiling and exact candidate counts", "includedInMachineMetrics": true },
-    { "id": "two_format_retries", "evaluation": "deterministic", "evidenceTest": "shared generation repairs invalid JSON or count once per Agent turn and exposes final success or failure", "includedInMachineMetrics": true },
+    { "id": "one_format_repair", "evaluation": "deterministic", "evidenceTest": "shared generation repairs invalid JSON or count once per Agent turn and exposes final success or failure", "includedInMachineMetrics": true },
     { "id": "non_improving_stop", "evaluation": "deterministic", "evidenceTest": "optimization protocol stops at three rounds or no improvement and keeps subjective quality human-owned", "includedInMachineMetrics": true },
     { "id": "refresh_recovery", "evaluation": "deterministic", "evidenceTest": "offline fixtures meet the measurable acceptance thresholds through real coach behavior", "includedInMachineMetrics": true },
     { "id": "revision_conflict", "evaluation": "deterministic", "evidenceTest": "approval, revision, ownership, retry, memory override and immediate deletion remain enforceable", "includedInMachineMetrics": true },

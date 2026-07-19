@@ -2,7 +2,8 @@ export const AGENT_BUDGET = Object.freeze({
   maxSteps: 4,
   maxModelCalls: 2,
   maxGenerationCalls: 1,
-  formatAndCountRetries: 2,
+  // Two total model calls means one initial call plus one repair.
+  formatAndCountRetries: 1,
   revisionRounds: 3,
   clarificationQuestions: 2,
   recentMessages: 20,

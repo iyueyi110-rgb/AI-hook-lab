@@ -119,6 +119,7 @@ export interface AgentRun {
   toolResults: ToolResult[];
   approvals: Approval[];
   memory: Memory;
+  appliedMemoryKeys?: MemoryKey[];
   revisionRounds: number;
   clarificationAttempts?: number;
   requiresFormCompletion?: boolean;
@@ -137,6 +138,7 @@ export interface AgentRun {
     startedAt: string;
     expiresAt?: string;
     authorizationTickets?: Array<{ status: AgentRunStatus; tool: ToolName }>;
+    budget?: import("./budget.ts").AgentTurnBudgetCounters;
   };
   recoverable?: boolean;
   resumeStatus?: Exclude<AgentRunStatus, "failed" | "completed" | "cancelled">;

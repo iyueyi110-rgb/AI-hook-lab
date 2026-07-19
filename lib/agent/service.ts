@@ -10,6 +10,14 @@ import {
 } from "../promptTemplates.ts";
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
 import { normalizeBrief } from "./brief.ts";
+import {
+  consumeStep,
+  createAgentTurnBudgetCounters,
+  recordFormatAndCountRetry,
+  recordGenerationCall,
+  recordModelCall,
+  type AgentTurnBudgetCounters,
+} from "./budget.ts";
 import { compareCandidates } from "./candidates.ts";
 import { AgentConflictError, assertExpectedRevision, getAllowedCommands, transition } from "./machine.ts";
 import { assertToolAllowed } from "./tools.ts";
@@ -236,6 +244,17 @@ function applyMemoryToBrief(input: Record<string, unknown>, entries: Array<{ key
   return result;
 }
 
+function memoryKeysAppliedToBrief(input: Record<string, unknown>, entries: Array<{ key: MemoryKey; value: string }>): MemoryKey[] {
+  return [...new Set(entries.flatMap((entry) => {
+    if (entry.key === "default_platform" && input.platform === undefined) return [entry.key];
+    if (entry.key === "preferred_tone" && input.emotionTone === undefined) return [entry.key];
+    if (entry.key === "word_limit_band" && input.wordLimitBand === undefined) return [entry.key];
+    if (entry.key === "preferred_style" && input.preferredStyle === undefined) return [entry.key];
+    if (entry.key === "avoid_badcase_tag" && !("avoidBadcaseTags" in input)) return [entry.key];
+    return [];
+  }))];
+}
+
 function assertActiveOperation(run: StoredAgentRun, operationId: string, kind: NonNullable<StoredAgentRun["activeOperation"]>["kind"]): void {
   if (!run.activeOperation || run.activeOperation.id !== operationId || run.activeOperation.kind !== kind) {
     throw new AgentConflictError("Agent operation is no longer current");
@@ -340,13 +359,30 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     }
   }
 
-  function activeOperation(kind: NonNullable<StoredAgentRun["activeOperation"]>["kind"], timestamp: string): NonNullable<StoredAgentRun["activeOperation"]> {
+  function activeOperation(kind: NonNullable<StoredAgentRun["activeOperation"]>["kind"], timestamp: string, budget?: AgentTurnBudgetCounters): NonNullable<StoredAgentRun["activeOperation"]> {
     return {
       id: id("operation"),
       kind,
       startedAt: timestamp,
       expiresAt: new Date(Date.parse(timestamp) + operationLeaseMs).toISOString(),
+      ...(budget ? { budget } : {}),
     };
+  }
+
+  function decisionTurnBudget(): AgentTurnBudgetCounters {
+    let budget = consumeStep(createAgentTurnBudgetCounters());
+    budget = recordModelCall(budget);
+    budget = recordModelCall(budget);
+    return budget;
+  }
+
+  function generationTurnBudget(): AgentTurnBudgetCounters {
+    let budget = consumeStep(createAgentTurnBudgetCounters());
+    budget = recordGenerationCall(budget);
+    budget = recordModelCall(budget);
+    budget = recordModelCall(budget);
+    budget = recordFormatAndCountRetry(budget);
+    return budget;
   }
 
   function operationExpired(run: StoredAgentRun, current: Date): boolean {
@@ -530,6 +566,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         const owner = existing ?? created!.session;
         consumeAgentQuota(state, owner, requestContext(context), "run_create", now(), quotaConfig);
         const memory = input.ignoreMemory ? { entries: [] } : listCreatorMemory(state, owner.id, now());
+        const appliedMemoryKeys = memoryKeysAppliedToBrief(input.brief ?? {}, memory.entries);
         const source = applyMemoryToBrief(input.brief ?? {}, memory.entries);
         const normalized = normalizeBrief(source, 0);
         const createdAt = now().toISOString();
@@ -552,6 +589,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           id: id("run"), creatorSessionId: owner.id, revision: 0, status, brief,
           briefDraft: brief ?? source as Partial<CreativeBrief>,
           messages, candidates: [], toolCalls: [], toolResults: [], approvals: [], memory,
+          appliedMemoryKeys,
           revisionRounds: 0, clarificationAttempts, createdAt, updatedAt: createdAt,
           summary: { messageCount: messages.length, latestMessageAt: messages.at(-1)?.createdAt, candidateCount: 0, status },
         };
@@ -605,6 +643,23 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         if (run.activeOperation) throw new AgentConflictError("An agent operation is already in flight");
 
         if (run.status === "understanding" && command.type === "message") {
+          if (run.requiresFormCompletion) {
+            let submitted: unknown;
+            try { submitted = JSON.parse(command.text); } catch { throw new AgentInputError("Complete the structured brief form before continuing"); }
+            if (!submitted || typeof submitted !== "object" || Array.isArray(submitted)) throw new AgentInputError("Structured brief must be an object");
+            assertSafeBriefInput(submitted as Record<string, unknown>);
+            const normalized = normalizeBrief(submitted as Record<string, unknown>, run.clarificationAttempts ?? 0);
+            if (normalized.kind !== "complete") throw new AgentInputError("Structured brief is incomplete or invalid");
+            run.brief = normalized.brief;
+            run.briefDraft = normalized.brief;
+            run.requiresFormCompletion = false;
+            run.status = "awaiting_brief_confirmation";
+            run.revision += 1;
+            run.updatedAt = timestamp;
+            const received = { id: id("message"), role: "assistant" as const, content: "Structured brief received. Please confirm it before generation.", createdAt: timestamp };
+            run.messages.push(received);
+            return { kind: "response" as const, response: asResponse(run, [received]) };
+          }
           const currentBrief = run.brief ?? run.briefDraft ?? {};
           const current = normalizeBrief(currentBrief, run.clarificationAttempts ?? 0);
           const missingField = current.kind === "complete" ? undefined : current.missing[0];
@@ -614,7 +669,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const directMissing = direct.kind === "complete" ? undefined : direct.missing[0];
           if (missingField && dependencies.decideBriefPatch && direct.kind !== "complete" && directMissing === missingField) {
             reserveModelQuota(state, owner.session, requestContext(context));
-            const operation = activeOperation("decision", timestamp);
+            const operation = activeOperation("decision", timestamp, decisionTurnBudget());
             const operationId = operation.id;
             run.activeOperation = operation;
             run.revision += 1;
@@ -645,7 +700,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           if (!run.pendingGeneration || !run.brief) throw new AgentConflictError("Retry context is missing");
           const pending = run.pendingGeneration;
           const sourceCandidate = pending.sourceCandidateId ? run.candidates.find((item) => item.id === pending.sourceCandidateId) : undefined;
-          const operation = activeOperation("generation", timestamp);
+          const operation = activeOperation("generation", timestamp, generationTurnBudget());
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = pending.kind === "initial" ? "generate_hooks" : pending.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
@@ -667,7 +722,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.status = transition(run.status, command);
           run.revision += 1;
           run.pendingGeneration = { kind: "initial", count: 10 };
-          const operation = activeOperation("generation", timestamp);
+          const operation = activeOperation("generation", timestamp, generationTurnBudget());
           const operationId = operation.id;
           run.activeOperation = operation;
           authorizeGenerationOperation(run, operation, "generate_hooks");
@@ -690,7 +745,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
             ? { kind: "rewrite" as const, count: 3 as const, sourceCandidateId: sourceCandidate!.id, instruction: command.instruction }
             : { kind: "regenerate" as const, count: 10 as const, reason: command.reason };
           run.pendingGeneration = pending;
-          const operation = activeOperation("generation", timestamp);
+          const operation = activeOperation("generation", timestamp, generationTurnBudget());
           const operationId = operation.id;
           run.activeOperation = operation;
           const tool: ToolName = command.type === "rewrite_candidate" ? "rewrite_hook" : "regenerate_batch";
@@ -799,7 +854,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         if (run.activeOperation) throw new AgentConflictError("An image operation is already in flight");
         run.revision += 1;
         const callId = id("tool");
-        const operation = activeOperation("image", now().toISOString());
+        const operation = activeOperation("image", now().toISOString(), consumeStep(createAgentTurnBudgetCounters()));
         const operationId = operation.id;
         run.activeOperation = operation;
         authorizeTool(run.status, "analyze_image");

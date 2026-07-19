@@ -57,7 +57,7 @@ test("exposes the fixed per-turn budgets", () => {
     maxSteps: 4,
     maxModelCalls: 2,
     maxGenerationCalls: 1,
-    formatAndCountRetries: 2,
+    formatAndCountRetries: 1,
     revisionRounds: 3,
     clarificationQuestions: 2,
     recentMessages: 20,
@@ -130,7 +130,7 @@ test("enforces executable turn budgets at boundaries and trims recent messages",
   assert.throws(() => recordModelCall(counters), AgentBudgetError);
   counters = recordGenerationCall(counters);
   assert.throws(() => recordGenerationCall(counters), AgentBudgetError);
-  for (let index = 0; index < 2; index += 1) counters = recordFormatAndCountRetry(counters);
+  counters = recordFormatAndCountRetry(counters);
   assert.throws(() => recordFormatAndCountRetry(counters), AgentBudgetError);
   const messages = Array.from({ length: 21 }, (_, index) => ({ id: String(index), role: "user" as const, content: String(index), createdAt: String(index) }));
   assert.deepEqual(trimRecentMessages(messages).map((message) => message.id), Array.from({ length: 20 }, (_, index) => String(index + 1)));

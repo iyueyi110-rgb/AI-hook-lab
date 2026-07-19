@@ -18,6 +18,7 @@ import type { AnalyticsEventType } from "@/hooks/useAnalytics";
 import { CONTENT_TYPE_CONFIG, EMOTION_TONE_CONFIG, PLATFORM_CONFIG } from "@/lib/constants";
 import type { AgentCommand, AgentRunStatus, CreativeBrief, WordLimitBand } from "@/lib/agent/types";
 import type { ContentType, EmotionTone, GenerateResponse, HookResult, Platform } from "@/lib/types";
+import { buildCoachBriefInput, canEditCoachBrief } from "@/lib/creativeCoachClient";
 
 interface CreativeCoachWorkspaceProps {
   onFinalized: (response: GenerateResponse) => void;
@@ -69,10 +70,13 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const coach = useCreativeCoach({ onFinalized, track });
   const [topic, setTopic] = React.useState("");
   const [platform, setPlatform] = React.useState<Platform>("xiaohongshu");
+  const [platformTouched, setPlatformTouched] = React.useState(false);
   const [contentType, setContentType] = React.useState<ContentType>("video");
   const [targetAudience, setTargetAudience] = React.useState("");
   const [emotionTone, setEmotionTone] = React.useState<EmotionTone>("curious");
+  const [emotionToneTouched, setEmotionToneTouched] = React.useState(false);
   const [wordLimitBand, setWordLimitBand] = React.useState<WordLimitBand>("60-80");
+  const [wordLimitTouched, setWordLimitTouched] = React.useState(false);
   const [briefEdits, setBriefEdits] = React.useState<Partial<CreativeBrief>>({});
   const [ignoreMemory, setIgnoreMemory] = React.useState(false);
   const [imageFile, setImageFile] = React.useState<File | null>(null);
@@ -91,17 +95,26 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
 
   const current = coach.response;
   const run = current?.run;
+  const rememberedPlatform = coach.memory.find((entry) => entry.key === "default_platform")?.value as Platform | undefined;
+  const rememberedTone = coach.memory.find((entry) => entry.key === "preferred_tone")?.value as EmotionTone | undefined;
+  const rememberedWordBand = coach.memory.find((entry) => entry.key === "word_limit_band")?.value as WordLimitBand | undefined;
   const allowedCommands = current?.allowedCommands ?? [];
   const needsInput = Boolean(current?.needsInput);
-  const briefEditable = !run || (run.status === "awaiting_brief_confirmation" && allowed(allowedCommands, "message") && needsInput);
+  const briefEditable = canEditCoachBrief(run, allowedCommands, needsInput);
   const candidates = React.useMemo(() => current?.candidates.map(toHook) ?? [], [current?.candidates]);
   const topIds = current?.topCandidates.map((candidate) => candidate.id) ?? [];
   const displayedTopic = run ? briefEdits.topic ?? run.briefDraft?.topic ?? "" : topic;
-  const displayedPlatform = run ? briefEdits.platform ?? run.briefDraft?.platform ?? platform : platform;
+  const displayedPlatform = run
+    ? briefEdits.platform ?? run.briefDraft?.platform ?? platform
+    : !ignoreMemory && !platformTouched && rememberedPlatform && rememberedPlatform in PLATFORM_CONFIG ? rememberedPlatform : platform;
   const displayedContentType = run ? briefEdits.contentType ?? run.briefDraft?.contentType ?? contentType : contentType;
   const displayedTargetAudience = run ? briefEdits.targetAudience ?? run.briefDraft?.targetAudience ?? "" : targetAudience;
-  const displayedEmotionTone = run ? briefEdits.emotionTone ?? run.briefDraft?.emotionTone ?? emotionTone : emotionTone;
-  const displayedWordLimitBand = run ? briefEdits.wordLimitBand ?? run.briefDraft?.wordLimitBand ?? wordLimitBand : wordLimitBand;
+  const displayedEmotionTone = run
+    ? briefEdits.emotionTone ?? run.briefDraft?.emotionTone ?? emotionTone
+    : !ignoreMemory && !emotionToneTouched && rememberedTone && rememberedTone in EMOTION_TONE_CONFIG ? rememberedTone : emotionTone;
+  const displayedWordLimitBand = run
+    ? briefEdits.wordLimitBand ?? run.briefDraft?.wordLimitBand ?? wordLimitBand
+    : !ignoreMemory && !wordLimitTouched && rememberedWordBand && WORD_BANDS.includes(rememberedWordBand) ? rememberedWordBand : wordLimitBand;
   const displayedImageDescription = run ? briefEdits.imageDescription ?? run.briefDraft?.imageDescription ?? "" : "";
   const modalOpen = coachOpen && modalViewport;
 
@@ -166,16 +179,31 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     return () => window.removeEventListener("keydown", handleDialogKey);
   }, [closeCoach, modalOpen]);
 
-  const brief = React.useMemo<Partial<CreativeBrief>>(() => ({
+  const brief = React.useMemo<Partial<CreativeBrief>>(() => buildCoachBriefInput({
+    topic: displayedTopic,
+    platform: displayedPlatform,
+    contentType: displayedContentType,
+    targetAudience: displayedTargetAudience,
+    emotionTone: displayedEmotionTone,
+    wordLimitBand: displayedWordLimitBand,
+    imageDescription: displayedImageDescription,
+  }, {
+    ignoreMemory,
+    platformTouched,
+    emotionToneTouched,
+    wordLimitTouched,
+    rememberedPlatform,
+    rememberedTone,
+    rememberedWordBand,
+  }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand, emotionToneTouched, ignoreMemory, platformTouched, rememberedPlatform, rememberedTone, rememberedWordBand, wordLimitTouched]);
+  const structuredBrief = React.useMemo<Partial<CreativeBrief>>(() => ({
+    ...brief,
     topic: displayedTopic.trim(),
     platform: displayedPlatform,
     contentType: displayedContentType,
-    targetAudience: displayedTargetAudience.trim() || "泛兴趣用户",
     emotionTone: displayedEmotionTone,
     wordLimitBand: displayedWordLimitBand,
-    avoidBadcaseTags: [],
-    ...(displayedImageDescription.trim() ? { imageDescription: displayedImageDescription.trim() } : {}),
-  }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand]);
+  }), [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand]);
 
   const start = async () => {
     if (!displayedTopic.trim() || coach.loading) return;
@@ -203,12 +231,24 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     setImageFile(null);
   };
 
+  const changeIgnoreMemory = (checked: boolean) => {
+    setIgnoreMemory(checked);
+    if (checked) {
+      if (!platformTouched) setPlatform("xiaohongshu");
+      if (!emotionToneTouched) setEmotionTone("curious");
+      if (!wordLimitTouched) setWordLimitBand("60-80");
+    }
+  };
+
   const reset = () => {
     coach.reset();
     setBriefEdits({});
     clearImage();
     setRewriteId(null);
     setRejectOpen(false);
+    setPlatformTouched(false);
+    setEmotionToneTouched(false);
+    setWordLimitTouched(false);
   };
 
   const retryImageOperation = async () => {
@@ -254,7 +294,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         </div>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <label className="text-xs font-extrabold">发布平台
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, platform: event.target.value as Platform })) : setPlatform(event.target.value as Platform)} value={displayedPlatform}>
+            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setPlatformTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, platform: event.target.value as Platform })); else setPlatform(event.target.value as Platform); }} value={displayedPlatform}>
               {(Object.keys(PLATFORM_CONFIG) as Platform[]).map((item) => <option key={item} value={item}>{PLATFORM_CONFIG[item].label}</option>)}
             </select>
           </label>
@@ -269,12 +309,12 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         </label>
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
           <label className="text-xs font-extrabold">情绪风格
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, emotionTone: event.target.value as EmotionTone })) : setEmotionTone(event.target.value as EmotionTone)} value={displayedEmotionTone}>
+            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setEmotionToneTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, emotionTone: event.target.value as EmotionTone })); else setEmotionTone(event.target.value as EmotionTone); }} value={displayedEmotionTone}>
               {(Object.keys(EMOTION_TONE_CONFIG) as EmotionTone[]).map((item) => <option key={item} value={item}>{EMOTION_TONE_CONFIG[item].label}</option>)}
             </select>
           </label>
           <label className="text-xs font-extrabold">字数区间
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, wordLimitBand: event.target.value as WordLimitBand })) : setWordLimitBand(event.target.value as WordLimitBand)} value={displayedWordLimitBand}>
+            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setWordLimitTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, wordLimitBand: event.target.value as WordLimitBand })); else setWordLimitBand(event.target.value as WordLimitBand); }} value={displayedWordLimitBand}>
               {WORD_BANDS.map((item) => <option key={item} value={item}>{item} 字</option>)}
             </select>
           </label>
@@ -293,9 +333,20 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
             <p className="mt-2 text-[10px] text-[var(--color-muted)]">如理解有偏差，请在确认简报前直接修正；生成会使用这里的内容。</p>
           </div>
         )}
+        {run?.status === "understanding" && run.requiresFormCompletion && (
+          <button
+            className="button-primary w-full"
+            disabled={coach.loading || !displayedTopic.trim() || !displayedPlatform || !displayedContentType || !allowed(allowedCommands, "message")}
+            onClick={() => void coach.submitCommand({ type: "message", text: JSON.stringify(structuredBrief) })}
+            type="button"
+          >
+            <ListChecks aria-hidden="true" size={17} weight="bold" />
+            提交完整简报
+          </button>
+        )}
         {!run && (
           <label className="flex items-start gap-2 text-xs leading-5 text-[var(--color-graphite)]">
-            <input checked={ignoreMemory} className="mt-1 accent-[var(--color-accent)]" onChange={(event) => setIgnoreMemory(event.target.checked)} type="checkbox" />
+            <input checked={ignoreMemory} className="mt-1 accent-[var(--color-accent)]" onChange={(event) => changeIgnoreMemory(event.target.checked)} type="checkbox" />
             本轮忽略已保存偏好
           </label>
         )}

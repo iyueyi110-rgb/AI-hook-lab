@@ -15,7 +15,7 @@ export const AGENT_OBJECTIVE_RUBRIC = Object.freeze({
   candidateCount: { method: "deterministic", pass: "Initial/regenerate return 10; rewrite returns 3." },
   illegalToolBlocking: { method: "deterministic", pass: "Every tool outside its exact allowed state is rejected." },
   sensitiveAnalytics: { method: "deterministic", pass: "No topic, message, Hook, image, or PII enters an Agent dashboard event." },
-  formatAndCountRetries: { method: "deterministic", maximum: 2 },
+  formatAndCountRetries: { method: "deterministic", maximum: 1 },
   revisionRounds: { method: "deterministic", maximum: 3 },
 });
 

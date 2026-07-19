@@ -309,10 +309,10 @@ export class MemoryAgentRepository implements AgentRepository {
     return task;
   }
   async initialize(): Promise<void> { return this.enqueue(async () => { normalizeState(this.state); }); }
-  async read(_scope?: AgentRepositoryScope): Promise<AgentState> {
+  async read(): Promise<AgentState> {
     return this.enqueue(async () => { normalizeState(this.state); return structuredClone(this.state); });
   }
-  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>, _scope?: AgentRepositoryScope): Promise<T> {
+  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
     return this.enqueue(async () => {
       const draft = structuredClone(this.state);
       validateAgentState(draft);
@@ -345,10 +345,10 @@ export class JsonAgentRepository implements AgentRepository {
   async initialize(): Promise<void> {
     await enqueueJson(this.filePath, async () => { await this.loadAndPersist(); });
   }
-  async read(_scope?: AgentRepositoryScope): Promise<AgentState> {
+  async read(): Promise<AgentState> {
     return enqueueJson(this.filePath, () => this.loadAndPersist());
   }
-  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>, _scope?: AgentRepositoryScope): Promise<T> {
+  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
     return enqueueJson(this.filePath, async () => {
       const state = await this.loadAndPersist();
       validateAgentState(state);

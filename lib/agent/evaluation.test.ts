@@ -111,7 +111,7 @@ test("agent evaluation inventory covers every approved coach scenario without ch
   assert.deepEqual(new Set(inventory.scenarios.map((item) => item.id)), new Set([
     "complete_brief", "missing_topic", "missing_platform", "missing_content_type",
     "image_confirm_and_correct", "initial_ten", "rewrite_three", "regenerate_ten",
-    "three_revision_stop", "two_format_retries", "non_improving_stop", "refresh_recovery",
+    "three_revision_stop", "one_format_repair", "non_improving_stop", "refresh_recovery",
     "revision_conflict", "approval_bypass", "cross_session", "provider_error_retry",
     "memory_current_request_override", "memory_delete", "hook_quality_and_top3_explanation",
   ]));
@@ -301,7 +301,7 @@ test("optimization protocol stops at three rounds or no improvement and keeps su
   assert.equal(shouldContinueAgentOptimization({ completedRounds: 1, previousScore: 0.8, currentScore: 0.8 }), false);
   assert.equal(shouldContinueAgentOptimization({ completedRounds: 1, previousScore: 0.8, currentScore: 0.7 }), false);
   assert.equal(shouldContinueAgentOptimization({ completedRounds: 1, previousScore: 0.7, currentScore: 0.8 }), true);
-  assert.equal(AGENT_OBJECTIVE_RUBRIC.formatAndCountRetries.maximum, 2);
+  assert.equal(AGENT_OBJECTIVE_RUBRIC.formatAndCountRetries.maximum, 1);
   assert.equal(AGENT_OBJECTIVE_RUBRIC.revisionRounds.maximum, 3);
   assert.equal(AGENT_HUMAN_PAIRWISE_PROTOCOL.positionSwapRequired, true);
   assert.equal(AGENT_HUMAN_PAIRWISE_PROTOCOL.modelScoreRepresentsCtr, false);

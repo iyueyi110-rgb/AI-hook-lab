@@ -5,6 +5,7 @@ import type { AgentCommand, CreativeBrief } from "@/lib/agent/types";
 import type { GenerateResponse } from "@/lib/types";
 import {
   CoachClientError,
+  CoachWriteInFlightError,
   buildCoachEndpoint,
   canSubmitCoachCommand,
   collectCoachToolEvents,
@@ -60,6 +61,9 @@ function errorView(error: unknown): CreativeCoachError {
   }
   if (error instanceof DOMException && error.name === "AbortError") {
     return { title: "请求已取消", message: "上一项操作已被新的操作替代。" };
+  }
+  if (error instanceof CoachWriteInFlightError) {
+    return { title: "已有操作正在进行", message: "请等待当前操作完成后再继续。" };
   }
   return {
     title: "网络连接失败",
@@ -159,7 +163,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     action: string,
     runId: string | undefined,
     requestFactory: (signal: AbortSignal) => Promise<Response>,
-  ) => writeGateRef.current.run(async () => {
+  ) => writeGateRef.current.run(`${runId ?? "new"}:${action}`, async () => {
       const controller = new AbortController();
       writeRequestRef.current = controller;
       setLoadingAction(action);
@@ -185,6 +189,9 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
         if (writeRequestRef.current === controller) writeRequestRef.current = null;
         if (mountedRef.current) setLoadingAction(null);
       }
+    }).catch((caught) => {
+      if (mountedRef.current) setError(errorView(caught));
+      return null;
     }), [acceptResponse, fetchRun]);
 
   const refreshMemory = React.useCallback(async () => {
@@ -238,10 +245,10 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
         ...(next.run.briefDraft?.contentType ? { contentType: next.run.briefDraft.contentType } : {}),
         memoryCount: next.run.memory.entries.length,
       });
-      if (next.run.memory.entries.length > 0) {
+      if ((next.run.appliedMemoryKeys?.length ?? 0) > 0) {
         track?.("agent_memory_applied", {
           status: next.run.status,
-          memoryCount: next.run.memory.entries.length,
+          memoryCount: next.run.appliedMemoryKeys!.length,
         });
       }
       if (next.run.status === "understanding") {
