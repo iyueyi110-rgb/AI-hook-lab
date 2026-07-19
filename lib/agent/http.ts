@@ -1,0 +1,340 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
+import { DatabaseNotConfiguredError } from "../persistence.ts";
+import { generateCoachHooks } from "../generation/coach.ts";
+import { decideBriefPatch } from "../generation/decision.ts";
+import { GenerationError } from "../generation/service.ts";
+import { analyzeImageFile, ImageAnalysisError, MAX_IMAGE_BYTES } from "../imageAnalysis.ts";
+import { AgentConflictError } from "./machine.ts";
+import {
+  AgentMemoryValidationError,
+  AgentNotFoundError,
+  CREATOR_SESSION_COOKIE,
+  CREATOR_SESSION_MAX_AGE_SECONDS,
+  CreatorSessionNotFoundError,
+  getAgentRepository,
+} from "./repository.ts";
+import {
+  AgentInputError,
+  AgentProviderError,
+  DEFAULT_AGENT_TURN_TIMEOUT_MS,
+  MAX_AGENT_MESSAGE_LENGTH,
+  createCreativeCoachService,
+  type CreativeCoachService,
+} from "./service.ts";
+import type { AgentCommand } from "./types.ts";
+import { AgentQuotaError, quotaConfigFromEnv, type AgentRequestContext } from "./quota.ts";
+
+export const MAX_AGENT_JSON_BYTES = 64 * 1024;
+
+interface HandlerOptions {
+  service?: CreativeCoachService;
+  enabled?: boolean;
+  production?: boolean;
+  env?: NodeJS.ProcessEnv;
+}
+
+class HttpError extends Error {
+  readonly status: number;
+  constructor(status: number, message: string) { super(message); this.status = status; }
+}
+
+function json(body: unknown, status = 200, headers?: HeadersInit): Response {
+  return Response.json(body, { status, headers });
+}
+
+function cookieValue(request: Request): string | undefined {
+  const raw = request.headers.get("cookie") ?? "";
+  for (const item of raw.split(";")) {
+    const [name, ...parts] = item.trim().split("=");
+    if (name === CREATOR_SESSION_COOKIE) return decodeURIComponent(parts.join("="));
+  }
+  return undefined;
+}
+
+function sessionCookie(token: string, production: boolean): string {
+  return `${CREATOR_SESSION_COOKIE}=${encodeURIComponent(token)}; Path=/; Max-Age=${CREATOR_SESSION_MAX_AGE_SECONDS}; HttpOnly; SameSite=Lax${production ? "; Secure" : ""}`;
+}
+
+function assertSameOrigin(request: Request): void {
+  const expected = new URL(request.url).origin;
+  const supplied = request.headers.get("origin");
+  if (!supplied || supplied !== expected) throw new HttpError(403, "Cross-origin mutation denied");
+}
+
+function safeSecretEqual(supplied: string, expected: string): boolean {
+  const left = createHash("sha256").update(supplied).digest();
+  const right = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(left, right);
+}
+
+function usableSecret(value: string | undefined, production = false): string {
+  const secret = value?.trim() ?? "";
+  if (!secret || /^[<'"]|[>'"]$/.test(secret) || /^(replace_me|change_me|your_api_key|your_secret|placeholder)$/i.test(secret)) return "";
+  if (production && (
+    secret.length < 32
+    || new Set(secret).size < 8
+    || /^(.{1,16})\1+$/.test(secret)
+    || /(?:0123456789|1234567890|abcdefghijklmnopqrstuvwxyz)/i.test(secret)
+  )) return "";
+  return secret;
+}
+
+function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
+  const secret = usableSecret(env.AGENT_IP_HASH_SECRET, production) || (production ? "" : "creative-coach-development-ip-hash");
+  if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
+  const headerName = (env.AGENT_TRUSTED_IP_HEADER?.trim().toLowerCase() || (production ? "x-vercel-forwarded-for" : "x-real-ip"));
+  if (!/^[a-z0-9-]{1,64}$/.test(headerName)) throw new HttpError(503, "Agent trusted IP header is invalid");
+  // Only a deployment-controlled header participates in the quota identity.
+  // Generic X-Forwarded-For is deliberately ignored unless explicitly chosen
+  // behind a proxy that overwrites it.
+  const address = request.headers.get(headerName)?.trim() || "unknown";
+  return { ipDigest: createHmac("sha256", secret).update(address).digest("hex") };
+}
+
+async function readJson(request: Request): Promise<Record<string, unknown>> {
+  const bytes = await readBoundedBody(request, MAX_AGENT_JSON_BYTES, "Request body is too large");
+  const text = new TextDecoder().decode(bytes);
+  try {
+    const parsed = JSON.parse(text);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error();
+    return parsed as Record<string, unknown>;
+  } catch { throw new HttpError(400, "Request body must be a JSON object"); }
+}
+
+async function readBoundedBody(request: Request, maxBytes: number, errorMessage: string): Promise<Uint8Array> {
+  const rawLength = request.headers.get("content-length");
+  if (rawLength !== null) {
+    const length = Number(rawLength);
+    if (Number.isFinite(length) && length > maxBytes) {
+      await request.body?.cancel("request_too_large");
+      throw new HttpError(413, errorMessage);
+    }
+  }
+  if (!request.body) return new Uint8Array();
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel("request_too_large");
+      throw new HttpError(413, errorMessage);
+    }
+    chunks.push(value);
+  }
+  const result = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+  return result;
+}
+
+function exactKeys(value: Record<string, unknown>, allowed: string[], required: string[] = []): void {
+  if (Object.keys(value).some((key) => !allowed.includes(key)) || required.some((key) => !(key in value))) {
+    throw new HttpError(400, "Request contains invalid fields");
+  }
+}
+
+function integer(value: unknown, name: string): number {
+  if (!Number.isInteger(value) || (value as number) < 0) throw new HttpError(400, `${name} must be a non-negative integer`);
+  return value as number;
+}
+
+function nonEmpty(value: unknown, name: string, max = 2_000): string {
+  if (typeof value !== "string" || !value.trim()) throw new HttpError(400, `${name} is required`);
+  if (value.length > max) throw new HttpError(413, `${name} is too long`);
+  return value;
+}
+
+function parseCommand(value: unknown): AgentCommand {
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new HttpError(400, "command is required");
+  const command = value as Record<string, unknown>;
+  if (typeof command.type !== "string") throw new HttpError(400, "command.type is required");
+  switch (command.type) {
+    case "message":
+      exactKeys(command, ["type", "text"], ["type", "text"]);
+      return { type: "message", text: nonEmpty(command.text, "message", MAX_AGENT_MESSAGE_LENGTH) };
+    case "confirm_brief": {
+      exactKeys(command, ["type", "briefPatch"], ["type"]);
+      if (command.briefPatch === undefined) return { type: "confirm_brief" };
+      if (!command.briefPatch || typeof command.briefPatch !== "object" || Array.isArray(command.briefPatch)) {
+        throw new HttpError(400, "briefPatch must be an object");
+      }
+      return { type: "confirm_brief", briefPatch: command.briefPatch } as AgentCommand;
+    }
+    case "confirm_final": case "retry":
+      exactKeys(command, ["type"], ["type"]);
+      return { type: command.type };
+    case "select_candidate":
+      exactKeys(command, ["type", "candidateId"], ["type", "candidateId"]);
+      return { type: "select_candidate", candidateId: nonEmpty(command.candidateId, "candidateId", 200) };
+    case "rewrite_candidate":
+      exactKeys(command, ["type", "candidateId", "instruction"], ["type", "candidateId"]);
+      return { type: "rewrite_candidate", candidateId: nonEmpty(command.candidateId, "candidateId", 200), ...(command.instruction === undefined ? {} : { instruction: nonEmpty(command.instruction, "instruction", 1_000) }) };
+    case "reject_batch":
+      exactKeys(command, ["type", "reason"], ["type"]);
+      return { type: "reject_batch", ...(command.reason === undefined ? {} : { reason: nonEmpty(command.reason, "reason", 1_000) }) };
+    default: throw new HttpError(400, "Unknown command type");
+  }
+}
+
+function errorResponse(error: unknown): Response {
+  if (error instanceof HttpError) return json({ error: "request_error", message: error.message }, error.status);
+  if (error instanceof AgentProviderError) return json({ ...error.response, error: error.causeCode, message: error.message }, error.status);
+  if (error instanceof AgentConflictError) return json({ error: error.code, message: error.message }, 409);
+  if (error instanceof AgentNotFoundError || error instanceof CreatorSessionNotFoundError) return json({ error: "not_found", message: "Agent run was not found" }, 404);
+  if (error instanceof AgentInputError || error instanceof AgentMemoryValidationError) return json({ error: "validation", message: error.message }, 400);
+  if (error instanceof AgentQuotaError) return json({ error: error.code, message: error.message }, 429, { "Retry-After": String(error.retryAfterSeconds) });
+  if (error instanceof ImageAnalysisError) return json({ error: error.title, message: error.message }, error.status);
+  if (error instanceof DatabaseNotConfiguredError) return json({ error: "database_unavailable", message: error.message }, 503);
+  const externalCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
+  if (["ECONNREFUSED", "ENOTFOUND", "ETIMEDOUT", "57P01", "53300"].includes(externalCode) || externalCode.startsWith("08")) {
+    return json({ error: "database_unavailable", message: "The agent database is temporarily unavailable" }, 503);
+  }
+  if (error instanceof GenerationError) {
+    const status = error.code === "rate_limit" ? 429 : error.code === "timeout" ? 504 : error.code === "missing_key" ? 503 : 502;
+    return json({ error: error.code, message: "Generation provider failed" }, status);
+  }
+  return json({ error: "internal_error", message: "The creative coach could not process this request" }, 500);
+}
+
+export function createAgentHttpHandlers(options: HandlerOptions = {}) {
+  const env = options.env ?? process.env;
+  const enabled = options.enabled ?? env.NEXT_PUBLIC_AGENT_COACH_ENABLED === "true";
+  const production = options.production ?? env.NODE_ENV === "production";
+  let service = options.service;
+  let ready: Promise<void> | undefined;
+
+  function hidden(): Response | undefined { return enabled ? undefined : json({ error: "not_found", message: "Not found" }, 404); }
+  async function getService(): Promise<CreativeCoachService> {
+    if (!service) {
+      const repository = getAgentRepository();
+      ready = repository.initialize();
+      service = createCreativeCoachService({
+        repository,
+        generate: (request, execution) => generateCoachHooks(request, {
+          apiKey: env.DEEPSEEK_API_KEY,
+          timeoutMs: execution.timeoutMs,
+          onAttempt: execution.recordModelAttempt,
+        }),
+        decideBriefPatch: (request, execution) => decideBriefPatch(request, {
+          apiKey: env.DEEPSEEK_API_KEY,
+          timeoutMs: execution.timeoutMs,
+          onAttempt: execution.recordModelAttempt,
+        }),
+        analyzeImage: (file) => analyzeImageFile(file, { apiKey: env.ARK_API_KEY, model: env.ARK_MODEL_ID }),
+        turnTimeoutMs: DEFAULT_AGENT_TURN_TIMEOUT_MS,
+        quotaConfig: quotaConfigFromEnv(env),
+      });
+    }
+    if (ready) await ready;
+    return service;
+  }
+  async function handle(operation: () => Promise<Response>): Promise<Response> {
+    try { return await operation(); } catch (error) { return errorResponse(error); }
+  }
+
+  const handlers = {
+    get service() { return service; },
+    async createRun(request: Request): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        const body = await readJson(request);
+        exactKeys(body, ["brief", "hasImage", "ignoreMemory"]);
+        if (body.brief !== undefined && (!body.brief || typeof body.brief !== "object" || Array.isArray(body.brief))) throw new HttpError(400, "brief must be an object");
+        if (body.hasImage !== undefined && typeof body.hasImage !== "boolean") throw new HttpError(400, "hasImage must be boolean");
+        if (body.ignoreMemory !== undefined && typeof body.ignoreMemory !== "boolean") throw new HttpError(400, "ignoreMemory must be boolean");
+        const result = await (await getService()).createRun(cookieValue(request), { brief: body.brief as Record<string, unknown> | undefined, hasImage: body.hasImage as boolean | undefined, ignoreMemory: body.ignoreMemory as boolean | undefined }, agentRequestContext(request, env, production));
+        return json(result.response, 200, { "Set-Cookie": sessionCookie(result.sessionToken, production), "Cache-Control": "no-store" });
+      });
+    },
+    async getRun(request: Request, runId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        return json(await (await getService()).getRun(cookieValue(request), nonEmpty(runId, "runId", 200)), 200, { "Cache-Control": "no-store" });
+      });
+    },
+    async deleteRun(request: Request, runId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        const rawRevision = new URL(request.url).searchParams.get("expectedRevision");
+        if (rawRevision === null || !/^\d+$/.test(rawRevision)) throw new HttpError(400, "expectedRevision is required");
+        const revision = integer(Number(rawRevision), "expectedRevision");
+        return json(await (await getService()).cancelRun(cookieValue(request), nonEmpty(runId, "runId", 200), revision));
+      });
+    },
+    async turn(request: Request, runId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        const body = await readJson(request);
+        exactKeys(body, ["expectedRevision", "command"], ["expectedRevision", "command"]);
+        return json(await (await getService()).submitTurn(cookieValue(request), nonEmpty(runId, "runId", 200), integer(body.expectedRevision, "expectedRevision"), parseCommand(body.command), agentRequestContext(request, env, production)));
+      });
+    },
+    async image(request: Request, runId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        const bytes = await readBoundedBody(request, MAX_IMAGE_BYTES + 64 * 1024, "Image request is too large");
+        const boundedRequest = new Request(request.url, { method: request.method, headers: request.headers, body: bytes.buffer as ArrayBuffer });
+        let form: FormData;
+        try { form = await boundedRequest.formData(); } catch { throw new HttpError(400, "Expected multipart form data"); }
+        const file = form.get("image");
+        if (!(file instanceof File)) throw new HttpError(400, "image is required");
+        if (file.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is too large");
+        const revisionValue = form.get("expectedRevision");
+        if (typeof revisionValue !== "string" || !/^\d+$/.test(revisionValue)) throw new HttpError(400, "expectedRevision is required");
+        return json(await (await getService()).uploadImage(cookieValue(request), nonEmpty(runId, "runId", 200), integer(Number(revisionValue), "expectedRevision"), file, agentRequestContext(request, env, production)));
+      });
+    },
+    async getMemory(request: Request): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        const token = cookieValue(request);
+        if (!token) return json({ entries: [] }, 200, { "Cache-Control": "no-store" });
+        return json(await (await getService()).getMemory(token), 200, { "Cache-Control": "no-store" });
+      });
+    },
+    async deleteMemory(request: Request, entryId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        await (await getService()).deleteMemory(cookieValue(request), nonEmpty(entryId, "memoryId", 200));
+        return json({ ok: true });
+      });
+    },
+    async clearMemory(request: Request): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        await (await getService()).clearMemory(cookieValue(request));
+        return json({ ok: true });
+      });
+    },
+    async cleanup(request: Request): Promise<Response> {
+      return handle(async () => {
+        const expected = usableSecret(env.AGENT_CLEANUP_TOKEN, production);
+        if (!expected) return json({ error: "not_found", message: "Not found" }, 404);
+        const authorization = request.headers.get("authorization") ?? "";
+        const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+        if (!supplied || !safeSecretEqual(supplied, expected)) return json({ error: "unauthorized", message: "Unauthorized" }, 401);
+        const result = await (await getService()).cleanup(new Date(), { limit: 50 });
+        return json({
+          removedRuns: result.removedRunIds.length,
+          removedSessions: result.removedSessionIds.length,
+          removedMemory: result.removedMemoryCount,
+          removedUsage: result.removedUsageCount,
+          ...(result.nextCursor ? { nextCursor: result.nextCursor } : {}),
+        }, 200, { "Cache-Control": "no-store" });
+      });
+    },
+  };
+  return handlers;
+}
+
+export const agentHttpHandlers = createAgentHttpHandlers();
