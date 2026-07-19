@@ -7,7 +7,7 @@ import { DatabaseNotConfiguredError, getConfiguredDatabaseUrl, getPersistenceMod
 import { trimRecentMessages } from "./budget.ts";
 import { recordMemory } from "./memory.ts";
 import { assertExpectedRevision } from "./machine.ts";
-import { AGENT_SCHEMA_SQL } from "./schema.ts";
+import { runAgentMigrations } from "./migrations.ts";
 import type { AgentRun, Memory, MemoryKey } from "./types.ts";
 import type { AgentQuotaUsage } from "./quota.ts";
 
@@ -59,10 +59,15 @@ export interface AgentCleanupResult {
   removedUsageCount: number;
 }
 
+export interface AgentRepositoryScope {
+  sessionDigest?: string;
+  ipDigest?: string;
+}
+
 export interface AgentRepository {
   initialize(): Promise<void>;
-  read(): Promise<AgentState>;
-  transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T>;
+  read(scope?: AgentRepositoryScope): Promise<AgentState>;
+  transaction<T>(mutator: (state: AgentState) => T | Promise<T>, scope?: AgentRepositoryScope): Promise<T>;
   cleanup(now?: Date): Promise<AgentCleanupResult>;
   readonly mode: "postgres" | "json";
 }
@@ -114,8 +119,8 @@ function expiresAt(now: Date): string {
   return nowIso(expires);
 }
 
-export function createCreatorSession(state: AgentState, now = new Date()): { token: string; session: CreatorSession } {
-  const token = randomBytes(32).toString("base64url");
+export function createCreatorSession(state: AgentState, now = new Date(), suppliedToken?: string): { token: string; session: CreatorSession } {
+  const token = suppliedToken ?? randomBytes(32).toString("base64url");
   const session: CreatorSession = {
     id: randomBytes(16).toString("base64url"), tokenDigest: hashCreatorSessionToken(token),
     createdAt: nowIso(now), expiresAt: expiresAt(now), lastSeenAt: nowIso(now),
@@ -304,10 +309,10 @@ export class MemoryAgentRepository implements AgentRepository {
     return task;
   }
   async initialize(): Promise<void> { return this.enqueue(async () => { normalizeState(this.state); }); }
-  async read(): Promise<AgentState> {
+  async read(_scope?: AgentRepositoryScope): Promise<AgentState> {
     return this.enqueue(async () => { normalizeState(this.state); return structuredClone(this.state); });
   }
-  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
+  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>, _scope?: AgentRepositoryScope): Promise<T> {
     return this.enqueue(async () => {
       const draft = structuredClone(this.state);
       validateAgentState(draft);
@@ -340,10 +345,10 @@ export class JsonAgentRepository implements AgentRepository {
   async initialize(): Promise<void> {
     await enqueueJson(this.filePath, async () => { await this.loadAndPersist(); });
   }
-  async read(): Promise<AgentState> {
+  async read(_scope?: AgentRepositoryScope): Promise<AgentState> {
     return enqueueJson(this.filePath, () => this.loadAndPersist());
   }
-  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
+  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>, _scope?: AgentRepositoryScope): Promise<T> {
     return enqueueJson(this.filePath, async () => {
       const state = await this.loadAndPersist();
       validateAgentState(state);
@@ -382,53 +387,159 @@ export class PostgresAgentRepository implements AgentRepository {
   private readonly pool: Pool;
   constructor(connectionString: string) { this.pool = new Pool({ connectionString, max: 5 }); }
   async initialize(): Promise<void> {
-    await this.pool.query(AGENT_SCHEMA_SQL);
-    const state = createInitialAgentState();
-    await this.pool.query("INSERT INTO agent_state (id, schema_version, payload) VALUES ('default', $1, $2::jsonb) ON CONFLICT (id) DO NOTHING", [state.schemaVersion, JSON.stringify(state)]);
-    await this.transaction(() => undefined);
+    await runAgentMigrations(this.pool);
   }
-  async read(): Promise<AgentState> {
-    return this.transaction((state) => {
-      normalizeState(state);
-      return structuredClone(state);
-    });
+  async read(scope?: AgentRepositoryScope): Promise<AgentState> {
+    const keys = shardKeys(scope);
+    const result = keys.length
+      ? await this.pool.query<{ payload: AgentState; schema_version: number }>("SELECT schema_version, payload FROM agent_state WHERE id = ANY($1::text[]) ORDER BY id", [keys])
+      : await this.pool.query<{ payload: AgentState; schema_version: number }>("SELECT schema_version, payload FROM agent_state WHERE id LIKE 'session:%' OR id LIKE 'ip:%' ORDER BY id");
+    const state = mergeShardRows(result.rows);
+    normalizeState(state);
+    return state;
   }
-  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T> {
+  async transaction<T>(mutator: (state: AgentState) => T | Promise<T>, scope?: AgentRepositoryScope): Promise<T> {
+    const keys = shardKeys(scope);
+    if (!keys.length) throw new Error("PostgreSQL Agent transactions require a session or IP scope");
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
-      const result = await client.query<{ payload: AgentState; schema_version: number }>("SELECT schema_version, payload FROM agent_state WHERE id = 'default' FOR UPDATE");
-      if (!result.rows[0]) throw new Error("Agent store is not initialized");
-      const state = result.rows[0].payload;
-      validateAgentState(state, result.rows[0].schema_version);
+      for (const key of keys) {
+        await client.query(
+          "INSERT INTO agent_state (id, schema_version, payload) VALUES ($1, 1, $2::jsonb) ON CONFLICT (id) DO NOTHING",
+          [key, JSON.stringify(createInitialAgentState())],
+        );
+      }
+      const result = await client.query<{ id: string; payload: AgentState; schema_version: number }>(
+        "SELECT id, schema_version, payload FROM agent_state WHERE id = ANY($1::text[]) ORDER BY id FOR UPDATE",
+        [keys],
+      );
+      const before = mergeShardRows(result.rows);
+      const state = structuredClone(before);
       const value = await mutator(state);
-      validateAgentState(state, result.rows[0].schema_version);
+      validateAgentState(state);
       normalizeState(state);
-      await client.query("UPDATE agent_state SET schema_version = $1, payload = $2::jsonb, updated_at = NOW() WHERE id = 'default'", [state.schemaVersion, JSON.stringify(state)]);
-      await syncProjection(client, state);
+      for (const key of keys) {
+        const payload = stateForShard(state, key);
+        if (isEmptyShard(payload)) await client.query("DELETE FROM agent_state WHERE id = $1", [key]);
+        else await client.query(
+          "UPDATE agent_state SET schema_version = 1, payload = $2::jsonb, updated_at = NOW() WHERE id = $1",
+          [key, JSON.stringify(payload)],
+        );
+      }
+      if (scope?.sessionDigest) await syncSessionProjection(client, before, state, scope.sessionDigest);
       await client.query("COMMIT");
       return value;
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
   }
   async cleanup(now = new Date()): Promise<AgentCleanupResult> {
-    return this.transaction((state) => cleanupExpiredAgentData(state, now));
+    const rows = await this.pool.query<{ id: string }>("SELECT id FROM agent_state WHERE id LIKE 'session:%' OR id LIKE 'ip:%' ORDER BY id");
+    const total: AgentCleanupResult = { removedRunIds: [], removedSessionIds: [], removedMemoryCount: 0, removedUsageCount: 0 };
+    for (const row of rows.rows) {
+      const scope = row.id.startsWith("session:") ? { sessionDigest: row.id.slice(8) } : { ipDigest: row.id.slice(3) };
+      const result = await this.transaction((state) => cleanupExpiredAgentData(state, now), scope);
+      total.removedRunIds.push(...result.removedRunIds);
+      total.removedSessionIds.push(...result.removedSessionIds);
+      total.removedMemoryCount += result.removedMemoryCount;
+      total.removedUsageCount += result.removedUsageCount;
+    }
+    return total;
   }
 }
 
-async function replaceRows(client: PoolClient, table: string, rows: Array<{ query: string; values: unknown[] }>): Promise<void> {
-  await client.query(`DELETE FROM ${table}`);
-  for (const row of rows) await client.query(row.query, row.values);
+function shardKeys(scope?: AgentRepositoryScope): string[] {
+  return [
+    ...(scope?.sessionDigest ? [`session:${scope.sessionDigest}`] : []),
+    ...(scope?.ipDigest ? [`ip:${scope.ipDigest}`] : []),
+  ].sort();
 }
 
-async function syncProjection(client: PoolClient, state: AgentState): Promise<void> {
-  await replaceRows(client, "creator_session", state.creatorSessions.map((item) => ({ query: "INSERT INTO creator_session (id, token_digest, expires_at, last_seen_at, payload) VALUES ($1,$2,$3,$4,$5::jsonb)", values: [item.id, item.tokenDigest, item.expiresAt, item.lastSeenAt, JSON.stringify(item)] })));
-  await replaceRows(client, "agent_run", state.runs.map((item) => ({ query: "INSERT INTO agent_run (id, creator_session_id, revision, status, updated_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, item.creatorSessionId, item.revision, item.status, item.updatedAt, JSON.stringify(item)] })));
-  await replaceRows(client, "agent_message", state.runs.flatMap((run) => run.messages.map((item) => ({ query: "INSERT INTO agent_message (id, run_id, role, created_at, payload) VALUES ($1,$2,$3,$4,$5::jsonb)", values: [item.id, run.id, item.role, item.createdAt, JSON.stringify(item)] }))));
-  await replaceRows(client, "agent_candidate", state.runs.flatMap((run) => run.candidates.map((item) => ({ query: "INSERT INTO agent_candidate (id, run_id, payload) VALUES ($1,$2,$3::jsonb)", values: [item.id, run.id, JSON.stringify(item)] }))));
-  await replaceRows(client, "agent_tool_call", state.runs.flatMap((run) => buildToolCallProjection(run).map((item) => ({ query: "INSERT INTO agent_tool_call (id, run_id, tool, status, created_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, run.id, item.tool, item.status, item.createdAt, JSON.stringify(item)] }))));
-  await replaceRows(client, "agent_approval", state.runs.flatMap((run) => run.approvals.map((item) => ({ query: "INSERT INTO agent_approval (id, run_id, tool, status, requested_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb)", values: [item.id, run.id, item.tool, item.status, item.requestedAt, JSON.stringify(item)] }))));
-  await replaceRows(client, "creator_memory", state.memories.flatMap((owner) => owner.memory.entries.map((item) => ({ query: "INSERT INTO creator_memory (creator_session_id, memory_key, memory_value, confidence, payload) VALUES ($1,$2,$3,$4,$5::jsonb)", values: [owner.creatorSessionId, item.key, item.value, item.confidence, JSON.stringify(item)] }))));
+function mergeShardRows(rows: Array<{ payload: AgentState; schema_version: number }>): AgentState {
+  const state = createInitialAgentState();
+  for (const row of rows) {
+    validateAgentState(row.payload, row.schema_version);
+    state.creatorSessions.push(...row.payload.creatorSessions);
+    state.runs.push(...row.payload.runs);
+    state.memories.push(...row.payload.memories);
+    state.usage!.push(...(row.payload.usage ?? []));
+  }
+  return state;
+}
+
+function stateForShard(state: AgentState, key: string): AgentState {
+  const shard = createInitialAgentState();
+  if (key.startsWith("ip:")) {
+    const digest = key.slice(3);
+    shard.usage = (state.usage ?? []).filter((usage) => usage.scopeType === "ip" && usage.scopeId === digest);
+    return shard;
+  }
+  const digest = key.slice(8);
+  shard.creatorSessions = state.creatorSessions.filter((session) => session.tokenDigest === digest);
+  const ownerIds = new Set(shard.creatorSessions.map((session) => session.id));
+  shard.runs = state.runs.filter((run) => ownerIds.has(run.creatorSessionId));
+  shard.memories = state.memories.filter((memory) => ownerIds.has(memory.creatorSessionId));
+  shard.usage = (state.usage ?? []).filter((usage) => usage.scopeType === "session" && usage.scopeId === digest);
+  return shard;
+}
+
+function isEmptyShard(state: AgentState): boolean {
+  return state.creatorSessions.length === 0 && state.runs.length === 0 && state.memories.length === 0 && (state.usage?.length ?? 0) === 0;
+}
+
+async function deleteMissing(client: PoolClient, table: string, ownerColumn: string, ownerId: string, ids: string[]): Promise<void> {
+  await client.query(`DELETE FROM ${table} WHERE ${ownerColumn} = $1 AND NOT (id = ANY($2::text[]))`, [ownerId, ids]);
+}
+
+async function syncSessionProjection(client: PoolClient, before: AgentState, after: AgentState, digest: string): Promise<void> {
+  const previous = before.creatorSessions.find((session) => session.tokenDigest === digest);
+  const session = after.creatorSessions.find((item) => item.tokenDigest === digest);
+  if (!session) {
+    if (previous) await client.query("DELETE FROM creator_session WHERE id = $1", [previous.id]);
+    return;
+  }
+  await client.query(
+    "INSERT INTO creator_session (id, token_digest, expires_at, last_seen_at, payload) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (id) DO UPDATE SET token_digest=EXCLUDED.token_digest, expires_at=EXCLUDED.expires_at, last_seen_at=EXCLUDED.last_seen_at, payload=EXCLUDED.payload",
+    [session.id, session.tokenDigest, session.expiresAt, session.lastSeenAt, JSON.stringify(session)],
+  );
+  const runs = after.runs.filter((run) => run.creatorSessionId === session.id);
+  for (const run of runs) {
+    await client.query(
+      "INSERT INTO agent_run (id, creator_session_id, revision, status, updated_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT (id) DO UPDATE SET revision=EXCLUDED.revision, status=EXCLUDED.status, updated_at=EXCLUDED.updated_at, payload=EXCLUDED.payload",
+      [run.id, session.id, run.revision, run.status, run.updatedAt, JSON.stringify(run)],
+    );
+    for (const message of run.messages) await client.query(
+      "INSERT INTO agent_message (id, run_id, role, created_at, payload) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (id) DO UPDATE SET role=EXCLUDED.role, created_at=EXCLUDED.created_at, payload=EXCLUDED.payload",
+      [message.id, run.id, message.role, message.createdAt, JSON.stringify(message)],
+    );
+    await deleteMissing(client, "agent_message", "run_id", run.id, run.messages.map((item) => item.id));
+    for (const candidate of run.candidates) await client.query(
+      "INSERT INTO agent_candidate (id, run_id, payload) VALUES ($1,$2,$3::jsonb) ON CONFLICT (id) DO UPDATE SET payload=EXCLUDED.payload",
+      [candidate.id, run.id, JSON.stringify(candidate)],
+    );
+    await deleteMissing(client, "agent_candidate", "run_id", run.id, run.candidates.map((item) => item.id));
+    const calls = buildToolCallProjection(run);
+    for (const call of calls) await client.query(
+      "INSERT INTO agent_tool_call (id, run_id, tool, status, created_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT (id) DO UPDATE SET tool=EXCLUDED.tool, status=EXCLUDED.status, created_at=EXCLUDED.created_at, payload=EXCLUDED.payload",
+      [call.id, run.id, call.tool, call.status, call.createdAt, JSON.stringify(call)],
+    );
+    await deleteMissing(client, "agent_tool_call", "run_id", run.id, calls.map((item) => item.id));
+    for (const approval of run.approvals) await client.query(
+      "INSERT INTO agent_approval (id, run_id, tool, status, requested_at, payload) VALUES ($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT (id) DO UPDATE SET tool=EXCLUDED.tool, status=EXCLUDED.status, requested_at=EXCLUDED.requested_at, payload=EXCLUDED.payload",
+      [approval.id, run.id, approval.tool, approval.status, approval.requestedAt, JSON.stringify(approval)],
+    );
+    await deleteMissing(client, "agent_approval", "run_id", run.id, run.approvals.map((item) => item.id));
+  }
+  await deleteMissing(client, "agent_run", "creator_session_id", session.id, runs.map((run) => run.id));
+  const memoryEntries = after.memories.find((memory) => memory.creatorSessionId === session.id)?.memory.entries ?? [];
+  for (const entry of memoryEntries) await client.query(
+    "INSERT INTO creator_memory (creator_session_id, memory_key, memory_value, confidence, payload) VALUES ($1,$2,$3,$4,$5::jsonb) ON CONFLICT (creator_session_id,memory_key,memory_value) DO UPDATE SET confidence=EXCLUDED.confidence, payload=EXCLUDED.payload",
+    [session.id, entry.key, entry.value, entry.confidence, JSON.stringify(entry)],
+  );
+  await client.query(
+    "DELETE FROM creator_memory WHERE creator_session_id = $1 AND NOT ((memory_key, memory_value) IN (SELECT * FROM unnest($2::text[], $3::text[])))",
+    [session.id, memoryEntries.map((entry) => entry.key), memoryEntries.map((entry) => entry.value)],
+  );
 }
 
 export function buildToolCallProjection(run: StoredAgentRun): Array<AgentRun["toolCalls"][number] & { result?: AgentRun["toolResults"][number] }> {

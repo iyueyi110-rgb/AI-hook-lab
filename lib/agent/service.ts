@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 
 import { GenerationError } from "../generation/service.ts";
 import { validateImageUpload } from "../imageAnalysis.ts";
@@ -22,9 +22,11 @@ import {
 import {
   AgentNotFoundError,
   type AgentRepository,
+  type AgentRepositoryScope,
   type CreatorSession,
   type StoredAgentRun,
   createCreatorSession,
+  hashCreatorSessionToken,
   deleteCreatorMemory,
   findOwnedRun,
   listCreatorMemory,
@@ -412,17 +414,23 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   }
 
   async function sessionFromToken(token: string | undefined, create: boolean): Promise<{ session: CreatorSession; token?: string }> {
+    const suppliedToken = token ?? (create ? randomBytes(32).toString("base64url") : undefined);
+    const scope = suppliedToken ? { sessionDigest: hashCreatorSessionToken(suppliedToken) } : undefined;
     return repository.transaction((state) => {
       const existing = resolveCreatorSession(state, token, now());
       if (existing) return { session: existing };
       if (!create) throw new AgentNotFoundError();
-      const created = createCreatorSession(state, now());
+      const created = createCreatorSession(state, now(), suppliedToken);
       return { session: created.session, token: created.token };
-    });
+    }, scope);
   }
 
   function requestContext(context?: AgentRequestContext): AgentRequestContext {
     return context ?? { ipDigest: "0".repeat(64) };
+  }
+
+  function repositoryScope(session: CreatorSession, context?: AgentRequestContext): AgentRepositoryScope {
+    return { sessionDigest: session.tokenDigest, ...(context ? { ipDigest: context.ipDigest } : {}) };
   }
 
   function reserveModelQuota(state: import("./repository.ts").AgentState, session: CreatorSession, context: AgentRequestContext): void {
@@ -433,17 +441,17 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     consumeAgentQuota(state, session, context, "model_call", now(), quotaConfig);
   }
 
-  async function recoverOwnedRun(ownerId: string, runId: string): Promise<StoredAgentRun> {
+  async function recoverOwnedRun(owner: CreatorSession, runId: string): Promise<StoredAgentRun> {
     return repository.transaction((state) => {
-      const run = findOwnedRun(state, runId, ownerId);
+      const run = findOwnedRun(state, runId, owner.id);
       recoverExpiredOperation(run, now());
       return structuredClone(run);
-    });
+    }, repositoryScope(owner));
   }
 
-  async function completeGeneration(ownerId: string, runId: string, request: CoachGenerationRequest, revision: number, operationId: string, deadlineAt: number): Promise<CoachRunResponse> {
+  async function completeGeneration(owner: CreatorSession, runId: string, request: CoachGenerationRequest, revision: number, operationId: string, deadlineAt: number): Promise<CoachRunResponse> {
     const generationTool = request.kind === "initial" ? "generate_hooks" : request.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
-    const reservedRun = findOwnedRun(await repository.read(), runId, ownerId);
+    const reservedRun = findOwnedRun(await repository.read(repositoryScope(owner)), runId, owner.id);
     assertExpectedRevision(reservedRun, revision);
     assertAuthorizationTicket(reservedRun, operationId, reservedRun.status, generationTool);
     assertAuthorizationTicket(reservedRun, operationId, "reviewing", "compare_candidates");
@@ -458,9 +466,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       }
     } catch (error) {
       const mapped = providerStatus(error);
-      await recoverOwnedRun(ownerId, runId);
+      await recoverOwnedRun(owner, runId);
       const response = await repository.transaction((state) => {
-        const run = findOwnedRun(state, runId, ownerId);
+        const run = findOwnedRun(state, runId, owner.id);
         assertExpectedRevision(run, revision);
         assertActiveOperation(run, operationId, "generation");
         const resumeStatus = run.status === "generating" ? "generating" : "revising";
@@ -474,12 +482,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.updatedAt = now().toISOString();
         run.revision += 1;
         return asResponse(run);
-      });
+      }, repositoryScope(owner));
       throw new AgentProviderError(mapped.status, mapped.code, response);
     }
-    await recoverOwnedRun(ownerId, runId);
+    await recoverOwnedRun(owner, runId);
     return repository.transaction((state) => {
-      const run = findOwnedRun(state, runId, ownerId);
+      const run = findOwnedRun(state, runId, owner.id);
       assertExpectedRevision(run, revision);
       assertActiveOperation(run, operationId, "generation");
       assertAuthorizationTicket(run, operationId, "reviewing", "compare_candidates");
@@ -499,7 +507,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       run.updatedAt = now().toISOString();
       run.revision += 1;
       return asResponse(run);
-    });
+    }, repositoryScope(owner));
   }
 
   return {
@@ -509,9 +517,16 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
 
     async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }, context?: AgentRequestContext): Promise<{ sessionToken: string; response: CoachRunResponse }> {
       assertSafeBriefInput(input.brief ?? {});
+      let effectiveToken = sessionToken;
+      if (effectiveToken) {
+        const existingState = await repository.read({ sessionDigest: hashCreatorSessionToken(effectiveToken) });
+        if (!resolveCreatorSession(existingState, effectiveToken, now())) effectiveToken = undefined;
+      }
+      effectiveToken ??= randomBytes(32).toString("base64url");
+      const scope = { sessionDigest: hashCreatorSessionToken(effectiveToken), ipDigest: requestContext(context).ipDigest };
       const result = await repository.transaction((state) => {
-        const existing = resolveCreatorSession(state, sessionToken, now());
-        const created = existing ? undefined : createCreatorSession(state, now());
+        const existing = resolveCreatorSession(state, effectiveToken, now());
+        const created = existing ? undefined : createCreatorSession(state, now(), effectiveToken);
         const owner = existing ?? created!.session;
         consumeAgentQuota(state, owner, requestContext(context), "run_create", now(), quotaConfig);
         const memory = input.ignoreMemory ? { entries: [] } : listCreatorMemory(state, owner.id, now());
@@ -542,18 +557,18 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         };
         state.runs.push(run);
         return { response: asResponse(run, messages), token: created?.token };
-      });
-      return { sessionToken: result.token ?? sessionToken!, response: result.response };
+      }, scope);
+      return { sessionToken: result.token ?? effectiveToken, response: result.response };
     },
 
     async getRun(sessionToken: string | undefined, runId: string): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
-      return asResponse(await recoverOwnedRun(owner.session.id, runId));
+      return asResponse(await recoverOwnedRun(owner.session, runId));
     },
 
     async cancelRun(sessionToken: string | undefined, runId: string, expectedRevision: number): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
-      await recoverOwnedRun(owner.session.id, runId);
+      await recoverOwnedRun(owner.session, runId);
       return repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, expectedRevision);
@@ -570,7 +585,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.revision += 1;
         run.updatedAt = now().toISOString();
         return asResponse(run);
-      });
+      }, repositoryScope(owner.session));
     },
 
     async submitTurn(sessionToken: string | undefined, runId: string, expectedRevision: number, command: AgentCommand, context?: AgentRequestContext): Promise<CoachRunResponse> {
@@ -581,7 +596,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       if (command.type === "reject_batch") assertSafeText(command.reason, "reason", 1_000);
       if (command.type === "confirm_brief") assertSafeBriefInput(command.briefPatch ?? {});
       const owner = await sessionFromToken(sessionToken, false);
-      await recoverOwnedRun(owner.session.id, runId);
+      await recoverOwnedRun(owner.session, runId);
       const prepared = await repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, expectedRevision);
@@ -743,7 +758,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         }
 
         throw new AgentConflictError(`Command is not allowed while ${run.status}`);
-      });
+      }, repositoryScope(owner.session, requestContext(context)));
       if (prepared.kind === "response") return prepared.response;
       if (prepared.kind === "decision") {
         let patch: Record<string, unknown> = prepared.directPatch;
@@ -755,7 +770,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           // Fall back to the deterministic answer path; the operation is still
           // completed through the same CAS and no hidden reasoning is persisted.
         }
-        await recoverOwnedRun(owner.session.id, runId);
+        await recoverOwnedRun(owner.session, runId);
         return repository.transaction((state) => {
           const run = findOwnedRun(state, runId, owner.session.id);
           assertExpectedRevision(run, prepared.revision);
@@ -764,15 +779,15 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.activeOperation = undefined;
           run.revision += 1;
           return asResponse(run, messages);
-        });
+        }, repositoryScope(owner.session));
       }
-      return completeGeneration(owner.session.id, runId, prepared.request, prepared.revision, prepared.operationId, deadlineAt);
+      return completeGeneration(owner.session, runId, prepared.request, prepared.revision, prepared.operationId, deadlineAt);
     },
 
     async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File, context?: AgentRequestContext): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
-      await recoverOwnedRun(owner.session.id, runId);
-      const preview = findOwnedRun(await repository.read(), runId, owner.session.id);
+      await recoverOwnedRun(owner.session, runId);
+      const preview = findOwnedRun(await repository.read(repositoryScope(owner.session)), runId, owner.session.id);
       assertExpectedRevision(preview, expectedRevision);
       if (preview.status !== "analyzing_image" || preview.activeOperation) throw new AgentConflictError("Image is not expected in this state");
       const validation = await validateImageUpload(file);
@@ -793,7 +808,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.updatedAt = now().toISOString();
         asResponse(run);
         return { revision: run.revision, callId, operationId, existingBrief: run.brief };
-      });
+      }, repositoryScope(owner.session, requestContext(context)));
       let analysis: ImageAnalysisResult;
       try {
         analysis = await dependencies.analyzeImage(file);
@@ -802,7 +817,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       } catch (error) {
         const providerStatusCode = typeof error === "object" && error && "status" in error && typeof error.status === "number" ? error.status : 502;
         const status = providerStatusCode === 501 ? 503 : providerStatusCode;
-        await recoverOwnedRun(owner.session.id, runId);
+        await recoverOwnedRun(owner.session, runId);
         const response = await repository.transaction((state) => {
           const run = findOwnedRun(state, runId, owner.session.id);
           assertExpectedRevision(run, reserved.revision);
@@ -814,10 +829,10 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.updatedAt = now().toISOString();
           run.revision += 1;
           return asResponse(run);
-        });
+        }, repositoryScope(owner.session));
         throw new AgentProviderError(status, "image_provider_error", response);
       }
-      await recoverOwnedRun(owner.session.id, runId);
+      await recoverOwnedRun(owner.session, runId);
       return repository.transaction((state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, reserved.revision);
@@ -852,12 +867,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         run.updatedAt = now().toISOString();
         run.revision += 1;
         return asResponse(run);
-      });
+      }, repositoryScope(owner.session));
     },
 
     async getMemory(sessionToken: string | undefined): Promise<{ entries: CoachMemoryEntry[] }> {
       const owner = await sessionFromToken(sessionToken, false);
-      const memory = listCreatorMemory(await repository.read(), owner.session.id, now());
+      const memory = listCreatorMemory(await repository.read(repositoryScope(owner.session)), owner.session.id, now());
       return { entries: memory.entries.map((entry) => ({ id: memoryId(entry.key, entry.value), ...entry })) };
     },
 
@@ -867,12 +882,12 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         const entry = listCreatorMemory(state, owner.session.id, now()).entries.find((item) => memoryId(item.key, item.value) === entryId);
         if (!entry) throw new AgentNotFoundError();
         deleteCreatorMemory(state, owner.session.id, entry.key, entry.value, now());
-      });
+      }, repositoryScope(owner.session));
     },
 
     async clearMemory(sessionToken: string | undefined): Promise<void> {
       const owner = await sessionFromToken(sessionToken, false);
-      await repository.transaction((state) => deleteCreatorMemory(state, owner.session.id, undefined, undefined, now()));
+      await repository.transaction((state) => deleteCreatorMemory(state, owner.session.id, undefined, undefined, now()), repositoryScope(owner.session));
     },
   };
 }

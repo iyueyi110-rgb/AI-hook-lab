@@ -2,6 +2,7 @@ export * from "./brief.ts";
 export * from "./budget.ts";
 export * from "./candidates.ts";
 export * from "./machine.ts";
+export * from "./migrations.ts";
 export * from "./memory.ts";
 export * from "./repository.ts";
 export * from "./quota.ts";

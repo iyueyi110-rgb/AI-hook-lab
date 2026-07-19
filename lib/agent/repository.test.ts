@@ -27,6 +27,7 @@ import {
   type StoredAgentRun,
 } from "./repository.ts";
 import { AGENT_SCHEMA_SQL } from "./schema.ts";
+import { AGENT_MIGRATIONS, runAgentMigrations } from "./migrations.ts";
 
 function run(id: string, creatorSessionId: string, overrides: Partial<StoredAgentRun> = {}): StoredAgentRun {
   return {
@@ -274,6 +275,41 @@ test("agent schema defines all eight projections without raw images or token pla
     assert.match(AGENT_SCHEMA_SQL, new RegExp(`CREATE TABLE IF NOT EXISTS ${table}`));
   }
   assert.doesNotMatch(AGENT_SCHEMA_SQL, /raw_image|image_data|token\s+TEXT/i);
+  assert.match(AGENT_SCHEMA_SQL, /CONSTRAINT agent_run_creator_session_fk REFERENCES creator_session\(id\) ON DELETE CASCADE/);
+  assert.match(AGENT_SCHEMA_SQL, /CONSTRAINT agent_message_run_fk REFERENCES agent_run\(id\) ON DELETE CASCADE/);
+});
+
+test("postgres persistence uses versioned shard migrations and scoped incremental projection writes", async () => {
+  assert.deepEqual(AGENT_MIGRATIONS.map((migration) => migration.version), [1, 2]);
+  assert.match(AGENT_MIGRATIONS[1]!.sql, /session:/);
+  assert.match(AGENT_MIGRATIONS[1]!.sql, /DELETE FROM agent_state WHERE id = 'default'/);
+  const source = await readFile(new URL("./repository.ts", import.meta.url), "utf8");
+  assert.doesNotMatch(source, /WHERE id = 'default' FOR UPDATE/);
+  assert.doesNotMatch(source, /DELETE FROM \$\{table\}(?!\s+WHERE)/);
+  assert.match(source, /ORDER BY id FOR UPDATE/);
+  assert.match(source, /ON CONFLICT \(id\) DO UPDATE/);
+  assert.match(source, /deleteMissing\(client, "agent_run", "creator_session_id"/);
+});
+
+test("migration runner serializes upgrades and records schema version without a ninth table", async () => {
+  const queries: string[] = [];
+  let released = false;
+  const client = {
+    async query(sql: string) {
+      queries.push(sql);
+      if (sql.startsWith("SELECT payload FROM agent_state")) return { rows: [] };
+      return { rows: [] };
+    },
+    release() { released = true; },
+  };
+  await runAgentMigrations({ async connect() { return client as never; } });
+  assert.equal(queries[0], "BEGIN");
+  assert.match(queries[1]!, /pg_advisory_xact_lock/);
+  assert.equal(queries.some((query) => query.includes("WITH legacy AS")), true);
+  assert.equal(queries.some((query) => query.includes("'__schema__'")), true);
+  assert.equal(queries.at(-1), "COMMIT");
+  assert.equal(released, true);
+  assert.equal(AGENT_SCHEMA_SQL.match(/CREATE TABLE IF NOT EXISTS/g)?.length, 8);
 });
 
 test("tool call projection embeds the matching structured result without a ninth table", () => {

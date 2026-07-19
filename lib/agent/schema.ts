@@ -8,26 +8,26 @@ CREATE TABLE IF NOT EXISTS creator_session (
   last_seen_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_run (
-  id TEXT PRIMARY KEY, creator_session_id TEXT NOT NULL, revision INTEGER NOT NULL,
+  id TEXT PRIMARY KEY, creator_session_id TEXT NOT NULL CONSTRAINT agent_run_creator_session_fk REFERENCES creator_session(id) ON DELETE CASCADE, revision INTEGER NOT NULL,
   status TEXT NOT NULL, updated_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_message (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, role TEXT NOT NULL,
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL CONSTRAINT agent_message_run_fk REFERENCES agent_run(id) ON DELETE CASCADE, role TEXT NOT NULL,
   created_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_candidate (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, payload JSONB NOT NULL
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL CONSTRAINT agent_candidate_run_fk REFERENCES agent_run(id) ON DELETE CASCADE, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_tool_call (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, tool TEXT NOT NULL,
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL CONSTRAINT agent_tool_call_run_fk REFERENCES agent_run(id) ON DELETE CASCADE, tool TEXT NOT NULL,
   status TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS agent_approval (
-  id TEXT PRIMARY KEY, run_id TEXT NOT NULL, tool TEXT NOT NULL,
+  id TEXT PRIMARY KEY, run_id TEXT NOT NULL CONSTRAINT agent_approval_run_fk REFERENCES agent_run(id) ON DELETE CASCADE, tool TEXT NOT NULL,
   status TEXT NOT NULL, requested_at TIMESTAMPTZ NOT NULL, payload JSONB NOT NULL
 );
 CREATE TABLE IF NOT EXISTS creator_memory (
-  creator_session_id TEXT NOT NULL, memory_key TEXT NOT NULL, memory_value TEXT NOT NULL,
+  creator_session_id TEXT NOT NULL CONSTRAINT creator_memory_session_fk REFERENCES creator_session(id) ON DELETE CASCADE, memory_key TEXT NOT NULL, memory_value TEXT NOT NULL,
   confidence DOUBLE PRECISION NOT NULL, payload JSONB NOT NULL,
   PRIMARY KEY (creator_session_id, memory_key, memory_value)
 );
