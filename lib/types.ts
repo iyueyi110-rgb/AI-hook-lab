@@ -47,6 +47,7 @@ export interface GenerateResponse {
   model?: string;
   templateVersion?: string;
   promptVariant?: string;
+  modelAttempts?: number;
   targetAudience?: string;
   emotionTone?: EmotionTone | "";
   wordLimit?: number;

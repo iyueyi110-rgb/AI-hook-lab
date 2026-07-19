@@ -14,6 +14,17 @@ interface HookGridProps {
   onCopyHook: (hook: HookResult) => void;
   onRejectBatch: () => void;
   analysis?: GenerateResponse["analysis"] | null;
+  coachActions?: {
+    onRewrite: (id: string) => void;
+    onSelect: (id: string) => void;
+    canRewrite: boolean;
+    canSelect: boolean;
+    canReject: boolean;
+    selectedId?: string;
+    recommendedIds: string[];
+    comparisonExplanations: string[];
+    rejecting?: boolean;
+  };
 }
 
 export function HookGrid({
@@ -25,6 +36,7 @@ export function HookGrid({
   onCopyHook,
   onRejectBatch,
   analysis,
+  coachActions,
 }: HookGridProps) {
   const [copiedAll, setCopiedAll] = useState(false);
   const copiedTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -38,11 +50,14 @@ export function HookGrid({
 
   if (hooks.length === 0) return null;
 
-  const bestHook = hooks.reduce((best, hook) => {
+  const scoreBestHook = hooks.reduce((best, hook) => {
     const score = hook.overallScore ?? hook.score ?? 0;
     const bestScore = best.overallScore ?? best.score ?? 0;
     return score > bestScore ? hook : best;
   }, hooks[0]);
+  const bestHook = coachActions
+    ? hooks.find((hook) => hook.id === coachActions.recommendedIds[0]) ?? scoreBestHook
+    : scoreBestHook;
   const remainingHooks = hooks.filter((hook) => hook.id !== bestHook.id);
   const bestIndex = hooks.findIndex((hook) => hook.id === bestHook.id);
 
@@ -73,7 +88,7 @@ export function HookGrid({
             候选 Hook
           </h2>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            {hooks.length} 个候选，模型分用于排序，最终选择由你决定。
+            {hooks.length} 个候选，{coachActions ? "推荐只用于解释比较，最终选择由你决定。" : "模型分用于排序，最终选择由你决定。"}
           </p>
         </div>
         <button className="button-secondary self-start sm:self-auto" onClick={handleCopyAll} type="button">
@@ -91,6 +106,14 @@ export function HookGrid({
         onToggleAdopted={onToggleAdopted}
         onToggleFavorite={onToggleFavorite}
         styleIndex={bestIndex}
+        coachActions={Boolean(coachActions)}
+        canRewrite={coachActions?.canRewrite}
+        canSelect={coachActions?.canSelect}
+        comparisonExplanation={coachActions?.comparisonExplanations[0]}
+        onRewrite={coachActions?.onRewrite}
+        onSelect={coachActions?.onSelect}
+        recommendationRank={coachActions ? 1 : undefined}
+        selected={coachActions?.selectedId === bestHook.id}
       />
 
       {remainingHooks.map((hook) => (
@@ -103,12 +126,20 @@ export function HookGrid({
           onToggleAdopted={onToggleAdopted}
           onToggleFavorite={onToggleFavorite}
           styleIndex={hooks.findIndex((item) => item.id === hook.id)}
+          coachActions={Boolean(coachActions)}
+          canRewrite={coachActions?.canRewrite}
+          canSelect={coachActions?.canSelect}
+          comparisonExplanation={coachActions ? coachActions.comparisonExplanations[coachActions.recommendedIds.indexOf(hook.id)] : undefined}
+          onRewrite={coachActions?.onRewrite}
+          onSelect={coachActions?.onSelect}
+          recommendationRank={coachActions && coachActions.recommendedIds.includes(hook.id) ? coachActions.recommendedIds.indexOf(hook.id) + 1 : undefined}
+          selected={coachActions?.selectedId === hook.id}
         />
       ))}
 
       <div className="flex flex-col gap-3 border-t border-[var(--color-line)] bg-[var(--color-surface-subtle)] px-4 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-5">
         <p className="text-xs leading-5 text-[var(--color-muted)]">没有一条适合？告诉我们最主要的问题，不会删除本轮结果。</p>
-        <button className="button-secondary shrink-0" onClick={onRejectBatch} type="button">
+        <button className="button-secondary shrink-0" disabled={coachActions ? !coachActions.canReject || coachActions.rejecting : false} onClick={onRejectBatch} type="button">
           <WarningCircle aria-hidden="true" size={16} weight="bold" />
           这批都不合适
         </button>

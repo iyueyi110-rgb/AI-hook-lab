@@ -1,4 +1,4 @@
-import type { EvaluationCase, EvaluationPlatform } from "./types.ts";
+import type { EvaluationCase, EvaluationPlatform } from "./types";
 
 const CREATED_AT = "2026-07-13T00:00:00.000Z";
 

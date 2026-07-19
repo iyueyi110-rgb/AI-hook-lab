@@ -13,7 +13,7 @@ test("development without a URL keeps JSON fallback", () => {
 });
 
 test("a configured URL selects postgres without exposing it", () => {
-  const env = { NODE_ENV: "production", DATABASE_URL: "postgresql://secret" };
+  const env = { NODE_ENV: "production" as const, DATABASE_URL: "postgresql://secret" };
   assert.equal(getPersistenceMode(env), "postgres");
   assert.equal(getConfiguredDatabaseUrl(env), "postgresql://secret");
 });

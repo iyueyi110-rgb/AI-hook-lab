@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   buildPromptBundle,
   GENERATION_MODEL,
   MAX_IMAGE_DESCRIPTION_LENGTH,
 } from "./promptTemplates.ts";
+import { ClassicRequestError, normalizeClassicRequest } from "./generation/hooks.ts";
 import type { GenerateRequest } from "./types.ts";
 
 const request: GenerateRequest = {
@@ -40,12 +40,15 @@ test("preserves the existing DeepSeek model and bounds image context", () => {
   assert.equal(MAX_IMAGE_DESCRIPTION_LENGTH, 500);
 });
 
-test("the generate route trims, validates and preserves imageDescription", async () => {
-  const route = await readFile(new URL("../app/api/generate/route.ts", import.meta.url), "utf8");
+test("the shared classic service trims, validates and preserves imageDescription", () => {
+  const normalized = normalizeClassicRequest({
+    ...request,
+    imageDescription: "  截图展示了目标、进展和风险三个周报模块。  ",
+  });
 
-  assert.match(route, /body\.imageDescription\?\.trim\(\)/);
-  assert.match(route, /MAX_IMAGE_DESCRIPTION_LENGTH/);
-  assert.match(route, /imageDescription:\s*trimmedImageDescription \|\| undefined/);
-  assert.match(route, /trimmedImageDescription/);
-  assert.match(route, /findSensitiveInputHints\([\s\S]*trimmedImageDescription/);
+  assert.equal(normalized.imageDescription, "截图展示了目标、进展和风险三个周报模块。");
+  assert.throws(
+    () => normalizeClassicRequest({ ...request, imageDescription: "x".repeat(MAX_IMAGE_DESCRIPTION_LENGTH + 1) }),
+    (error: unknown) => error instanceof ClassicRequestError && error.title === "图片描述过长"
+  );
 });

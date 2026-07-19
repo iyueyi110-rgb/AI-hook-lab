@@ -26,6 +26,24 @@ export async function GET(request: Request) {
     const platform = searchParams.get("platform") || undefined;
     const promptVersion = searchParams.get("promptVersion") || undefined;
     const trigger = searchParams.get("trigger") || undefined;
+    const from = searchParams.get("from") || undefined;
+    const to = searchParams.get("to") || undefined;
+    if ((from && !to) || (!from && to)) {
+      return NextResponse.json({ error: "from 和 to 必须同时提供" }, { status: 400 });
+    }
+    if (from && to) {
+      if (
+        !/^\d{4}-\d{2}-\d{2}T/.test(from) ||
+        !/^\d{4}-\d{2}-\d{2}T/.test(to) ||
+        !Number.isFinite(Date.parse(from)) ||
+        !Number.isFinite(Date.parse(to))
+      ) {
+        return NextResponse.json({ error: "时间参数必须是 RFC 3339 格式" }, { status: 400 });
+      }
+      if (Date.parse(from) >= Date.parse(to)) {
+        return NextResponse.json({ error: "from 必须早于 to" }, { status: 400 });
+      }
+    }
     if (platform && !Object.hasOwn(PLATFORM_CONFIG, platform)) {
       return NextResponse.json({ error: "Unsupported platform" }, { status: 400 });
     }
@@ -43,7 +61,7 @@ export async function GET(request: Request) {
     ) {
       return NextResponse.json({ error: "Unsupported feedback trigger" }, { status: 400 });
     }
-    const summary = await getDashboardSummary(requested, { platform, promptVersion, trigger });
+    const summary = await getDashboardSummary(requested, { platform, promptVersion, trigger, from, to });
     return NextResponse.json(summary);
   } catch (error) {
     if (isDatabaseNotConfiguredError(error)) {

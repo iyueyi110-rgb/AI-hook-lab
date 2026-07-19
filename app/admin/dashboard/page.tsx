@@ -3,6 +3,7 @@ import { forbidden, redirect } from "next/navigation";
 
 import { DatabaseUnavailablePanel } from "@/components/DatabaseUnavailablePanel";
 import { classifyAdminAccess } from "@/lib/adminAccess";
+import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
 import { getDashboardSummary } from "@/lib/dashboardStore";
 import { getCurrentEvaluationUser } from "@/lib/evaluation/server";
 import { getPersistenceMode } from "@/lib/persistence";
@@ -20,5 +21,5 @@ export default async function AdminDashboardPage() {
   const access = classifyAdminAccess(await getCurrentEvaluationUser());
   if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard");
   if (access === "forbidden") forbidden();
-  return <DashboardClient initialSummary={await getDashboardSummary()} />;
+  return <DashboardClient initialSummary={await getDashboardSummary()} opsAgentEnabled={isOpsAgentEnabled()} />;
 }

@@ -18,6 +18,11 @@ test("dashboard summary API independently returns 401 and 403", async () => {
   assert.match(route, /status:\s*401/);
   assert.match(route, /status:\s*403/);
   assert.match(route, /getCurrentEvaluationUser/);
+  assert.match(route, /searchParams\.get\("from"\)/);
+  assert.match(route, /searchParams\.get\("to"\)/);
+  assert.match(route, /from 和 to 必须同时提供/);
+  assert.match(route, /from 必须早于 to/);
+  assert.match(route, /getDashboardSummary\(requested, \{ platform, promptVersion, trigger, from, to \}\)/);
 });
 
 test("dashboard APIs return 503 when production persistence is unavailable", async () => {

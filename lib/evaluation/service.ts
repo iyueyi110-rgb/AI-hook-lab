@@ -1,8 +1,8 @@
 import { createHash, randomInt, randomUUID } from "node:crypto";
 
-import { createSessionToken, hashPassword, hashSessionToken, verifyPassword } from "./auth.ts";
-import { buildEvaluationReport } from "./metrics.ts";
-import type { EvaluationRepository } from "./repository.ts";
+import { createSessionToken, hashPassword, hashSessionToken, verifyPassword } from "./auth";
+import { buildEvaluationReport } from "./metrics";
+import type { EvaluationRepository } from "./repository";
 import type {
   AdjudicationRecord,
   BadCaseRecord,
@@ -18,8 +18,8 @@ import type {
   PairwiseWinner,
   PromptRole,
   UserRole,
-} from "./types.ts";
-import { BAD_CASE_TYPES } from "./types.ts";
+} from "./types";
+import { BAD_CASE_TYPES } from "./types";
 
 export interface GeneratedEvaluationHook {
   content: string;

@@ -1,4 +1,4 @@
-import type { EvaluationReport, EvaluationRunRecord } from "./types.ts";
+import type { EvaluationReport, EvaluationRunRecord } from "./types";
 
 export function csvCell(value: unknown): string {
   let text = String(value ?? "");

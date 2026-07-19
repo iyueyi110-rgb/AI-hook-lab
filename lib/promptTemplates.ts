@@ -4,7 +4,7 @@ import {
   EMOTION_TONE_CONFIG,
   PLATFORM_CONFIG,
   PLATFORM_STYLES,
-} from "./constants.ts";
+} from "./constants";
 
 export const GENERATION_MODEL = "deepseek-chat";
 export const PROMPT_TEMPLATE_VERSION = "v1.0.0";

@@ -1,4 +1,4 @@
-import type { EvaluationUser } from "./evaluation/types.ts";
+import type { EvaluationUser } from "./evaluation/types";
 
 export type AdminAccess = "unauthenticated" | "forbidden" | "authorized";
 
@@ -21,6 +21,7 @@ export function sanitizeInternalReturnPath(
     const parsed = new URL(candidate, "https://hookovo.invalid");
     const allowed =
       parsed.pathname === "/admin/dashboard" ||
+      parsed.pathname === "/admin/dashboard/agent" ||
       parsed.pathname === "/evaluation" ||
       parsed.pathname.startsWith("/evaluation/");
     return allowed ? `${parsed.pathname}${parsed.search}` : fallback;

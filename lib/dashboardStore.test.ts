@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 import { summarizeDashboardEvents, type DashboardEvent } from "./dashboardStore.ts";
@@ -15,6 +16,10 @@ const dashboardEventsRouteUrl = new URL(
   import.meta.url,
 ).href;
 const projectRootUrl = new URL("../", import.meta.url).href;
+const tsExtensionLoaderRegisterUrl = new URL(
+  "../test/register-ts-extension-loader.mjs",
+  import.meta.url,
+).href;
 
 function localPersistenceEnvironment(): NodeJS.ProcessEnv {
   return {
@@ -35,7 +40,9 @@ async function runModuleScript(
     process.execPath,
     [
       "--experimental-strip-types",
-      ...(loaderPath ? ["--experimental-loader", loaderPath] : []),
+      "--import",
+      tsExtensionLoaderRegisterUrl,
+      ...(loaderPath ? ["--experimental-loader", pathToFileURL(loaderPath).href] : []),
       "--input-type=module",
       "-e",
       script,
@@ -126,6 +133,22 @@ test("dashboard feedback filters narrow platform, prompt version and trigger", (
   assert.equal(summary.feedback.totals.submitted, 1);
   assert.deepEqual(summary.feedback.triggerDistribution, { explicit_batch_reject: 1 });
   assert.deepEqual(summary.feedback.reasonDistribution, { too_generic: 1 });
+});
+
+test("dashboard time window is inclusive at from and exclusive at to", () => {
+  const events: DashboardEvent[] = [
+    { id: "before", type: "generation_start", timestamp: "2026-07-01T23:59:59.999Z", dataOrigin: "real_user" },
+    { id: "from", type: "generation_start", timestamp: "2026-07-02T00:00:00.000Z", dataOrigin: "real_user" },
+    { id: "inside", type: "generation_complete", timestamp: "2026-07-03T00:00:00.000Z", dataOrigin: "real_user", payload: { hookCount: 3 } },
+    { id: "to", type: "generation_complete", timestamp: "2026-07-04T00:00:00.000Z", dataOrigin: "real_user", payload: { hookCount: 9 } },
+  ];
+  const summary = summarizeDashboardEvents(events, "real_user", {
+    from: "2026-07-02T00:00:00.000Z",
+    to: "2026-07-04T00:00:00.000Z",
+  });
+  assert.equal(summary.totals.events, 2);
+  assert.equal(summary.totals.generationsStarted, 1);
+  assert.equal(summary.totals.hooksGenerated, 3);
 });
 
 test("feedback response rate only links submissions to prompts recorded as shown", () => {

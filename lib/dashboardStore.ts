@@ -1,14 +1,14 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants.ts";
-import { normalizeDataOrigin } from "./evaluation/origins.ts";
-import type { DataOrigin } from "./evaluation/types.ts";
-import { findSensitiveInputHints } from "./promptTemplates.ts";
+import { CONTENT_TYPE_CONFIG, PLATFORM_CONFIG } from "./constants";
+import { normalizeDataOrigin } from "./evaluation/origins";
+import type { DataOrigin } from "./evaluation/types";
+import { findSensitiveInputHints } from "./promptTemplates";
 import {
   assertProductionDatabaseConfigured,
   getConfiguredDatabaseUrl,
-} from "./persistence.ts";
+} from "./persistence";
 
 export type DashboardDataOrigin = DataOrigin;
 
@@ -16,6 +16,10 @@ export interface DashboardFeedbackFilters {
   platform?: string;
   promptVersion?: string;
   trigger?: string;
+  /** Inclusive RFC 3339 lower bound. */
+  from?: string;
+  /** Exclusive RFC 3339 upper bound. */
+  to?: string;
 }
 
 export type DashboardEventType =
@@ -28,7 +32,15 @@ export type DashboardEventType =
   | "hook_adopted"
   | "hook_unadopted"
   | "platform_satisfaction"
-  | "creator_feedback";
+  | "creator_feedback"
+  | "agent_run_start"
+  | "agent_clarification"
+  | "agent_brief_confirmed"
+  | "agent_tool_call"
+  | "agent_revision"
+  | "agent_final_confirmed"
+  | "agent_memory_applied"
+  | "agent_memory_deleted";
 
 export interface DashboardEvent {
   id: string;
@@ -115,6 +127,14 @@ const EVENT_TYPES = new Set<DashboardEventType>([
   "hook_unadopted",
   "platform_satisfaction",
   "creator_feedback",
+  "agent_run_start",
+  "agent_clarification",
+  "agent_brief_confirmed",
+  "agent_tool_call",
+  "agent_revision",
+  "agent_final_confirmed",
+  "agent_memory_applied",
+  "agent_memory_deleted",
 ]);
 const PLATFORMS = new Set(Object.keys(PLATFORM_CONFIG));
 const CONTENT_TYPES = new Set(Object.keys(CONTENT_TYPE_CONFIG));
@@ -184,6 +204,38 @@ const COMPARABLE_FEEDBACK_TAGS = [
   "too_generic",
   "platform_mismatch",
 ] as const;
+const AGENT_STATUSES = new Set([
+  "understanding",
+  "analyzing_image",
+  "awaiting_brief_confirmation",
+  "generating",
+  "reviewing",
+  "revising",
+  "awaiting_final_confirmation",
+  "completed",
+  "failed",
+  "cancelled",
+]);
+const AGENT_TOOLS = new Set([
+  "analyze_image",
+  "generate_hooks",
+  "rewrite_hook",
+  "regenerate_batch",
+  "compare_candidates",
+  "save_final_choice",
+]);
+const AGENT_COMMANDS = new Set([
+  "message",
+  "confirm_brief",
+  "select_candidate",
+  "rewrite_candidate",
+  "reject_batch",
+  "confirm_final",
+  "retry",
+]);
+const AGENT_TOOL_STATUSES = new Set(["requested", "running", "completed", "error", "denied"]);
+const AGENT_CLARIFICATION_FIELDS = new Set(["topic", "platform", "contentType"]);
+const AGENT_MEMORY_DELETE_SCOPES = new Set(["single", "all"]);
 
 interface PayloadFieldRule {
   persist?: boolean;
@@ -381,6 +433,72 @@ const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
     },
     required: ["promptId", "status", "trigger", "scope", "anonymousCreatorId", "taskId"],
   },
+  agent_run_start: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      platform: platformRule,
+      contentType: contentTypeRule,
+      memoryCount: numberRule(0, 100, true),
+    },
+    required: ["status"],
+  },
+  agent_clarification: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      field: enumRule(AGENT_CLARIFICATION_FIELDS),
+      attempt: numberRule(1, 2, true),
+    },
+    required: ["status", "field", "attempt"],
+  },
+  agent_brief_confirmed: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      platform: platformRule,
+      contentType: contentTypeRule,
+      memoryCount: numberRule(0, 100, true),
+    },
+    required: ["status"],
+  },
+  agent_tool_call: {
+    fields: {
+      status: enumRule(AGENT_TOOL_STATUSES),
+      tool: enumRule(AGENT_TOOLS),
+      candidateCount: numberRule(0, MAX_HOOK_COUNT, true),
+      durationMs: numberRule(0, MAX_GENERATION_DURATION_MS),
+    },
+    required: ["status", "tool"],
+  },
+  agent_revision: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      command: enumRule(AGENT_COMMANDS),
+      round: numberRule(1, 3, true),
+      candidateCount: numberRule(0, MAX_HOOK_COUNT, true),
+    },
+    required: ["status", "command", "round"],
+  },
+  agent_final_confirmed: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      candidateCount: numberRule(1, MAX_HOOK_COUNT, true),
+      durationMs: numberRule(0, MAX_GENERATION_DURATION_MS),
+    },
+    required: ["status", "candidateCount"],
+  },
+  agent_memory_applied: {
+    fields: {
+      status: enumRule(AGENT_STATUSES),
+      memoryCount: numberRule(1, 100, true),
+    },
+    required: ["status", "memoryCount"],
+  },
+  agent_memory_deleted: {
+    fields: {
+      scope: enumRule(AGENT_MEMORY_DELETE_SCOPES),
+      memoryCount: numberRule(0, 100, true),
+    },
+    required: ["scope", "memoryCount"],
+  },
 };
 
 function validateCreatorFeedbackConditions(payload: Record<string, unknown>): void {
@@ -448,7 +566,7 @@ function isDashboardEventType(value: unknown): value is DashboardEventType {
   return typeof value === "string" && EVENT_TYPES.has(value as DashboardEventType);
 }
 
-function validateDashboardPayload(
+export function validateDashboardPayload(
   eventType: DashboardEventType,
   raw: unknown,
 ): Record<string, unknown> {
@@ -503,7 +621,10 @@ export async function readDashboardEvents(): Promise<DashboardEvent[]> {
        FROM dashboard_event ORDER BY timestamp DESC LIMIT $1`,
       [MAX_EVENTS]
     );
-    return result.rows.reverse().map(parseEvent).filter((event): event is DashboardEvent => Boolean(event));
+    return result.rows
+      .reverse()
+      .map(parseEvent)
+      .filter((event: DashboardEvent | null): event is DashboardEvent => Boolean(event));
   }
   await ensureStore();
   try {
@@ -576,8 +697,13 @@ export function summarizeDashboardEvents(
   origin: DashboardDataOrigin = "real_user",
   feedbackFilters: DashboardFeedbackFilters = {},
 ): DashboardSummary {
+  const fromMs = feedbackFilters.from ? Date.parse(feedbackFilters.from) : undefined;
+  const toMs = feedbackFilters.to ? Date.parse(feedbackFilters.to) : undefined;
   const events = allEvents.filter((event) => {
     if (event.dataOrigin !== origin) return false;
+    const timestampMs = Date.parse(event.timestamp);
+    if (fromMs !== undefined && timestampMs < fromMs) return false;
+    if (toMs !== undefined && timestampMs >= toMs) return false;
     if (feedbackFilters.platform && event.payload?.platform !== feedbackFilters.platform) return false;
     if (
       feedbackFilters.promptVersion &&

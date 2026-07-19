@@ -31,6 +31,13 @@ if not exist "node_modules\" (
   )
 )
 
+node scripts\localize-next-devtools.mjs
+if errorlevel 1 (
+  echo Next.js development tools localization failed.
+  pause
+  exit /b 1
+)
+
 if not exist ".env.local" (
   echo .env.local was not found.
   if exist ".env.local.example" (

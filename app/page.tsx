@@ -28,6 +28,8 @@ import { HookGrid } from "@/components/HookGrid";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { FavoritesDrawer } from "@/components/FavoritesDrawer";
 import { CreatorFeedbackDialog } from "@/components/CreatorFeedbackDialog";
+import { CreativeCoachWorkspace } from "@/components/CreativeCoachWorkspace";
+import { isCreativeCoachEnabled } from "@/lib/creativeCoachClient";
 import {
   ArrowClockwise,
   CheckCircle,
@@ -37,6 +39,8 @@ import {
 } from "@phosphor-icons/react";
 
 export default function Home() {
+  const coachEnabled = isCreativeCoachEnabled(process.env.NEXT_PUBLIC_AGENT_COACH_ENABLED);
+  const [mode, setMode] = React.useState<"classic" | "coach">("classic");
   const [topic, setTopic] = React.useState("");
   const [platform, setPlatform] = React.useState<Platform>("xiaohongshu");
   const [contentType, setContentType] = React.useState<ContentType>("video");
@@ -80,6 +84,10 @@ export default function Home() {
   const { history, loaded: historyLoaded, addToHistory, deleteHistory, clearAll, toggleFavorite: toggleHistoryFavorite, updateHook } = useHistory();
   const { favorites, toggleFavorite } = useFavorites();
   const { track, trackSatisfaction, hasDecisionFeedbackForTask, stats } = useAnalytics();
+
+  const handleCoachFinalized = React.useCallback((response: GenerateResponse) => {
+    addToHistory(response);
+  }, [addToHistory]);
 
   React.useEffect(
     () => () => {
@@ -559,6 +567,16 @@ export default function Home() {
         onOpenHistory={() => setHistoryOpen(true)}
       />
 
+      {coachEnabled && (
+        <nav aria-label="创作模式" className="mx-auto flex w-full max-w-7xl px-4 pt-5 md:px-6">
+          <div className="inline-flex rounded-[10px] border border-[var(--color-line)] bg-[var(--color-surface)] p-1">
+            <button aria-pressed={mode === "classic"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("classic")} type="button">经典生成</button>
+            <button aria-pressed={mode === "coach"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("coach")} type="button">创作教练</button>
+          </div>
+        </nav>
+      )}
+
+      {mode === "classic" ? (
       <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 pb-20 md:px-6 md:py-8 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
         <InputPanel
           contentType={contentType}
@@ -660,6 +678,9 @@ export default function Home() {
           )}
         </div>
       </main>
+      ) : (
+        <CreativeCoachWorkspace onFinalized={handleCoachFinalized} track={track} />
+      )}
 
       <HistoryDrawer
         history={history}

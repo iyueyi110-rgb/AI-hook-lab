@@ -1,5 +1,7 @@
 # AI Hook Lab
 
+> Creative Coach Agent setup, API, retention, safety, evaluation, and rollout: [docs/creative-coach-agent.md](docs/creative-coach-agent.md). Classic 10-Hook generation remains available when the feature flag is disabled.
+
 AI Hook Lab 是一个面向内容创作者的爆款 Hook 生成工具。输入主题、平台和内容类型后，应用会调用 DeepSeek 生成 10 个不同风格的开头文案，并支持历史记录与收藏。
 
 ## 功能

@@ -4,7 +4,7 @@ import type {
   FormalEvaluationResult,
   GateResult,
   PromptRole,
-} from "./types.ts";
+} from "./types";
 
 function percent(numerator: number, denominator: number): number {
   return denominator > 0 ? Math.round((numerator / denominator) * 10_000) / 100 : 0;

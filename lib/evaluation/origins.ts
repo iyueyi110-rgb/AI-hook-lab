@@ -1,4 +1,4 @@
-import type { DataOrigin } from "./types.ts";
+import type { DataOrigin } from "./types";
 
 const ORIGIN_ALIASES: Record<string, DataOrigin> = {
   real_user: "real_user",

@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useState } from "react";
 import type { PlatformSatisfaction } from "@/lib/types";
 
-type EventType =
+export type AnalyticsEventType =
   | "generation_start"
   | "generation_complete"
   | "generation_error"
@@ -13,10 +13,18 @@ type EventType =
   | "hook_adopted"
   | "hook_unadopted"
   | "platform_satisfaction"
-  | "creator_feedback";
+  | "creator_feedback"
+  | "agent_run_start"
+  | "agent_clarification"
+  | "agent_brief_confirmed"
+  | "agent_tool_call"
+  | "agent_revision"
+  | "agent_final_confirmed"
+  | "agent_memory_applied"
+  | "agent_memory_deleted";
 
 interface AnalyticsEvent {
-  type: EventType;
+  type: AnalyticsEventType;
   timestamp: string;
   payload?: Record<string, unknown>;
 }
@@ -72,7 +80,7 @@ function sendServerEvent(event: AnalyticsEvent): void {
 export function useAnalytics() {
   const [events, setEvents] = useState<AnalyticsEvent[]>(loadEvents);
 
-  const track = useCallback((type: EventType, payload?: Record<string, unknown>) => {
+  const track = useCallback((type: AnalyticsEventType, payload?: Record<string, unknown>) => {
     const event = { type, timestamp: new Date().toISOString(), payload };
     const next = [...loadEvents(), event].slice(-MAX_EVENTS);
     saveEvents(next);

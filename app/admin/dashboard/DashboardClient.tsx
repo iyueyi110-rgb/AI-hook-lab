@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useCallback, useMemo, useState, type ReactNode } from "react";
 import {
   ArrowClockwise,
+  Brain,
   ChartLineUp,
   CheckCircle,
   CursorClick,
@@ -204,7 +205,7 @@ function Distribution({ title, description, items, formatKey }: {
   );
 }
 
-export function DashboardClient({ initialSummary }: { initialSummary?: DashboardSummary }) {
+export function DashboardClient({ initialSummary, opsAgentEnabled = false }: { initialSummary?: DashboardSummary; opsAgentEnabled?: boolean }) {
   const [summary, setSummary] = useState<DashboardSummary>(initialSummary ?? emptySummary);
   const [origin, setOrigin] = useState<DataOrigin>("real_user");
   const [feedbackPlatform, setFeedbackPlatform] = useState("");
@@ -344,6 +345,12 @@ export function DashboardClient({ initialSummary }: { initialSummary?: Dashboard
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
+            {opsAgentEnabled && (
+              <Link className="button-primary" href="/admin/dashboard/agent">
+                <Brain aria-hidden="true" size={16} weight="bold" />
+                运营分析 Agent
+              </Link>
+            )}
             <Link className="button-secondary" href="/evaluation">
               <Flask aria-hidden="true" size={16} weight="bold" />
               离线评测
