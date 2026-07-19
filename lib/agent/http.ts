@@ -1,3 +1,5 @@
+import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+
 import { DatabaseNotConfiguredError } from "../persistence.ts";
 import { generateCoachHooks } from "../generation/coach.ts";
 import { decideBriefPatch } from "../generation/decision.ts";
@@ -21,6 +23,7 @@ import {
   type CreativeCoachService,
 } from "./service.ts";
 import type { AgentCommand } from "./types.ts";
+import { AgentQuotaError, quotaConfigFromEnv, type AgentRequestContext } from "./quota.ts";
 
 export const MAX_AGENT_JSON_BYTES = 64 * 1024;
 export const AGENT_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
@@ -64,6 +67,14 @@ function safeSecretEqual(supplied: string, expected: string): boolean {
   const left = createHash("sha256").update(supplied).digest();
   const right = createHash("sha256").update(expected).digest();
   return timingSafeEqual(left, right);
+}
+
+function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
+  const secret = env.AGENT_IP_HASH_SECRET?.trim() || (production ? "" : "creative-coach-development-ip-hash");
+  if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
+  const forwarded = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim();
+  const address = forwarded || request.headers.get("x-real-ip")?.trim() || "unknown";
+  return { ipDigest: createHmac("sha256", secret).update(address).digest("hex") };
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -160,6 +171,7 @@ function errorResponse(error: unknown): Response {
   if (error instanceof AgentConflictError) return json({ error: error.code, message: error.message }, 409);
   if (error instanceof AgentNotFoundError || error instanceof CreatorSessionNotFoundError) return json({ error: "not_found", message: "Agent run was not found" }, 404);
   if (error instanceof AgentInputError || error instanceof AgentMemoryValidationError) return json({ error: "validation", message: error.message }, 400);
+  if (error instanceof AgentQuotaError) return json({ error: error.code, message: error.message }, 429, { "Retry-After": String(error.retryAfterSeconds) });
   if (error instanceof ImageAnalysisError) return json({ error: error.title, message: error.message }, error.status);
   if (error instanceof DatabaseNotConfiguredError) return json({ error: "database_unavailable", message: error.message }, 503);
   const externalCode = error && typeof error === "object" && "code" in error && typeof error.code === "string" ? error.code : "";
@@ -199,6 +211,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         }),
         analyzeImage: (file) => analyzeImageFile(file, { apiKey: env.ARK_API_KEY, model: env.ARK_MODEL_ID }),
         turnTimeoutMs: DEFAULT_AGENT_TURN_TIMEOUT_MS,
+        quotaConfig: quotaConfigFromEnv(env),
       });
     }
     if (ready) await ready;
@@ -225,7 +238,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         if (body.brief !== undefined && (!body.brief || typeof body.brief !== "object" || Array.isArray(body.brief))) throw new HttpError(400, "brief must be an object");
         if (body.hasImage !== undefined && typeof body.hasImage !== "boolean") throw new HttpError(400, "hasImage must be boolean");
         if (body.ignoreMemory !== undefined && typeof body.ignoreMemory !== "boolean") throw new HttpError(400, "ignoreMemory must be boolean");
-        const result = await (await getService()).createRun(cookieValue(request), { brief: body.brief as Record<string, unknown> | undefined, hasImage: body.hasImage as boolean | undefined, ignoreMemory: body.ignoreMemory as boolean | undefined });
+        const result = await (await getService()).createRun(cookieValue(request), { brief: body.brief as Record<string, unknown> | undefined, hasImage: body.hasImage as boolean | undefined, ignoreMemory: body.ignoreMemory as boolean | undefined }, agentRequestContext(request, env, production));
         return json(result.response, 200, { "Set-Cookie": sessionCookie(result.sessionToken, production), "Cache-Control": "no-store" });
       });
     },
@@ -251,7 +264,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         assertSameOrigin(request);
         const body = await readJson(request);
         exactKeys(body, ["expectedRevision", "command"], ["expectedRevision", "command"]);
-        return json(await (await getService()).submitTurn(cookieValue(request), nonEmpty(runId, "runId", 200), integer(body.expectedRevision, "expectedRevision"), parseCommand(body.command)));
+        return json(await (await getService()).submitTurn(cookieValue(request), nonEmpty(runId, "runId", 200), integer(body.expectedRevision, "expectedRevision"), parseCommand(body.command), agentRequestContext(request, env, production)));
       });
     },
     async image(request: Request, runId: string): Promise<Response> {
@@ -267,7 +280,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         if (file.size > MAX_IMAGE_BYTES) throw new HttpError(413, "Image is too large");
         const revisionValue = form.get("expectedRevision");
         if (typeof revisionValue !== "string" || !/^\d+$/.test(revisionValue)) throw new HttpError(400, "expectedRevision is required");
-        return json(await (await getService()).uploadImage(cookieValue(request), nonEmpty(runId, "runId", 200), integer(Number(revisionValue), "expectedRevision"), file));
+        return json(await (await getService()).uploadImage(cookieValue(request), nonEmpty(runId, "runId", 200), integer(Number(revisionValue), "expectedRevision"), file, agentRequestContext(request, env, production)));
       });
     },
     async getMemory(request: Request): Promise<Response> {
@@ -306,6 +319,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
           removedRuns: result.removedRunIds.length,
           removedSessions: result.removedSessionIds.length,
           removedMemory: result.removedMemoryCount,
+          removedUsage: result.removedUsageCount,
         }, 200, { "Cache-Control": "no-store" });
       });
     },
@@ -314,4 +328,3 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
 }
 
 export const agentHttpHandlers = createAgentHttpHandlers();
-import { createHash, timingSafeEqual } from "node:crypto";

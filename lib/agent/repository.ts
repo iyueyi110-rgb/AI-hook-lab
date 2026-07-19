@@ -9,6 +9,7 @@ import { recordMemory } from "./memory.ts";
 import { assertExpectedRevision } from "./machine.ts";
 import { AGENT_SCHEMA_SQL } from "./schema.ts";
 import type { AgentRun, Memory, MemoryKey } from "./types.ts";
+import type { AgentQuotaUsage } from "./quota.ts";
 
 export const CREATOR_SESSION_COOKIE = "ai-hook-creator-session";
 export const CREATOR_SESSION_COOKIE_NAME = CREATOR_SESSION_COOKIE;
@@ -48,12 +49,14 @@ export interface AgentState {
   creatorSessions: CreatorSession[];
   runs: StoredAgentRun[];
   memories: CreatorMemory[];
+  usage?: AgentQuotaUsage[];
 }
 
 export interface AgentCleanupResult {
   removedRunIds: string[];
   removedSessionIds: string[];
   removedMemoryCount: number;
+  removedUsageCount: number;
 }
 
 export interface AgentRepository {
@@ -97,7 +100,7 @@ export class UnsupportedAgentSchemaError extends Error {
 }
 
 export function createInitialAgentState(): AgentState {
-  return { schemaVersion: 1, creatorSessions: [], runs: [], memories: [] };
+  return { schemaVersion: 1, creatorSessions: [], runs: [], memories: [], usage: [] };
 }
 
 export function hashCreatorSessionToken(token: string): string {
@@ -206,13 +209,21 @@ export function cleanupExpiredAgentData(state: AgentState, now = new Date()): Ag
     })
     .map((run) => run.id));
   const previousMemoryCount = state.memories.length;
+  const previousUsageCount = state.usage?.length ?? 0;
+  const expiredSessionDigests = new Set(state.creatorSessions.filter((session) => removedSessionIds.has(session.id)).map((session) => session.tokenDigest));
   state.creatorSessions = state.creatorSessions.filter((session) => !removedSessionIds.has(session.id));
   state.runs = state.runs.filter((run) => !removedRunIds.has(run.id));
   state.memories = state.memories.filter((memory) => !removedSessionIds.has(memory.creatorSessionId));
+  state.usage = (state.usage ?? []).filter((usage) => {
+    if (usage.scopeType === "session" && expiredSessionDigests.has(usage.scopeId)) return false;
+    const startedAt = Date.parse(usage.windowStartedAt);
+    return Number.isFinite(startedAt) && startedAt >= threshold;
+  });
   return {
     removedRunIds: [...removedRunIds],
     removedSessionIds: [...removedSessionIds],
     removedMemoryCount: previousMemoryCount - state.memories.length,
+    removedUsageCount: previousUsageCount - state.usage.length,
   };
 }
 
@@ -268,6 +279,7 @@ export function validateAgentState(state: unknown, storedSchemaVersion?: unknown
 
 function normalizeState(state: AgentState, now = new Date()): void {
   validateAgentState(state);
+  state.usage ??= [];
   cleanupExpiredAgentData(state, now);
   state.runs = state.runs.map((run) => {
     const originalMessageCount = run.messages.length;

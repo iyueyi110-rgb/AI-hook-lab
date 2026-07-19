@@ -14,6 +14,12 @@ import { compareCandidates } from "./candidates.ts";
 import { AgentConflictError, assertExpectedRevision, getAllowedCommands, transition } from "./machine.ts";
 import { assertToolAllowed } from "./tools.ts";
 import {
+  DEFAULT_AGENT_QUOTA,
+  consumeAgentQuota,
+  type AgentQuotaConfig,
+  type AgentRequestContext,
+} from "./quota.ts";
+import {
   AgentNotFoundError,
   type AgentRepository,
   type CreatorSession,
@@ -99,6 +105,7 @@ export interface CreativeCoachDependencies {
   operationLeaseMs?: number;
   turnTimeoutMs?: number;
   authorizeTool?: (status: StoredAgentRun["status"], tool: ToolName) => void;
+  quotaConfig?: AgentQuotaConfig;
 }
 
 function defaultId(prefix: string): string {
@@ -302,6 +309,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   const now = dependencies.now ?? (() => new Date());
   const id = dependencies.id ?? defaultId;
   const authorizeTool = dependencies.authorizeTool ?? assertToolAllowed;
+  const quotaConfig = dependencies.quotaConfig ?? DEFAULT_AGENT_QUOTA;
   const monotonicNow = dependencies.monotonicNow ?? (() => performance.now());
   const operationLeaseMs = Number.isFinite(dependencies.operationLeaseMs) && dependencies.operationLeaseMs! > 0
     ? dependencies.operationLeaseMs!
@@ -413,6 +421,18 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     });
   }
 
+  function requestContext(context?: AgentRequestContext): AgentRequestContext {
+    return context ?? { ipDigest: "0".repeat(64) };
+  }
+
+  function reserveModelQuota(state: import("./repository.ts").AgentState, session: CreatorSession, context: AgentRequestContext): void {
+    // Reserve the worst-case initial + one repair call atomically. Unused
+    // capacity is intentionally not refunded so concurrent requests cannot
+    // oversubscribe a paid provider window.
+    consumeAgentQuota(state, session, context, "model_call", now(), quotaConfig);
+    consumeAgentQuota(state, session, context, "model_call", now(), quotaConfig);
+  }
+
   async function recoverOwnedRun(ownerId: string, runId: string): Promise<StoredAgentRun> {
     return repository.transaction((state) => {
       const run = findOwnedRun(state, runId, ownerId);
@@ -487,11 +507,14 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       return repository.cleanup(cleanupNow);
     },
 
-    async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }): Promise<{ sessionToken: string; response: CoachRunResponse }> {
+    async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }, context?: AgentRequestContext): Promise<{ sessionToken: string; response: CoachRunResponse }> {
       assertSafeBriefInput(input.brief ?? {});
-      const owner = await sessionFromToken(sessionToken, true);
-      const response = await repository.transaction((state) => {
-        const memory = input.ignoreMemory ? { entries: [] } : listCreatorMemory(state, owner.session.id, now());
+      const result = await repository.transaction((state) => {
+        const existing = resolveCreatorSession(state, sessionToken, now());
+        const created = existing ? undefined : createCreatorSession(state, now());
+        const owner = existing ?? created!.session;
+        consumeAgentQuota(state, owner, requestContext(context), "run_create", now(), quotaConfig);
+        const memory = input.ignoreMemory ? { entries: [] } : listCreatorMemory(state, owner.id, now());
         const source = applyMemoryToBrief(input.brief ?? {}, memory.entries);
         const normalized = normalizeBrief(source, 0);
         const createdAt = now().toISOString();
@@ -511,16 +534,16 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           messages.push({ id: id("message"), role: "assistant", content: questionFor(normalized.missing[0] ?? "topic"), createdAt });
         }
         const run: StoredAgentRun = {
-          id: id("run"), creatorSessionId: owner.session.id, revision: 0, status, brief,
+          id: id("run"), creatorSessionId: owner.id, revision: 0, status, brief,
           briefDraft: brief ?? source as Partial<CreativeBrief>,
           messages, candidates: [], toolCalls: [], toolResults: [], approvals: [], memory,
           revisionRounds: 0, clarificationAttempts, createdAt, updatedAt: createdAt,
           summary: { messageCount: messages.length, latestMessageAt: messages.at(-1)?.createdAt, candidateCount: 0, status },
         };
         state.runs.push(run);
-        return asResponse(run, messages);
+        return { response: asResponse(run, messages), token: created?.token };
       });
-      return { sessionToken: owner.token ?? sessionToken!, response };
+      return { sessionToken: result.token ?? sessionToken!, response: result.response };
     },
 
     async getRun(sessionToken: string | undefined, runId: string): Promise<CoachRunResponse> {
@@ -550,7 +573,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       });
     },
 
-    async submitTurn(sessionToken: string | undefined, runId: string, expectedRevision: number, command: AgentCommand): Promise<CoachRunResponse> {
+    async submitTurn(sessionToken: string | undefined, runId: string, expectedRevision: number, command: AgentCommand, context?: AgentRequestContext): Promise<CoachRunResponse> {
       const deadlineAt = monotonicNow() + turnTimeoutMs;
       if (command.type === "message" && command.text.length > MAX_AGENT_MESSAGE_LENGTH) throw new AgentInputError("Message is too long");
       if (command.type === "message") assertSafeText(command.text, "message", MAX_AGENT_MESSAGE_LENGTH);
@@ -575,6 +598,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const direct = normalizeBrief({ ...currentBrief, ...directPatch }, run.clarificationAttempts ?? 0);
           const directMissing = direct.kind === "complete" ? undefined : direct.missing[0];
           if (missingField && dependencies.decideBriefPatch && direct.kind !== "complete" && directMissing === missingField) {
+            reserveModelQuota(state, owner.session, requestContext(context));
             const operation = activeOperation("decision", timestamp);
             const operationId = operation.id;
             run.activeOperation = operation;
@@ -611,6 +635,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.activeOperation = operation;
           const tool: ToolName = pending.kind === "initial" ? "generate_hooks" : pending.kind === "rewrite" ? "rewrite_hook" : "regenerate_batch";
           authorizeGenerationOperation(run, operation, tool);
+          reserveModelQuota(state, owner.session, requestContext(context));
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, retry: true }, status: "requested", createdAt: timestamp });
           asResponse(run);
           return { kind: "generate" as const, operationId, request: { ...pending, brief: run.brief, sourceCandidate } satisfies CoachGenerationRequest, revision: run.revision };
@@ -631,6 +656,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           const operationId = operation.id;
           run.activeOperation = operation;
           authorizeGenerationOperation(run, operation, "generate_hooks");
+          reserveModelQuota(state, owner.session, requestContext(context));
           run.toolCalls.push({ id: id("tool"), tool: "generate_hooks", input: { expectedCount: 10 }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -654,6 +680,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           run.activeOperation = operation;
           const tool: ToolName = command.type === "rewrite_candidate" ? "rewrite_hook" : "regenerate_batch";
           authorizeGenerationOperation(run, operation, tool);
+          reserveModelQuota(state, owner.session, requestContext(context));
           run.toolCalls.push({ id: id("tool"), tool, input: { expectedCount: pending.count, ...(command.type === "rewrite_candidate" ? { candidateId: sourceCandidate!.id } : { hasReason: Boolean(command.reason) }) }, status: "requested", createdAt: timestamp });
           run.updatedAt = timestamp;
           asResponse(run);
@@ -742,7 +769,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       return completeGeneration(owner.session.id, runId, prepared.request, prepared.revision, prepared.operationId, deadlineAt);
     },
 
-    async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File): Promise<CoachRunResponse> {
+    async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File, context?: AgentRequestContext): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
       await recoverOwnedRun(owner.session.id, runId);
       const preview = findOwnedRun(await repository.read(), runId, owner.session.id);
@@ -761,6 +788,7 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         const operationId = operation.id;
         run.activeOperation = operation;
         authorizeTool(run.status, "analyze_image");
+        consumeAgentQuota(state, owner.session, requestContext(context), "image_call", now(), quotaConfig);
         run.toolCalls.push({ id: callId, tool: "analyze_image", input: { mimeType: file.type, size: file.size }, status: "requested", createdAt: now().toISOString() });
         run.updatedAt = now().toISOString();
         asResponse(run);

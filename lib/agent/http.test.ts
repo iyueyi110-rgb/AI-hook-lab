@@ -6,6 +6,7 @@ import type { GenerateResponse } from "../types.ts";
 import { MemoryAgentRepository } from "./repository.ts";
 import { createCreativeCoachService, type CoachGenerationRequest } from "./service.ts";
 import { createAgentHttpHandlers } from "./http.ts";
+import { DEFAULT_AGENT_QUOTA } from "./quota.ts";
 
 const origin = "http://localhost:3000";
 const brief = { topic: "AI 周报", platform: "douyin", contentType: "video" };
@@ -249,5 +250,32 @@ test("scheduled cleanup is hidden without configuration and requires its bearer 
   assert.equal((await handlers.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer wrong" } }))).status, 401);
   const response = await handlers.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer cleanup-secret" } }));
   assert.equal(response.status, 200);
-  assert.deepEqual(Object.keys(await response.json()).sort(), ["removedMemory", "removedRuns", "removedSessions"]);
+  assert.deepEqual(Object.keys(await response.json()).sort(), ["removedMemory", "removedRuns", "removedSessions", "removedUsage"]);
+});
+
+test("production requires an IP hash secret and same-IP cookie rotation cannot bypass quotas", async () => {
+  let id = 0;
+  const service = createCreativeCoachService({
+    repository: new MemoryAgentRepository(),
+    generate: async (request) => generated(request),
+    analyzeImage: async () => ({ topic: "image", imageDescription: "safe", suggestedPlatform: "douyin", suggestedContentType: "video", suggestedEmotionTone: "curious" }),
+    id: (prefix) => `${prefix}-${++id}`,
+    quotaConfig: { ...DEFAULT_AGENT_QUOTA, ipRunCreates: 2, sessionRunCreates: 5, maxActiveRunsPerSession: 5 },
+  });
+  const missingSecret = createAgentHttpHandlers({ service, enabled: true, production: true, env: { NODE_ENV: "production" } as NodeJS.ProcessEnv });
+  assert.equal((await missingSecret.createRun(jsonRequest("/api/agent/runs", { brief }))).status, 503);
+
+  const handlers = createAgentHttpHandlers({
+    service,
+    enabled: true,
+    production: true,
+    env: { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "test-ip-secret" } as NodeJS.ProcessEnv,
+  });
+  const first = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
+  const second = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
+  const rejected = await handlers.createRun(jsonRequest("/api/agent/runs", { brief }));
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal(rejected.status, 429);
+  assert.match(rejected.headers.get("retry-after") ?? "", /^\d+$/);
 });
