@@ -15,6 +15,7 @@ import {
   UnsupportedAgentSchemaError,
   assertOwnedRunRevision,
   cleanupStaleRuns,
+  cleanupExpiredAgentData,
   createCreatorSession,
   createInitialAgentState,
   deleteCreatorMemory,
@@ -112,14 +113,35 @@ test("run ownership hides missing and other-session runs, while stale revisions 
   assert.throws(() => assertOwnedRunRevision(state, "run-a", "owner", 1), AgentConflictError);
 });
 
-test("cleanup deletes only stale terminal runs and all their nested data", () => {
+test("cleanup deletes stale runs in every status but preserves a live operation lease", () => {
   const state = createInitialAgentState();
+  state.creatorSessions.push({ id: "owner", tokenDigest: "digest", createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2027-01-01T00:00:00.000Z", lastSeenAt: "2026-01-01T00:00:00.000Z" });
   state.runs.push(
     run("old", "owner", { status: "completed", updatedAt: "2026-01-01T00:00:00.000Z", messages: [{ id: "message", role: "user", content: "x", createdAt: "2026-01-01" }] }),
-    run("active", "owner", { status: "generating", updatedAt: "2026-01-01T00:00:00.000Z" }),
+    run("abandoned", "owner", { status: "reviewing", updatedAt: "2026-01-01T00:00:00.000Z" }),
+    run("leased", "owner", { status: "generating", updatedAt: "2026-01-01T00:00:00.000Z", activeOperation: { id: "op", kind: "generation", startedAt: "2026-01-01T00:00:00.000Z", expiresAt: "2026-02-01T00:01:00.000Z" } }),
   );
-  assert.deepEqual(cleanupStaleRuns(state, new Date("2026-02-01T00:00:00.000Z")), ["old"]);
-  assert.deepEqual(state.runs.map((item) => item.id), ["active"]);
+  assert.deepEqual(cleanupStaleRuns(state, new Date("2026-02-01T00:00:00.000Z")), ["old", "abandoned"]);
+  assert.deepEqual(state.runs.map((item) => item.id), ["leased"]);
+});
+
+test("cleanup expires sessions and cascades their runs and memory", () => {
+  const state = createInitialAgentState();
+  state.creatorSessions.push(
+    { id: "expired", tokenDigest: "expired-digest", createdAt: "2025-01-01T00:00:00.000Z", expiresAt: "2026-01-01T00:00:00.000Z", lastSeenAt: "2025-01-01T00:00:00.000Z" },
+    { id: "live", tokenDigest: "live-digest", createdAt: "2026-01-01T00:00:00.000Z", expiresAt: "2027-01-01T00:00:00.000Z", lastSeenAt: "2026-01-01T00:00:00.000Z" },
+  );
+  state.runs.push(run("expired-run", "expired", { updatedAt: "2026-01-31T00:00:00.000Z" }), run("live-run", "live", { updatedAt: "2026-01-31T00:00:00.000Z" }));
+  state.memories.push(
+    { creatorSessionId: "expired", memory: { entries: [{ key: "preferred_tone", value: "curious", confidence: 0.6 }] } },
+    { creatorSessionId: "live", memory: { entries: [] } },
+  );
+  const result = cleanupExpiredAgentData(state, new Date("2026-02-01T00:00:00.000Z"));
+  assert.deepEqual(result.removedSessionIds, ["expired"]);
+  assert.deepEqual(result.removedRunIds, ["expired-run"]);
+  assert.equal(result.removedMemoryCount, 1);
+  assert.deepEqual(state.runs.map((item) => item.id), ["live-run"]);
+  assert.deepEqual(state.memories.map((item) => item.creatorSessionId), ["live"]);
 });
 
 test("normal repository operations persist stale terminal cleanup but retain active runs, sessions, and memory", async () => {
@@ -129,7 +151,7 @@ test("normal repository operations persist stale terminal cleanup but retain act
     const session = createCreatorSession(state).session;
     sessionId = session.id;
     recordCreatorMemory(state, session.id, { key: "default_platform", value: "douyin" });
-    state.runs.push(run("old", session.id), run("active", session.id));
+    state.runs.push(run("old", session.id, { updatedAt: new Date().toISOString() }), run("active", session.id, { updatedAt: new Date().toISOString() }));
   });
   await repository.transaction((state) => {
     const old = state.runs.find((item) => item.id === "old")!;
@@ -148,13 +170,29 @@ test("JSON reads persist stale cleanup while retaining session and memory state"
   const state = createInitialAgentState();
   state.creatorSessions.push({ id: "session", tokenDigest: "digest", createdAt: "2026-01-01", expiresAt: "2099-01-01", lastSeenAt: "2026-01-01" });
   state.memories.push({ creatorSessionId: "session", memory: { entries: [{ key: "default_platform", value: "douyin", confidence: 0.6 }] } });
-  state.runs.push(run("old", "session", { status: "failed", updatedAt: "2026-01-01T00:00:00.000Z" }), run("active", "session", { status: "generating", updatedAt: "2026-01-01T00:00:00.000Z" }));
+  state.runs.push(run("old", "session", { status: "failed", updatedAt: "2026-01-01T00:00:00.000Z" }), run("active", "session", { status: "generating", updatedAt: "2098-01-01T00:00:00.000Z" }));
   await writeFile(file, JSON.stringify(state), "utf8");
   const persisted = await new JsonAgentRepository(file).read();
   assert.deepEqual(persisted.runs.map((item) => item.id), ["active"]);
   assert.equal(persisted.creatorSessions.length, 1);
   assert.equal(persisted.memories.length, 1);
   assert.deepEqual(JSON.parse(await readFile(file, "utf8")).runs.map((item: StoredAgentRun) => item.id), ["active"]);
+});
+
+test("explicit cleanup persists stale nonterminal and expired-session removal in JSON", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "agent-store-"));
+  const file = path.join(directory, "agent.json");
+  const repository = new JsonAgentRepository(file);
+  await repository.transaction((state) => {
+    state.creatorSessions.push({ id: "expired", tokenDigest: "digest", createdAt: "2098-01-01T00:00:00.000Z", expiresAt: "2098-06-01T00:00:00.000Z", lastSeenAt: "2098-01-01T00:00:00.000Z" });
+    state.runs.push(run("abandoned", "expired", { status: "reviewing", updatedAt: "2098-05-01T00:00:00.000Z" }));
+    state.memories.push({ creatorSessionId: "expired", memory: { entries: [{ key: "preferred_tone", value: "curious", confidence: 0.6 }] } });
+  });
+  const result = await repository.cleanup(new Date("2099-02-01T00:00:00.000Z"));
+  assert.equal(result.removedSessionIds.includes("expired"), true);
+  assert.equal((await repository.read()).runs.length, 0);
+  const persisted = JSON.parse(await readFile(file, "utf8"));
+  assert.equal(JSON.stringify(persisted).includes("curious"), false);
 });
 
 test("persistence retains the most recent 20 messages and a structured summary", async () => {

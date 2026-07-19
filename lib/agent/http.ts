@@ -23,6 +23,7 @@ import {
 import type { AgentCommand } from "./types.ts";
 
 export const MAX_AGENT_JSON_BYTES = 64 * 1024;
+export const AGENT_CLEANUP_INTERVAL_MS = 15 * 60 * 1000;
 
 interface HandlerOptions {
   service?: CreativeCoachService;
@@ -57,6 +58,12 @@ function assertSameOrigin(request: Request): void {
   const expected = new URL(request.url).origin;
   const supplied = request.headers.get("origin");
   if (!supplied || supplied !== expected) throw new HttpError(403, "Cross-origin mutation denied");
+}
+
+function safeSecretEqual(supplied: string, expected: string): boolean {
+  const left = createHash("sha256").update(supplied).digest();
+  const right = createHash("sha256").update(expected).digest();
+  return timingSafeEqual(left, right);
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {
@@ -172,6 +179,8 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
   const production = options.production ?? env.NODE_ENV === "production";
   let service = options.service;
   let ready: Promise<void> | undefined;
+  let lastCleanupAt = 0;
+  let cleanupInFlight: Promise<void> | undefined;
 
   function hidden(): Response | undefined { return enabled ? undefined : json({ error: "not_found", message: "Not found" }, 404); }
   async function getService(): Promise<CreativeCoachService> {
@@ -193,6 +202,12 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
       });
     }
     if (ready) await ready;
+    const cleanupNow = Date.now();
+    if (typeof service.cleanup === "function" && cleanupNow - lastCleanupAt >= AGENT_CLEANUP_INTERVAL_MS && !cleanupInFlight) {
+      lastCleanupAt = cleanupNow;
+      cleanupInFlight = service.cleanup(new Date(cleanupNow)).then(() => undefined).finally(() => { cleanupInFlight = undefined; });
+    }
+    if (cleanupInFlight) await cleanupInFlight;
     return service;
   }
   async function handle(operation: () => Promise<Response>): Promise<Response> {
@@ -279,8 +294,24 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         return json({ ok: true });
       });
     },
+    async cleanup(request: Request): Promise<Response> {
+      return handle(async () => {
+        const expected = env.AGENT_CLEANUP_TOKEN?.trim();
+        if (!expected) return json({ error: "not_found", message: "Not found" }, 404);
+        const authorization = request.headers.get("authorization") ?? "";
+        const supplied = authorization.startsWith("Bearer ") ? authorization.slice(7) : "";
+        if (!supplied || !safeSecretEqual(supplied, expected)) return json({ error: "unauthorized", message: "Unauthorized" }, 401);
+        const result = await (await getService()).cleanup(new Date());
+        return json({
+          removedRuns: result.removedRunIds.length,
+          removedSessions: result.removedSessionIds.length,
+          removedMemory: result.removedMemoryCount,
+        }, 200, { "Cache-Control": "no-store" });
+      });
+    },
   };
   return handlers;
 }
 
 export const agentHttpHandlers = createAgentHttpHandlers();
+import { createHash, timingSafeEqual } from "node:crypto";

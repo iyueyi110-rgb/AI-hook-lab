@@ -483,6 +483,10 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
   }
 
   return {
+    async cleanup(cleanupNow = now()): Promise<import("./repository.ts").AgentCleanupResult> {
+      return repository.cleanup(cleanupNow);
+    },
+
     async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }): Promise<{ sessionToken: string; response: CoachRunResponse }> {
       assertSafeBriefInput(input.brief ?? {});
       const owner = await sessionFromToken(sessionToken, true);

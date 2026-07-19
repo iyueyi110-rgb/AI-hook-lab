@@ -50,10 +50,17 @@ export interface AgentState {
   memories: CreatorMemory[];
 }
 
+export interface AgentCleanupResult {
+  removedRunIds: string[];
+  removedSessionIds: string[];
+  removedMemoryCount: number;
+}
+
 export interface AgentRepository {
   initialize(): Promise<void>;
   read(): Promise<AgentState>;
   transaction<T>(mutator: (state: AgentState) => T | Promise<T>): Promise<T>;
+  cleanup(now?: Date): Promise<AgentCleanupResult>;
   readonly mode: "postgres" | "json";
 }
 
@@ -175,11 +182,43 @@ export function deleteCreatorMemory(state: AgentState, creatorSessionId: string,
   entry.memory = { entries: entry.memory.entries.filter((item) => item.key !== key || (value !== undefined && item.value !== value)) };
 }
 
-export function cleanupStaleRuns(state: AgentState, now = new Date()): string[] {
+function validFutureDate(value: string | undefined, now: Date): boolean {
+  const parsed = Date.parse(value ?? "");
+  return Number.isFinite(parsed) && parsed > now.getTime();
+}
+
+export function cleanupExpiredAgentData(state: AgentState, now = new Date()): AgentCleanupResult {
   const threshold = now.getTime() - STALE_RUN_TTL_DAYS * 24 * 60 * 60 * 1000;
-  const removable = new Set(state.runs.filter((run) => ["completed", "failed", "cancelled"].includes(run.status) && Date.parse(run.updatedAt) < threshold).map((run) => run.id));
-  state.runs = state.runs.filter((run) => !removable.has(run.id));
-  return [...removable];
+  const removedSessionIds = new Set(state.creatorSessions
+    .filter((session) => !validFutureDate(session.expiresAt, now))
+    .map((session) => session.id));
+  const knownSessionIds = new Set(state.creatorSessions.map((session) => session.id));
+  const removedRunIds = new Set(state.runs
+    .filter((run) => {
+      if (removedSessionIds.has(run.creatorSessionId)) return true;
+      // Production runs always have an owning session. Preserve legacy/orphan
+      // records here so a migration can handle them explicitly instead of
+      // silently deleting unknown data.
+      if (!knownSessionIds.has(run.creatorSessionId)) return false;
+      const updatedAt = Date.parse(run.updatedAt);
+      if (Number.isFinite(updatedAt) && updatedAt >= threshold) return false;
+      return !run.activeOperation || !validFutureDate(run.activeOperation.expiresAt, now);
+    })
+    .map((run) => run.id));
+  const previousMemoryCount = state.memories.length;
+  state.creatorSessions = state.creatorSessions.filter((session) => !removedSessionIds.has(session.id));
+  state.runs = state.runs.filter((run) => !removedRunIds.has(run.id));
+  state.memories = state.memories.filter((memory) => !removedSessionIds.has(memory.creatorSessionId));
+  return {
+    removedRunIds: [...removedRunIds],
+    removedSessionIds: [...removedSessionIds],
+    removedMemoryCount: previousMemoryCount - state.memories.length,
+  };
+}
+
+/** @deprecated Use cleanupExpiredAgentData for run and session retention. */
+export function cleanupStaleRuns(state: AgentState, now = new Date()): string[] {
+  return cleanupExpiredAgentData(state, now).removedRunIds;
 }
 
 function summaryFor(run: StoredAgentRun, originalMessageCount = run.messages.length): AgentRunSummary {
@@ -229,7 +268,7 @@ export function validateAgentState(state: unknown, storedSchemaVersion?: unknown
 
 function normalizeState(state: AgentState, now = new Date()): void {
   validateAgentState(state);
-  cleanupStaleRuns(state, now);
+  cleanupExpiredAgentData(state, now);
   state.runs = state.runs.map((run) => {
     const originalMessageCount = run.messages.length;
     const messages = trimRecentMessages(run.messages);
@@ -267,6 +306,9 @@ export class MemoryAgentRepository implements AgentRepository {
       return result;
     });
   }
+  async cleanup(now = new Date()): Promise<AgentCleanupResult> {
+    return this.transaction((state) => cleanupExpiredAgentData(state, now));
+  }
 }
 
 // This serializes same-file repositories only within one Node.js process. Multi-process writers must use PostgreSQL.
@@ -299,6 +341,9 @@ export class JsonAgentRepository implements AgentRepository {
       await this.write(state);
       return value;
     });
+  }
+  async cleanup(now = new Date()): Promise<AgentCleanupResult> {
+    return this.transaction((state) => cleanupExpiredAgentData(state, now));
   }
   private async loadAndPersist(): Promise<AgentState> {
     await mkdir(path.dirname(this.filePath), { recursive: true });
@@ -353,6 +398,9 @@ export class PostgresAgentRepository implements AgentRepository {
       return value;
     } catch (error) { await client.query("ROLLBACK"); throw error; }
     finally { client.release(); }
+  }
+  async cleanup(now = new Date()): Promise<AgentCleanupResult> {
+    return this.transaction((state) => cleanupExpiredAgentData(state, now));
   }
 }
 

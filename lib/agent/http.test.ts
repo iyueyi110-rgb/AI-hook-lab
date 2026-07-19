@@ -239,3 +239,15 @@ test("production model wiring shares the Agent turn budget and the route window 
   assert.match(httpSource, /generate:\s*\(request,\s*execution\)\s*=>[\s\S]*?generateCoachHooks\(request,\s*\{[^}]*timeoutMs:\s*execution\.timeoutMs/);
   assert.match(httpSource, /decideBriefPatch:\s*\(request,\s*execution\)\s*=>[\s\S]*?decideBriefPatch\(request,\s*\{[^}]*timeoutMs:\s*execution\.timeoutMs/);
 });
+
+test("scheduled cleanup is hidden without configuration and requires its bearer secret", async () => {
+  const service = setup().service!;
+  const hidden = createAgentHttpHandlers({ service, enabled: true, env: {} as NodeJS.ProcessEnv });
+  assert.equal((await hidden.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST" }))).status, 404);
+
+  const handlers = createAgentHttpHandlers({ service, enabled: true, env: { NODE_ENV: "test", AGENT_CLEANUP_TOKEN: "cleanup-secret" } as NodeJS.ProcessEnv });
+  assert.equal((await handlers.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer wrong" } }))).status, 401);
+  const response = await handlers.cleanup(new Request(`${origin}/api/agent/cleanup`, { method: "POST", headers: { authorization: "Bearer cleanup-secret" } }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(Object.keys(await response.json()).sort(), ["removedMemory", "removedRuns", "removedSessions"]);
+});
