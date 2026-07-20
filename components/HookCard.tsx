@@ -87,8 +87,12 @@ export function HookCard({
 
   return (
     <article
-      className={`border-b border-[var(--color-line)] bg-[var(--color-surface)] p-4 transition-colors last:border-b-0 sm:p-5 ${
-        featured ? "border-t-2 border-t-[var(--color-accent)]" : "hover:bg-[#fafaf8]"
+      className={`border-b border-[var(--color-line)] p-4 transition-colors last:border-b-0 sm:p-5 ${
+        selected
+          ? "border-l-4 border-l-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+          : "bg-[var(--color-surface)]"
+      } ${
+        featured ? "border-t-2 border-t-[var(--color-accent)]" : selected ? "" : "hover:bg-[#fafaf8]"
       }`}
     >
       <div className="flex items-start justify-between gap-4">
@@ -152,7 +156,7 @@ export function HookCard({
               type="button"
             >
               <CheckCircle aria-hidden="true" size={16} weight={selected ? "fill" : "bold"} />
-              {selected ? "已选择" : "选择采用"}
+              {selected ? "已加入对比" : "加入对比"}
             </button>
           </>
         ) : (

@@ -20,7 +20,7 @@ interface HookGridProps {
     canRewrite: boolean;
     canSelect: boolean;
     canReject: boolean;
-    selectedId?: string;
+    selectedIds: string[];
     recommendedIds: string[];
     comparisonExplanations: string[];
     rejecting?: boolean;
@@ -88,7 +88,11 @@ export function HookGrid({
             候选 Hook
           </h2>
           <p className="mt-1 text-xs text-[var(--color-muted)]">
-            {hooks.length} 个候选，{coachActions ? "推荐只用于解释比较，最终选择由你决定。" : "模型分用于排序，最终选择由你决定。"}
+            {hooks.length} 个候选，{coachActions
+              ? coachActions.selectedIds.length > 0
+                ? `已加入 ${coachActions.selectedIds.length} 条到右侧对比清单。`
+                : "可以多选加入右侧对比清单，最终选择仍由你决定。"
+              : "模型分用于排序，最终选择由你决定。"}
           </p>
         </div>
         <button className="button-secondary self-start sm:self-auto" onClick={handleCopyAll} type="button">
@@ -113,7 +117,7 @@ export function HookGrid({
         onRewrite={coachActions?.onRewrite}
         onSelect={coachActions?.onSelect}
         recommendationRank={coachActions ? 1 : undefined}
-        selected={coachActions?.selectedId === bestHook.id}
+        selected={coachActions?.selectedIds.includes(bestHook.id)}
       />
 
       {remainingHooks.map((hook) => (
@@ -133,7 +137,7 @@ export function HookGrid({
           onRewrite={coachActions?.onRewrite}
           onSelect={coachActions?.onSelect}
           recommendationRank={coachActions && coachActions.recommendedIds.includes(hook.id) ? coachActions.recommendedIds.indexOf(hook.id) + 1 : undefined}
-          selected={coachActions?.selectedId === hook.id}
+          selected={coachActions?.selectedIds.includes(hook.id)}
         />
       ))}
 
