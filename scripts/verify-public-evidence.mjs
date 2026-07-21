@@ -5,6 +5,11 @@ import {
   EVALUATION_CASES,
   validateCanonicalCases,
 } from "../lib/evaluation/seeds.ts";
+import {
+  DEFAULT_CONTROLLED_TEST_PATH,
+  analyzeControlledTestCsv,
+  validateControlledEvidenceClaims,
+} from "./analyze-controlled-test.mjs";
 
 const root = process.cwd();
 const manifestPath = path.join(root, "docs/evidence/evidence-manifest.json");
@@ -37,6 +42,17 @@ for (const claim of manifest.claims ?? []) {
   }
 }
 
+let controlledTestAnalysis = null;
+try {
+  const controlledTestCsv = await readFile(path.join(root, DEFAULT_CONTROLLED_TEST_PATH), "utf8");
+  controlledTestAnalysis = analyzeControlledTestCsv(controlledTestCsv);
+} catch (error) {
+  if (error?.code !== "ENOENT") {
+    errors.push(`Controlled-test evidence is invalid: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+errors.push(...validateControlledEvidenceClaims(manifest.claims ?? [], controlledTestAnalysis));
+
 const topics = JSON.parse(await readFile(path.join(root, "eval/topics.json"), "utf8"));
 if (!Array.isArray(topics) || topics.length !== 20) {
   errors.push("Public topic inventory must contain exactly 20 topics");
@@ -68,19 +84,22 @@ const publicNarrativeFiles = [
   ...(await collectMarkdownFiles("docs/product")),
   ...(await collectMarkdownFiles("docs/portfolio")),
 ];
-const unsupportedPatterns = [
-  /5\s*(?:名|人)(?:目标)?创作者?/,
-  /25\s*次(?:受控)?任务/,
-  /250\s*条\s*Hook/i,
-  /28\s*%/,
-  /约\s*9\s*%/,
-  /20\s*个?百分点/,
-  /41\.7\s*个?百分点/,
+const outcomePatterns = [
+  { pattern: /5\s*(?:名|人)(?:目标)?创作者?/, requiredClaimId: "controlled_test_sample" },
+  { pattern: /25\s*次(?:受控)?任务/, requiredClaimId: "controlled_test_sample" },
+  { pattern: /250\s*条\s*Hook/i, requiredClaimId: "controlled_test_sample" },
+  { pattern: /28\s*%/, requiredClaimId: "controlled_favorite_rate" },
+  { pattern: /约\s*9\s*%/, requiredClaimId: "controlled_selection_rate" },
+  { pattern: /20\s*个?百分点/, requiredClaimId: "offline_improvement" },
+  { pattern: /41\.7\s*个?百分点/, requiredClaimId: "offline_improvement" },
 ];
+const claimsById = new Map((manifest.claims ?? []).map((claim) => [claim.id, claim]));
 for (const file of publicNarrativeFiles) {
   const content = await readFile(path.join(root, file), "utf8");
-  for (const pattern of unsupportedPatterns) {
-    if (pattern.test(content)) errors.push(`${file}: contains unsupported public outcome ${pattern}`);
+  for (const { pattern, requiredClaimId } of outcomePatterns) {
+    if (pattern.test(content) && claimsById.get(requiredClaimId)?.status !== "verified") {
+      errors.push(`${file}: contains public outcome ${pattern} while ${requiredClaimId} is not verified`);
+    }
   }
 }
 

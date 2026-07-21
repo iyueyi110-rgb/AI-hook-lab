@@ -14,14 +14,14 @@
 | --- | --- | --- |
 | 固定案例库存 | 已验证 | `eval/topics.json`、`lib/evaluation/seeds.ts` |
 | 离线评测方法 | 方法已实现 | [离线评测报告](offline-evaluation-report.md) |
-| 创作者受控测试 | 原始证据缺失 | [受控测试报告](controlled-test-report.md) |
+| 创作者受控测试 | 分析器已就绪，原始证据待负责人提供 | [受控测试报告](controlled-test-report.md) |
 | 指标口径 | 已整理 | [证据指标字典](metrics-dictionary.md) |
 | 数字审计 | 已完成 | [简历主张审计](claims-audit.md) |
 | 贡献边界 | 已公开 | [本人判断与 AI 协作边界](../portfolio/ai-collaboration.md) |
 | Demo 验活 | 持续更新 | [Demo 验证记录](../portfolio/demo-verification.md) |
 | 产品策略 | 待真实用户验证 | [北极星指标、竞品矩阵与 Roadmap](../product/product-strategy.md) |
 
-机器可读状态见 `evidence-manifest.json`，运行 `npm run evidence:verify` 可检查已验证主张的本地来源是否存在。
+机器可读状态见 `evidence-manifest.json`。运行 `npm run evidence:controlled` 可复算经批准公开的受控测试 CSV；运行 `npm run evidence:verify` 可检查数据、manifest、来源与公开叙事是否一致。
 
 ## 证据等级
 

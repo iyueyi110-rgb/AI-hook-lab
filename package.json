@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/generation/*.test.ts lib/evaluation/*.test.ts lib/agent/*.test.ts",
+    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/generation/*.test.ts lib/evaluation/*.test.ts lib/agent/*.test.ts scripts/*.test.ts",
     "eval:run": "node eval/run-eval.mjs",
     "eval:summarize": "node eval/summarize-results.mjs",
     "eval:migrate": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/migrate.mjs",
@@ -19,7 +19,8 @@
     "eval:user": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs eval/user.mjs",
     "eval:agent": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/agent/evaluation.test.ts lib/agent/service.test.ts lib/agent/domain.test.ts lib/agent/repository.test.ts lib/generation/service.test.ts lib/agentDashboardEvents.test.ts lib/secretScan.test.ts",
     "security:scan": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs scripts/scan-tracked-secrets.mjs",
-    "evidence:verify": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs scripts/verify-public-evidence.mjs"
+    "evidence:verify": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs scripts/verify-public-evidence.mjs",
+    "evidence:controlled": "node --experimental-strip-types --import ./test/register-ts-extension-loader.mjs scripts/analyze-controlled-test.mjs"
   },
   "dependencies": {
     "@phosphor-icons/react": "^2.1.10",
