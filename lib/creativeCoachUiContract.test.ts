@@ -66,6 +66,20 @@ test("classic Hook cards remain default while coach actions are optional", async
   assert.match(grid, /!coachActions\.canReject/);
 });
 
+test("Creative Agent supports a local multi-candidate comparison rail before final selection", async () => {
+  const workspace = await source("components/CreativeCoachWorkspace.tsx");
+  const grid = await source("components/HookGrid.tsx");
+  const card = await source("components/HookCard.tsx");
+  assert.match(workspace, /comparisonIds/);
+  assert.match(workspace, /toggleComparison/);
+  assert.match(workspace, /对比与确认/);
+  assert.match(workspace, /设为最终方案/);
+  assert.match(workspace, /\{comparisonRail\}/);
+  assert.match(grid, /selectedIds/);
+  assert.match(card, /已加入对比/);
+  assert.match(card, /加入对比/);
+});
+
 test("failed recoverable runs expose retry independently of transient client errors", async () => {
   const workspace = await source("components/CreativeCoachWorkspace.tsx");
   assert.match(workspace, /run\?\.status === "failed"/);

@@ -86,6 +86,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const [rewriteInstruction, setRewriteInstruction] = React.useState("");
   const [rejectOpen, setRejectOpen] = React.useState(false);
   const [rejectReason, setRejectReason] = React.useState("");
+  const [comparisonIds, setComparisonIds] = React.useState<string[]>([]);
   const [coachOpen, setCoachOpen] = React.useState(false);
   const [modalViewport, setModalViewport] = React.useState(false);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
@@ -102,6 +103,13 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
   const needsInput = Boolean(current?.needsInput);
   const briefEditable = canEditCoachBrief(run, allowedCommands, needsInput);
   const candidates = React.useMemo(() => current?.candidates.map(toHook) ?? [], [current?.candidates]);
+  const comparisonCandidates = React.useMemo(
+    () => comparisonIds
+      .map((candidateId) => candidates.find((candidate) => candidate.id === candidateId))
+      .filter((candidate): candidate is HookResult => Boolean(candidate)),
+    [candidates, comparisonIds],
+  );
+  const finalCandidate = candidates.find((candidate) => candidate.id === run?.selectedCandidateId);
   const topIds = current?.topCandidates.map((candidate) => candidate.id) ?? [];
   const displayedTopic = run ? briefEdits.topic ?? run.briefDraft?.topic ?? "" : topic;
   const displayedPlatform = run
@@ -245,12 +253,19 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     }
   };
 
+  const toggleComparison = (candidateId: string) => {
+    setComparisonIds((currentIds) => currentIds.includes(candidateId)
+      ? currentIds.filter((currentId) => currentId !== candidateId)
+      : [...currentIds, candidateId]);
+  };
+
   const reset = () => {
     coach.reset();
     setBriefEdits({});
     clearImage();
     setRewriteId(null);
     setRejectOpen(false);
+    setComparisonIds([]);
     setPlatformTouched(false);
     setEmotionToneTouched(false);
     setWordLimitTouched(false);
@@ -388,11 +403,11 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
         <HookGrid
           coachActions={{
             onRewrite: (id) => { setRewriteId(id); setRejectOpen(false); },
-            onSelect: (id) => void coach.submitCommand({ type: "select_candidate", candidateId: id }),
+            onSelect: toggleComparison,
             canRewrite: needsInput && allowed(allowedCommands, "rewrite_candidate") && !coach.loading,
             canSelect: needsInput && allowed(allowedCommands, "select_candidate") && !coach.loading,
             canReject: needsInput && allowed(allowedCommands, "reject_batch") && !coach.loading,
-            selectedId: run?.selectedCandidateId,
+            selectedIds: comparisonCandidates.map((candidate) => candidate.id),
             recommendedIds: topIds,
             comparisonExplanations: current?.comparisonExplanations ?? [],
             rejecting: coach.loading,
@@ -420,17 +435,71 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
           <div className="mt-3 flex gap-2"><button className="button-primary" disabled={coach.loading || !allowed(allowedCommands, "reject_batch")} type="submit">重新生成 10 条</button><button className="button-secondary" onClick={() => setRejectOpen(false)} type="button">取消</button></div>
         </form>
       )}
-      {current?.pendingConfirmation === "final" && (
-        <section className="editorial-panel border-t-2 border-t-[var(--color-success)] p-5">
-          <p className="text-xs font-extrabold text-[var(--color-success)]">最终确认</p>
-          <h2 className="mt-2 text-xl font-black">确认采用所选 Hook？</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-graphite)]">确认后会保存结果，并写入现有历史记录。也可以返回候选继续比较。</p>
-          <div className="mt-4 flex flex-wrap gap-2"><button className="button-primary" disabled={coach.loading || !allowed(allowedCommands, "confirm_final")} onClick={() => void coach.submitCommand({ type: "confirm_final" })} type="button">确认采用</button><button className="button-secondary" disabled={coach.loading || !allowed(allowedCommands, "message")} onClick={() => void coach.submitCommand({ type: "message", text: "返回候选继续修改" })} type="button">返回修改</button></div>
-        </section>
-      )}
       {run && ["completed", "cancelled"].includes(run.status) && <section className="editorial-panel p-5"><CheckCircle aria-hidden="true" className="text-[var(--color-success)]" size={26} weight="fill" /><h2 className="mt-3 text-xl font-black">{run.status === "completed" ? "本轮创作已完成" : "本轮任务已取消"}</h2>{run.status === "completed" && <p className="mt-2 text-sm text-[var(--color-graphite)]">最终结果已加入历史记录。</p>}<button className="button-secondary mt-4" onClick={reset} type="button">开始新任务</button></section>}
     </section>
   );
+
+  const comparisonRail = candidates.length > 0 ? (
+    <section aria-labelledby="coach-comparison-heading" className="shrink-0 border-t border-[var(--color-line)] p-4">
+      {current?.pendingConfirmation === "final" ? (
+        <div>
+          <p className="text-xs font-extrabold text-[var(--color-success)]">最终确认</p>
+          <h2 className="mt-2 text-lg font-black" id="coach-comparison-heading">确认采用这个方案？</h2>
+          {finalCandidate && (
+            <article className="mt-3 border-l-2 border-l-[var(--color-success)] bg-[var(--color-surface-subtle)] p-3">
+              <div className="flex items-center justify-between gap-3 text-[11px] font-extrabold">
+                <span className="text-[var(--color-success)]">{finalCandidate.style}</span>
+                <span className="tabular-nums text-[var(--color-muted)]">模型分 {finalCandidate.overallScore ?? finalCandidate.score ?? 0}/10</span>
+              </div>
+              <p className="mt-2 text-xs font-semibold leading-5 text-[var(--color-ink)]">{finalCandidate.text}</p>
+            </article>
+          )}
+          <p className="mt-3 text-[11px] leading-5 text-[var(--color-muted)]">确认后会保存结果并写入历史记录；返回比较不会丢失当前对比清单。</p>
+          <div className="mt-3 grid gap-2">
+            <button className="button-primary w-full" disabled={coach.loading || !allowed(allowedCommands, "confirm_final")} onClick={() => void coach.submitCommand({ type: "confirm_final" })} type="button">确认采用</button>
+            <button className="button-secondary w-full" disabled={coach.loading || !allowed(allowedCommands, "message")} onClick={() => void coach.submitCommand({ type: "message", text: "返回候选继续比较" })} type="button">返回比较</button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-extrabold text-[var(--color-accent)]">对比与确认</p>
+              <h2 className="mt-1 text-sm font-black" id="coach-comparison-heading">已选 {comparisonCandidates.length} 条方案</h2>
+            </div>
+            {comparisonCandidates.length > 0 && (
+              <button className="text-[11px] font-bold text-[var(--color-muted)] underline" disabled={coach.loading || !allowed(allowedCommands, "select_candidate")} onClick={() => setComparisonIds([])} type="button">清空</button>
+            )}
+          </div>
+          {comparisonCandidates.length === 0 ? (
+            <p className="mt-3 bg-[var(--color-surface-subtle)] p-3 text-[11px] leading-5 text-[var(--color-muted)]">点击候选卡片中的“加入对比”，可以同时保留多个方案。</p>
+          ) : (
+            <>
+              <p className="mt-2 text-[11px] leading-5 text-[var(--color-muted)]">集中对照文案、风格和模型分，再确定唯一最终方案。</p>
+              <ul className="mt-3 max-h-[38vh] space-y-2 overflow-y-auto pr-1">
+                {comparisonCandidates.map((candidate) => {
+                  const candidateIndex = candidates.findIndex((item) => item.id === candidate.id);
+                  return (
+                    <li className="border border-[var(--color-line)] bg-[var(--color-surface)] p-3" key={candidate.id}>
+                      <div className="flex items-center justify-between gap-3 text-[11px] font-extrabold">
+                        <span><span className="mr-2 tabular-nums text-[var(--color-muted)]">{String(candidateIndex + 1).padStart(2, "0")}</span><span className="text-[var(--color-accent)]">{candidate.style}</span></span>
+                        <span className="tabular-nums text-[var(--color-muted)]">{candidate.overallScore ?? candidate.score ?? 0}/10</span>
+                      </div>
+                      <p className="mt-2 text-xs font-semibold leading-5 text-[var(--color-ink)]">{candidate.text}</p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <button className="button-primary !min-h-8 flex-1 !px-3 !py-1.5 text-[11px]" disabled={coach.loading || !needsInput || !allowed(allowedCommands, "select_candidate")} onClick={() => void coach.submitCommand({ type: "select_candidate", candidateId: candidate.id })} type="button">设为最终方案</button>
+                        <button aria-label={`从对比中移除第 ${candidateIndex + 1} 条方案`} className="button-secondary !min-h-8 !p-1.5" disabled={coach.loading || !allowed(allowedCommands, "select_candidate")} onClick={() => toggleComparison(candidate.id)} type="button"><X aria-hidden="true" size={15} /></button>
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+            </>
+          )}
+        </div>
+      )}
+    </section>
+  ) : null;
 
   const coachPanel = (
     <aside
@@ -466,6 +535,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
           <button className="button-primary mt-2 w-full" disabled={!message.trim() || coach.loading} type="submit">发送回复</button>
         </form>
       )}
+      {comparisonRail}
       <div className="border-t border-[var(--color-line)] p-4">
         <div className="flex items-center justify-between"><p className="text-xs font-extrabold">偏好记忆{run ? ` · 本轮已参考 ${run.appliedMemoryKeys?.length ?? 0} 项` : ""}</p>{coach.memory.length > 0 && <button className="text-[11px] font-bold text-[var(--color-danger)]" onClick={() => void coach.clearMemory()} type="button">全部清除</button>}</div>
         {coach.memory.length === 0 ? <p className="mt-2 text-[11px] text-[var(--color-muted)]">暂无已保存偏好</p> : <ul className="mt-2 space-y-2">{coach.memory.map((entry) => <li className="flex items-center justify-between gap-2 text-[11px]" key={entry.id}><span className="min-w-0 truncate">{MEMORY_LABELS[entry.key] ?? entry.key}：{entry.value}（{Math.round(entry.confidence * 100)}%）</span><button aria-label={`删除偏好：${MEMORY_LABELS[entry.key] ?? entry.key}`} className="shrink-0 text-[var(--color-danger)]" onClick={() => void coach.deleteMemory(entry.id)} type="button"><Trash aria-hidden="true" size={14} /></button></li>)}</ul>}
@@ -482,7 +552,7 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
       </div>
       {coachPanel}
       <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
-        <button aria-expanded={coachOpen} aria-label="打开创作 Agent 面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />创作 Agent</button>
+        <button aria-expanded={coachOpen} aria-label="打开创作 Agent 面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />创作 Agent{comparisonCandidates.length > 0 ? ` · 对比 ${comparisonCandidates.length}` : ""}</button>
       </div>
       {coachOpen && <button aria-label="关闭创作 Agent 遮罩" className="fixed inset-0 z-30 bg-black/25 max-md:hidden xl:hidden" onClick={closeCoach} type="button" />}
     </main>

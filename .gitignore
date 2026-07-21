@@ -12,10 +12,18 @@
 
 # testing
 /coverage
+/tmp/
+/.impeccable/
+/.tmp_docx/
+/.obsidian/
 /eval/results/*
 !/eval/results/.gitkeep
 /data/*.json
 /data/*.backup-*
+/docs/prd/*.docx
+/docs/superpowers/
+/docs/codex/*
+!/docs/codex/2026-07-21-repo-restructure-and-evidence-plan.md
 
 # next.js
 /.next/
@@ -42,7 +50,7 @@ yarn-error.log*
 .vercel
 
 # isolated Codex worktrees
-.worktrees/
+/.worktrees/
 
 # typescript
 *.tsbuildinfo
