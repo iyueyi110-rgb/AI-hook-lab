@@ -1,0 +1,47 @@
+{
+  "auditedAt": "2026-07-21",
+  "claims": [
+    {
+      "id": "fixed_case_inventory",
+      "claim": "20 个主题 × 3 个平台，共 60 个固定离线评测案例",
+      "status": "verified",
+      "sources": ["eval/topics.json", "lib/evaluation/seeds.ts"],
+      "calculation": "20 × 3 = 60"
+    },
+    {
+      "id": "controlled_test_sample",
+      "claim": "5 名创作者、25 次任务、250 条 Hook",
+      "status": "not_verified",
+      "sources": [],
+      "calculation": "缺少可公开复核的脱敏原始记录"
+    },
+    {
+      "id": "controlled_favorite_rate",
+      "claim": "受控测试收藏率 28%",
+      "status": "not_verified",
+      "sources": [],
+      "calculation": "缺少收藏事件分子、分母和排除条件"
+    },
+    {
+      "id": "controlled_selection_rate",
+      "claim": "测试内选择率约 9%",
+      "status": "not_verified",
+      "sources": [],
+      "calculation": "缺少确切分子，不能从近似百分比反推原始记录"
+    },
+    {
+      "id": "offline_improvement",
+      "claim": "candidate 可用率和平台适配率分别提升 20、41.7 个百分点",
+      "status": "not_verified",
+      "sources": [],
+      "calculation": "当前公开仓库没有完成的评测批次、盲评记录或结果导出"
+    },
+    {
+      "id": "evaluation_method",
+      "claim": "系统支持 baseline/candidate、双人盲评、分歧裁决和来源隔离",
+      "status": "method_only",
+      "sources": ["docs/evaluation-system.md", "lib/evaluation/seeds.ts"],
+      "calculation": "可验证方法与实现，不等于已产生正式评测结果"
+    }
+  ]
+}
