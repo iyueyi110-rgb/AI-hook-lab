@@ -1,12 +1,12 @@
 @echo off
 setlocal
 
-cd /d "%~dp0"
-title AI Hook Lab - Dashboard
+cd /d "%~dp0.."
+title AI Hook Lab - One-Click Start
 
 echo.
 echo ========================================
-echo  AI Hook Lab - Backend Dashboard
+echo  AI Hook Lab - One-Click Start
 echo ========================================
 echo.
 
@@ -51,16 +51,13 @@ if not exist ".env.local" (
   pause
 )
 
-echo Opening http://localhost:3001/admin/dashboard ...
-start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 3; Start-Process 'http://localhost:3001/admin/dashboard'"
+echo Opening http://localhost:3000 ...
+start "" powershell -NoProfile -ExecutionPolicy Bypass -Command "Start-Sleep -Seconds 3; Start-Process 'http://localhost:3000'"
 
 echo.
-echo If a Next dev server is already running for this folder, stop it first.
-echo You can also open http://localhost:3000/admin/dashboard on the existing frontend server.
+echo Starting AI Hook Lab. Press Ctrl+C to stop the server.
 echo.
-echo Starting dashboard on port 3001. Press Ctrl+C to stop the server.
-echo.
-call npm run dev -- -p 3001
+call npm run dev
 
 echo.
 pause

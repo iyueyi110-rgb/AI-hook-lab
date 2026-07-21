@@ -105,8 +105,8 @@ npm run dev
 
 ### Windows 一键启动
 
-- 双击 `start-ai-hook-lab.bat`：安装缺失依赖、创建 `.env.local`、本地化 Next.js 开发工具并打开首页
-- 双击 `start-ai-hook-dashboard.bat`：在 3001 端口启动应用并打开管理后台
+- 双击 `tools/start-ai-hook-lab.bat`：安装缺失依赖、创建 `.env.local`、本地化 Next.js 开发工具并打开首页
+- 双击 `tools/start-ai-hook-dashboard.bat`：在 3001 端口启动应用并打开管理后台
 
 后台也可以直接使用已运行的前端服务访问：
 
@@ -116,12 +116,12 @@ http://localhost:3000/admin/dashboard
 
 ### macOS 一键启动
 
-在 Finder 中双击 `start-ai-hook-mac.command`。启动器会检查依赖、创建 `.env.local`、寻找可用端口，并同时打开首页和管理后台。
+在 Finder 中双击 `tools/start-ai-hook-mac.command`。启动器会从 `tools/` 定位仓库根目录，检查依赖、创建 `.env.local`、寻找可用端口，并同时打开首页和管理后台。
 
 如果文件没有执行权限：
 
 ```bash
-chmod +x start-ai-hook-mac.command
+chmod +x tools/start-ai-hook-mac.command
 ```
 
 ## 账号与页面入口
@@ -245,7 +245,10 @@ lib/evaluation/         离线评测领域逻辑、权限、报告与导出
 db/migrations/          PostgreSQL 评测系统迁移
 eval/                   评测脚本与结果模板
 scripts/                密钥扫描与本地开发辅助脚本
-docs/                   产品、设计、评测与 Agent 说明
+tools/                  Windows 与 macOS 一键启动器
+docs/product/           产品策略、业务闭环与治理说明
+docs/evidence/          公开证据、主张审计与指标权威口径
+docs/portfolio/         招聘方入口、AI 协作边界与 Demo 记录
 ```
 
 ## 进一步阅读

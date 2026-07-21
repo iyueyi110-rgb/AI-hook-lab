@@ -6,8 +6,9 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const launcherUrl = new URL("../start-ai-hook-mac.command", import.meta.url);
-const dashboardLauncherUrl = new URL("../start-ai-hook-dashboard.bat", import.meta.url);
+const launcherUrl = new URL("../tools/start-ai-hook-mac.command", import.meta.url);
+const labLauncherUrl = new URL("../tools/start-ai-hook-lab.bat", import.meta.url);
+const dashboardLauncherUrl = new URL("../tools/start-ai-hook-dashboard.bat", import.meta.url);
 const envExampleUrl = new URL("../.env.local.example", import.meta.url);
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +17,7 @@ test("macOS launcher covers setup, port selection, readiness and cleanup", async
 
   assert.match(source, /^#!\/bin\/bash/);
   assert.match(source, /BASH_SOURCE\[0\]/);
+  assert.match(source, /PROJECT_DIR="\$\(cd "\$SCRIPT_DIR\/\.\." && pwd\)"/);
   assert.match(source, /command -v node/);
   assert.match(source, /command -v npm/);
   assert.match(source, /npm install/);
@@ -34,20 +36,27 @@ test("macOS launcher covers setup, port selection, readiness and cleanup", async
   assert.match(source, /AI_HOOK_SKIP_OPEN/);
 });
 
-test("Windows dashboard launcher opens the protected dashboard without changing startup behavior", async () => {
-  const source = await readFile(dashboardLauncherUrl, "utf8");
+test("Windows launchers resolve the repository root and preserve their entry points", async () => {
+  const [labSource, dashboardSource] = await Promise.all([
+    readFile(labLauncherUrl, "utf8"),
+    readFile(dashboardLauncherUrl, "utf8"),
+  ]);
 
-  assert.match(source, /http:\/\/localhost:3001\/admin\/dashboard/);
-  assert.doesNotMatch(source, /http:\/\/localhost:300[01]\/dashboard/);
-  assert.match(source, /Start-Sleep -Seconds 3/);
-  assert.match(source, /npm run dev -- -p 3001/);
+  assert.match(labSource, /cd \/d "%~dp0\.\."/);
+  assert.match(labSource, /http:\/\/localhost:3000/);
+  assert.match(labSource, /npm run dev/);
+  assert.match(dashboardSource, /cd \/d "%~dp0\.\."/);
+  assert.match(dashboardSource, /http:\/\/localhost:3001\/admin\/dashboard/);
+  assert.doesNotMatch(dashboardSource, /http:\/\/localhost:300[01]\/dashboard/);
+  assert.match(dashboardSource, /Start-Sleep -Seconds 3/);
+  assert.match(dashboardSource, /npm run dev -- -p 3001/);
 });
 
 test("macOS launcher and environment example are safe local artifacts", async () => {
   if (process.platform === "win32") {
     const { stdout } = await execFileAsync(
       "git",
-      ["ls-files", "--stage", "--", "start-ai-hook-mac.command"],
+      ["ls-files", "--stage", "--", "tools/start-ai-hook-mac.command"],
       { cwd: fileURLToPath(new URL("../", import.meta.url)) },
     );
     assert.match(stdout, /^100755 /);
