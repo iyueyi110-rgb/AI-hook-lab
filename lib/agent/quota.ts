@@ -1,12 +1,13 @@
 import type { AgentState, CreatorSession } from "./repository.ts";
 
 export type AgentQuotaKind = "run_create" | "model_call" | "image_call";
+export type QuotaKind = AgentQuotaKind | "classic_generation";
 export type AgentQuotaScopeType = "session" | "ip";
 
 export interface AgentQuotaUsage {
   scopeType: AgentQuotaScopeType;
   scopeId: string;
-  kind: AgentQuotaKind;
+  kind: QuotaKind;
   windowStartedAt: string;
   count: number;
 }
@@ -75,6 +76,41 @@ function limitFor(config: AgentQuotaConfig, scopeType: AgentQuotaScopeType, kind
 function retryAfter(windowStartedAt: string, now: Date, windowMs: number): number {
   const remaining = Date.parse(windowStartedAt) + windowMs - now.getTime();
   return Math.max(1, Math.ceil(remaining / 1000));
+}
+
+export function consumeIpQuota(
+  state: AgentState,
+  context: AgentRequestContext,
+  kind: QuotaKind,
+  now: Date,
+  config: { windowMs: number; limit: number },
+): void {
+  if (!/^[a-f0-9]{64}$/i.test(context.ipDigest)) {
+    throw new AgentQuotaError(Math.ceil(config.windowMs / 1000));
+  }
+  state.usage ??= [];
+  let bucket = state.usage.find(
+    (item) => item.scopeType === "ip" && item.scopeId === context.ipDigest && item.kind === kind,
+  );
+  if (!bucket) {
+    bucket = {
+      scopeType: "ip",
+      scopeId: context.ipDigest,
+      kind,
+      windowStartedAt: now.toISOString(),
+      count: 0,
+    };
+    state.usage.push(bucket);
+  }
+  const startedAt = Date.parse(bucket.windowStartedAt);
+  if (!Number.isFinite(startedAt) || now.getTime() - startedAt >= config.windowMs) {
+    bucket.windowStartedAt = now.toISOString();
+    bucket.count = 0;
+  }
+  if (bucket.count >= config.limit) {
+    throw new AgentQuotaError(retryAfter(bucket.windowStartedAt, now, config.windowMs));
+  }
+  bucket.count += 1;
 }
 
 export function consumeAgentQuota(

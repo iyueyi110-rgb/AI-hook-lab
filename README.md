@@ -165,6 +165,8 @@ chmod +x tools/start-ai-hook-mac.command
 | `AGENT_IP_HASH_SECRET` | 生产必需 | 用于匿名配额 IP HMAC，建议使用至少 32 位独立高熵随机值 |
 | `AGENT_TRUSTED_IP_HEADER` | 否 | 由可信部署代理覆盖的客户端 IP 请求头，默认 `x-vercel-forwarded-for` |
 | `AGENT_QUOTA_*` | 否 | 调整会话/IP 运行次数、模型调用、图片调用和活跃任务配额 |
+| `CLASSIC_QUOTA_WINDOW_SECONDS` | 否 | 经典生成 IP 配额窗口，默认 3600 秒 |
+| `CLASSIC_QUOTA_IP_GENERATIONS` | 否 | 每个 IP 在窗口内的经典生成次数，默认 20 次 |
 
 ## 数据存储与安全边界
 
@@ -176,6 +178,15 @@ chmod +x tools/start-ai-hook-mac.command
 - 数据保留：创作 Agent 非活跃任务最长保留 30 天，匿名会话最长 180 天；生产环境应定时调用受保护的清理接口。
 - 配额防护：生产环境通过会话和 HMAC 后的 IP 摘要限制付费模型操作，不存储原始 IP。
 - 密钥扫描：提交前可运行 `npm run security:scan`；扫描只报告文件、行号和规则，不打印匹配值。
+
+## 生产部署检查
+
+- `DATABASE_URL` 已配置 PostgreSQL；生产不会回退到本地 JSON。
+- `AGENT_IP_HASH_SECRET` 使用独立随机值，长度至少 32 个字符，不能是 `replace_me`。
+- `AGENT_TRUSTED_IP_HEADER` 由可信反向代理覆盖；不要直接信任用户可控的通用转发头。
+- `AGENT_CLEANUP_TOKEN` 若启用定时清理，必须替换占位值并通过部署密钥管理注入。
+- `DEEPSEEK_API_KEY`、`ARK_API_KEY` 和数据库凭据只存在于服务端环境变量，不进入仓库或浏览器。
+- 部署后依次验证首页、`/api/generate`、限流 429、错误态和管理员只读权限。
 
 ## 离线评测
 

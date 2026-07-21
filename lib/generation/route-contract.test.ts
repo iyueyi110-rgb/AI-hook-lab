@@ -4,10 +4,10 @@ import test from "node:test";
 import { GenerationError } from "./service.ts";
 import { mapGenerationError } from "./http.ts";
 
-test("the generate route delegates model generation to the shared service", async () => {
+test("the generate route delegates to the quota-protected classic HTTP handler", async () => {
   const route = await readFile(new URL("../../app/api/generate/route.ts", import.meta.url), "utf8");
 
-  assert.match(route, /generateClassicHooks/);
+  assert.match(route, /handleClassicGenerateRequest/);
   assert.doesNotMatch(route, /fetch\s*\(/);
   assert.doesNotMatch(route, /api\.deepseek\.com/);
   assert.doesNotMatch(route, /\bcode\s*:/);

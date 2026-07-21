@@ -1,10 +1,15 @@
-import { createHash, createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 
 import { DatabaseNotConfiguredError } from "../persistence.ts";
 import { generateCoachHooks } from "../generation/coach.ts";
 import { decideBriefPatch } from "../generation/decision.ts";
 import { GenerationError } from "../generation/service.ts";
 import { analyzeImageFile, ImageAnalysisError, MAX_IMAGE_BYTES } from "../imageAnalysis.ts";
+import {
+  digestTrustedClientIp,
+  RequestIdentityConfigError,
+  usableSecret,
+} from "../requestIdentity.ts";
 import { AgentConflictError } from "./machine.ts";
 import {
   AgentMemoryValidationError,
@@ -68,28 +73,15 @@ function safeSecretEqual(supplied: string, expected: string): boolean {
   return timingSafeEqual(left, right);
 }
 
-function usableSecret(value: string | undefined, production = false): string {
-  const secret = value?.trim() ?? "";
-  if (!secret || /^[<'"]|[>'"]$/.test(secret) || /^(replace_me|change_me|your_api_key|your_secret|placeholder)$/i.test(secret)) return "";
-  if (production && (
-    secret.length < 32
-    || new Set(secret).size < 8
-    || /^(.{1,16})\1+$/.test(secret)
-    || /(?:0123456789|1234567890|abcdefghijklmnopqrstuvwxyz)/i.test(secret)
-  )) return "";
-  return secret;
-}
-
 function agentRequestContext(request: Request, env: NodeJS.ProcessEnv, production: boolean): AgentRequestContext {
-  const secret = usableSecret(env.AGENT_IP_HASH_SECRET, production) || (production ? "" : "creative-agent-development-ip-hash");
-  if (!secret) throw new HttpError(503, "Agent IP hashing is not configured");
-  const headerName = (env.AGENT_TRUSTED_IP_HEADER?.trim().toLowerCase() || (production ? "x-vercel-forwarded-for" : "x-real-ip"));
-  if (!/^[a-z0-9-]{1,64}$/.test(headerName)) throw new HttpError(503, "Agent trusted IP header is invalid");
-  // Only a deployment-controlled header participates in the quota identity.
-  // Generic X-Forwarded-For is deliberately ignored unless explicitly chosen
-  // behind a proxy that overwrites it.
-  const address = request.headers.get(headerName)?.trim() || "unknown";
-  return { ipDigest: createHmac("sha256", secret).update(address).digest("hex") };
+  try {
+    return { ipDigest: digestTrustedClientIp(request, env, production) };
+  } catch (error) {
+    if (error instanceof RequestIdentityConfigError) {
+      throw new HttpError(503, error.message);
+    }
+    throw error;
+  }
 }
 
 async function readJson(request: Request): Promise<Record<string, unknown>> {

@@ -2,9 +2,9 @@
 
 ## 当前依赖审计
 
-2026-07-10 执行 `npm audit --omit=dev`，报告 Next.js 内置 PostCSS 的 2 个中风险传递漏洞（`GHSA-qx2v-qp2m-jg93`）。当前自动修复方案会强制安装 Next.js 9.3.3，破坏现有 Next.js 16 App Router，因此不执行 `npm audit fix --force`。
+2026-07-21 复核 `npm audit --omit=dev`，仍报告 Next.js 内置 PostCSS 的 2 个中风险传递漏洞（`GHSA-qx2v-qp2m-jg93`）。当前自动修复方案会强制安装 Next.js 9.3.3，破坏现有 Next.js 16 App Router，因此不执行 `npm audit fix --force`。
 
-当前缓解：应用不把用户输入拼接为 CSS 或 `<style>` 内容；主题、平台与模型输出只作为文本渲染；生产发布前继续运行审计。待 Next.js 发布包含已修复 PostCSS 的兼容版本后，先在独立分支升级并通过测试、lint 和生产构建，再合并。
+当前缓解：应用不把用户输入拼接为 CSS 或 `<style>` 内容；主题、平台与模型输出只作为文本渲染；经典生成与 Agent 接口均有输入校验和按 IP/会话配额；生产发布前继续运行审计。待 Next.js 发布包含已修复 PostCSS 的兼容版本后，先在独立分支升级并通过测试、lint 和生产构建，再合并。
 
 ## 数据与密钥
 
