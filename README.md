@@ -105,7 +105,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 ### 环境要求
 
-- Node.js `>= 20.9.0`
+- Node.js `>= 22.6.0`（CI 使用 24.x）
 - npm
 - DeepSeek API Key（实时生成和 Agent 能力需要）
 - PostgreSQL（生产环境必须；本地开发可使用 JSON 存储）
