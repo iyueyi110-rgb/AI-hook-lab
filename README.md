@@ -1,18 +1,45 @@
-# AI Hook Lab
+# AI Hook Lab｜AIGC 创作与评测工作台
 
-AI Hook Lab 是一个面向内容创作者与内容运营团队的 AI Hook 创作、评测和复盘工作台。项目以 DeepSeek 为主要文本模型，将结构化创作简报、多版本 Hook 生成、人工反馈、离线评测和运营分析连接成一套可验证的内容优化闭环。
+## 产品定位
 
-项目既保留“一次生成 10 条 Hook”的经典模式，也提供可选的创作 Agent、图片理解、管理后台、离线 Prompt 评测系统和管理员专用的运营分析 Agent。
+AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创作简报、多版本 Hook 生成、人工反馈、离线评测和运营分析连接成可复核的内容优化闭环。产品保留“一次生成 10 条 Hook”的经典模式，并提供受约束的创作 Agent、只读运营分析 Agent、图片理解和 Prompt 评测工作台。
 
-## 演示入口
+本人把它作为 AI 产品经理作品集：重点展示问题定义、产品规则、指标口径、安全边界与版本决策，而不是把模型输出或模拟数据包装成真实业务结果。
 
-- 在线 Demo：<https://hookovo.icu/>
-- [公开证据索引](docs/evidence/README.md)：区分已验证事实、方法实现与缺失证据。
-- [一页产品策略](docs/product/product-strategy.md)：北极星指标、官方事实竞品矩阵与 Now/Next/Later Roadmap。
-- [本人判断与 AI 协作边界](docs/portfolio/ai-collaboration.md)：说明本人负责、Codex 协助和验收方式。
-- [Demo 验证记录](docs/portfolio/demo-verification.md)：记录外网可访问性与投递前检查。
+## 快速入口
 
-当前可公开复核的是 20 个主题 × 3 个平台的 60 个固定评测案例及评测方法；缺少脱敏原始记录的结果性主张不对外使用。模型评分、Mock 和未完成评测均不作为真实传播效果。
+- 在线 Demo 状态：公网自动请求返回 200，但手机流量、无痕浏览器与桌面交互尚未完成人工验收，因此暂不作为公开入口。详见 [Demo 验证记录](docs/portfolio/demo-verification.md)。
+- [创作 Agent](docs/creative-agent.md)：查看简报补全、候选生成、人工确认、状态恢复与安全约束。
+- [运营分析 Agent](docs/portfolio/operations-agent.md)：查看只读工具、证据引用和人工升级门槛。
+- [60 个固定案例与评测方法](docs/evidence/README.md)：20 个主题 × 3 个平台，用于复核评测流程，不代表真实用户效果。
+- [数据存储与安全边界](SECURITY.md)：查看生产存储、权限、配额、密钥扫描和依赖审计说明。
+- [一页产品策略](docs/product/product-strategy.md)：查看北极星指标、竞品事实矩阵与分阶段路线图。
+- [作品集验收与简历对齐记录](docs/portfolio/acceptance-and-resume-alignment.md)：查看证据分级、门禁结果字段和未验证主张的同步规则。
+
+## 本人与 AI 的分工
+
+| 环节 | 本人负责 | AI 协助 | 本人如何验收与决策 |
+| --- | --- | --- | --- |
+| 问题定义 | 用户、场景、优先级与证据边界 | 整理访谈或测试摘要、备选假设 | 核对真实样本与业务边界，决定保留或否决假设 |
+| 产品规则 | 流程、状态、异常、人工审核与升级门槛 | 生成文档、代码和测试初稿 | 使用状态机、异常用例和安全边界验收 |
+| 原型与代码 | 交互要求、接口契约和验收标准 | 搭建页面、接口、测试与重构代码 | 本地运行、复现 Bad Case，并决定是否合并 |
+| 数据结论 | 指标口径、来源隔离、护栏与版本决策 | 计算、聚合和报告草稿 | 核对分子分母、原始记录和反证，决定是否升级 |
+
+更完整的协作记录见 [本人判断与 AI 协作边界](docs/portfolio/ai-collaboration.md)。AI 不代替本人定义问题、确认事实、解释用户证据或批准版本发布。
+
+## 验证与版本决策
+
+- 固定评测集只比较可复现的 Prompt 与工作流表现；Mock、模型自评分和未完成评测不进入升级结论。
+- 创作 Agent 的候选生成、改写与最终确认由确定性测试覆盖；运营分析 Agent 只能读取聚合数据和证据引用，不能改 Prompt、发版本或发送消息。
+- 正式升级必须同时满足指标口径一致、数据来源可追溯、人工盲评完成、Bad Case 无新增高风险和安全门禁通过。
+- 当前可公开复核的是 20 个主题 × 3 个平台的 60 个固定案例、评测方法、测试代码与安全规则；它们证明方法和实现，不证明真实传播效果。
+
+## 证据边界
+
+- 真实用户、离线评测与模拟数据使用独立来源标识，不跨来源合并百分比。
+- 缺少脱敏原始记录、整数分子分母或正式导出的结果性主张，一律标记为未验证并从公开结论中移除。
+- 收藏、采用、点击或传播等词必须按 [指标字典](docs/evidence/metrics-dictionary.md) 使用；模型评分只用于解释和排序候选。
+- 主张状态、缺失材料和恢复条件见 [公开证据索引](docs/evidence/README.md) 与 [主张审计](docs/evidence/claims-audit.md)。
 
 ## 核心能力
 
@@ -231,6 +258,7 @@ Mock 和子集运行只能验证流程，不能形成 Prompt 升级结论。完�
 | `npm run start` | 启动生产构建 |
 | `npm run lint` | 运行 ESLint |
 | `npm test` | 运行完整 Node 测试套件 |
+| `npm run docs:check` | 检查已跟踪 Markdown 的中文公开规范 |
 | `npm run eval:agent` | 运行创作 Agent 验收测试 |
 | `npm run security:scan` | 扫描 Git 跟踪文件中的凭据风险 |
 | `npm run eval:migrate` | 初始化或迁移评测存储 |
@@ -240,6 +268,7 @@ Mock 和子集运行只能验证流程，不能形成 Prompt 升级结论。完�
 
 ```bash
 npm test
+npm run docs:check
 npm run lint
 npm run build
 npm run security:scan

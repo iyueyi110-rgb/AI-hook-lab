@@ -5,7 +5,7 @@
 ## 30 秒结论
 
 - 已验证：仓库包含 20 个主题、3 个平台组成的 60 个固定评测案例，以及来源隔离、盲评和升级门槛实现。
-- 尚未验证：5 名创作者、25 次任务、250 条 Hook、28% 收藏、约 9% 测试内选择，以及 +20/+41.7 个百分点结果。
+- 尚未验证：真实用户受控测试的样本规模、任务与产出规模、收藏和选择行为，以及离线评测提升结果；详细状态见[简历主张审计](claims-audit.md)与机器可读清单。
 - 使用规则：没有脱敏原始记录、指标口径、计算过程和结论报告的数字，不进入公开简历。
 
 ## 证据导航
@@ -19,7 +19,7 @@
 | 数字审计 | 已完成 | [简历主张审计](claims-audit.md) |
 | 贡献边界 | 已公开 | [本人判断与 AI 协作边界](../portfolio/ai-collaboration.md) |
 | Demo 验活 | 持续更新 | [Demo 验证记录](../portfolio/demo-verification.md) |
-| 产品策略 | 待真实用户验证 | [北极星指标、竞品矩阵与 Roadmap](../product/product-strategy.md) |
+| 产品策略 | 待真实用户验证 | [北极星指标、竞品矩阵与路线图](../product/product-strategy.md) |
 
 机器可读状态见 `evidence-manifest.json`。运行 `npm run evidence:controlled` 可复算经批准公开的受控测试 CSV；运行 `npm run evidence:verify` 可检查数据、manifest、来源与公开叙事是否一致。
 
