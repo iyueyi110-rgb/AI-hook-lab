@@ -2,9 +2,13 @@
 
 ## 当前依赖审计
 
-2026-07-21 复核 `npm audit --omit=dev`，仍报告 Next.js 内置 PostCSS 的 2 个中风险传递漏洞（`GHSA-qx2v-qp2m-jg93`）。当前自动修复方案会强制安装 Next.js 9.3.3，破坏现有 Next.js 16 App Router，因此不执行 `npm audit fix --force`。
+2026-07-27 复核 `npm audit --omit=dev`：将 Next.js 从 `16.2.9` 升级至当前补丁版 `16.2.12` 后，Next.js 本体的已知公告不再出现在审计结果中；仍有 3 个高危依赖项记录，集中在 Next.js 传递依赖 PostCSS 与 Sharp。
 
-当前缓解：应用不把用户输入拼接为 CSS 或 `<style>` 内容；主题、平台与模型输出只作为文本渲染；经典生成与 Agent 接口均有输入校验和按 IP/会话配额；生产发布前继续运行审计。待 Next.js 发布包含已修复 PostCSS 的兼容版本后，先在独立分支升级并通过测试、lint 和生产构建，再合并。
+- PostCSS：涉及未转义样式输出、`sourceMappingURL` 文件读取和路径遍历公告。应用不把用户输入拼接为 CSS、`<style>` 或 source map，主题、平台与模型输出只作为文本渲染。
+- Sharp：涉及其继承的 libvips 漏洞。当前图片入口限制 MIME、文件签名和 5 MB 大小，原始图片不持久化，也不接受用户提供的服务器文件路径。
+- 自动修复会把 Next.js 降级为 `9.3.3`，破坏现有 Next.js 16 App Router，因此禁止执行 `npm audit fix --force`。
+
+生产发布前必须继续运行依赖审计。待 Next.js 发布同时兼容已修复 PostCSS 与 Sharp 的版本后，在独立分支升级，并通过测试、lint、构建、图片上传边界和安全扫描后再合并。
 
 ## 数据与密钥
 
