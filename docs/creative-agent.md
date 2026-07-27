@@ -1,79 +1,79 @@
-# Creative Agent
+# 创作 Agent
 
-Creative Agent is an optional, single-Agent workflow layered on top of the existing Hook generator. The classic one-request/10-Hook mode remains available and keeps its original API and UI behavior.
+创作 Agent 是叠加在现有 Hook 生成器之上的可选单 Agent 工作流。经典的“单次请求生成 10 条 Hook”模式继续保留，原有 API 与界面行为不变。
 
-## Enablement and storage
+## 启用方式与存储
 
-- Set `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` to expose the Creative Agent UI and APIs. It defaults to `false` for gradual rollout.
-- Anonymous ownership uses the HttpOnly `ai-hook-creator-session` cookie. The cookie is `SameSite=Lax`, `Secure` in production, and expires after 180 days; storage contains only its SHA-256 digest.
-- Local development uses `data/agent-store.json` (or `AGENT_STORE_PATH`) when `DATABASE_URL` is empty. Production fails closed unless PostgreSQL is configured.
-- Every inactive run, including abandoned non-terminal and orphaned runs, messages and candidates, is removed after 30 days. A non-expired operation lease is preserved; expired 180-day sessions cascade their runs, preference memory and quota usage. Production must schedule the authenticated cleanup endpoint; retention work is deliberately kept off interactive request latency.
-- The original image file and its binary/base64 bytes are never persisted. The resulting structured understanding (for example `topic`, `imageDescription`, suggested platform/content type/tone) may be stored in the run brief and structured tool result for the same maximum 30-day run lifetime. The tool-call input audit contains only safe upload metadata such as MIME type and byte count.
-- Long-term creator memory is a strict enum/value whitelist (platform, existing style preference/avoidance, tone, word-limit band and avoided Bad Case tag). It never stores an image, image description, topic, Hook, free-form message or personal identity data.
+- 设置 `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` 后开放创作 Agent 界面与 API。该开关默认值为 `false`，用于渐进式发布。
+- 匿名所有权使用 HttpOnly 的 `ai-hook-creator-session` Cookie。Cookie 配置为 `SameSite=Lax`，生产环境启用 `Secure`，180 天后过期；存储层只保存它的 SHA-256 摘要。
+- `DATABASE_URL` 为空时，本地开发使用 `data/agent-store.json` 或 `AGENT_STORE_PATH`。生产环境未配置 PostgreSQL 时拒绝提供服务。
+- 所有非活跃运行，包括被放弃的非终态运行与孤立运行，其消息和候选都会在 30 天后删除。未过期的操作租约会被保留；会话在 180 天后过期，并级联删除运行、偏好记忆和配额用量。生产环境必须定时调用带鉴权的清理端点；保留期清理不占用交互请求的延迟预算。
+- 原始图片文件及其二进制或 Base64 字节永不持久化。结构化理解结果，例如 `topic`、`imageDescription` 以及建议的平台、内容类型和语气，可以写入当前运行的简报和结构化工具结果，最长随运行保留 30 天。工具调用输入审计只记录 MIME 类型、字节数等安全上传元数据。
+- 创作者长期记忆采用严格的枚举和值白名单，只包含平台、现有风格偏好或规避、语气、字数区间和需规避的 Bad Case 标签。图片、图片描述、主题、Hook、自由文本消息和个人身份信息一律不进入长期记忆。
 
-Image analysis requires both `ARK_API_KEY` and `ARK_MODEL_ID`. `ARK_MODEL_ID` is the Ark model or endpoint ID enabled for the account. Keep real credentials only in ignored `.env.local`; never commit them.
+图片分析必须同时配置 `ARK_API_KEY` 与 `ARK_MODEL_ID`。`ARK_MODEL_ID` 是当前账户已启用的 Ark 模型或推理接入点 ID。真实凭据只能存放在被忽略的 `.env.local`，不得提交到仓库。
 
-Production PostgreSQL stores one `agent_state` shard per session digest and separate IP-HMAC quota shards. Transactions lock only the sorted shards involved in a request and update projection rows for that session; the eight-table design is preserved. Versioned migrations split the legacy singleton state and add cascade foreign keys. A live PostgreSQL parity/concurrency job is still required in deployment CI because the local test suite validates migration/query contracts without a database server.
+生产环境的 PostgreSQL 按会话摘要保存一个 `agent_state` 分片，并为 IP-HMAC 配额使用独立分片。事务只锁定请求涉及的、按顺序排列的分片，并更新对应会话的投影行；现有八表设计保持不变。带版本的迁移负责拆分旧版单例状态并增加级联外键。由于本地测试只在没有数据库服务的情况下验证迁移和查询契约，部署 CI 仍须运行真实 PostgreSQL 的一致性与并发任务。
 
-Anonymous paid operations are protected by persistent session and HMAC-IP quotas. Set a dedicated high-entropy `AGENT_IP_HASH_SECRET` (at least 32 characters) in production; raw IP addresses are never stored. `AGENT_TRUSTED_IP_HEADER` must name a header overwritten by the deployment proxy (`x-vercel-forwarded-for` by default), rather than trusting caller-controlled forwarding data. Optional `AGENT_QUOTA_*` environment variables tune the safe defaults. Validation, ownership, revision and authorization failures do not consume provider quota; a provider request that has already started does.
+匿名付费操作同时受持久化会话配额和 HMAC-IP 配额保护。生产环境必须设置独立、高熵且不少于 32 个字符的 `AGENT_IP_HASH_SECRET`；系统不存储原始 IP。`AGENT_TRUSTED_IP_HEADER` 必须指向由部署代理覆盖的请求头，默认是 `x-vercel-forwarded-for`，不得信任调用方可控制的通用转发头。可选的 `AGENT_QUOTA_*` 环境变量用于调整安全默认值。参数校验、所有权、版本冲突和鉴权失败不消耗模型配额；已经发起的模型请求会消耗配额。
 
-## API surface
+## API 接口
 
-| Endpoint | Purpose |
+| 端点 | 用途 |
 | --- | --- |
-| `POST /api/agent/runs` | Create a run and anonymous session if needed |
-| `GET /api/agent/runs/[runId]` | Restore an owned run |
-| `DELETE /api/agent/runs/[runId]` | Cancel an owned run with revision checking |
-| `POST /api/agent/runs/[runId]/image` | Upload one image for transient analysis |
-| `POST /api/agent/runs/[runId]/turns` | Submit one typed message or command |
-| `GET /api/agent/memory` | List whitelisted preferences for this browser |
-| `DELETE /api/agent/memory/[memoryId]` | Delete one preference immediately |
-| `DELETE /api/agent/memory` | Delete all preferences immediately |
-| `POST /api/agent/cleanup` | Run a bounded retention batch with a high-entropy `Bearer AGENT_CLEANUP_TOKEN`; repeat while `nextCursor` is present (server-side progress is authoritative) |
+| `POST /api/agent/runs` | 创建运行，并在需要时创建匿名会话 |
+| `GET /api/agent/runs/[runId]` | 恢复当前会话拥有的运行 |
+| `DELETE /api/agent/runs/[runId]` | 通过版本检查取消当前会话拥有的运行 |
+| `POST /api/agent/runs/[runId]/image` | 上传一张图片进行瞬时分析 |
+| `POST /api/agent/runs/[runId]/turns` | 提交一条有类型约束的消息或命令 |
+| `GET /api/agent/memory` | 列出当前浏览器的白名单偏好 |
+| `DELETE /api/agent/memory/[memoryId]` | 立即删除一条偏好 |
+| `DELETE /api/agent/memory` | 立即删除全部偏好 |
+| `POST /api/agent/cleanup` | 使用高熵 `Bearer AGENT_CLEANUP_TOKEN` 执行一批有界保留期清理；出现 `nextCursor` 时继续调用，以服务端进度为准 |
 
-Every mutation uses `expectedRevision`; stale updates return `409`. Run IDs are also checked against the anonymous session, so another browser receives `404` rather than run details. Final saving requires candidate selection followed by a separate `confirm_final` command.
+每个写操作都必须携带 `expectedRevision`；旧版本更新返回 `409`。运行 ID 还会与匿名会话核对，因此其他浏览器只能得到 `404`，不能获知运行详情。最终保存必须先选择候选，再单独执行 `confirm_final` 命令。
 
-## Evaluation contract
+## 评测契约
 
-Run the deterministic Agent acceptance suite with:
+运行确定性的 Agent 验收套件：
 
 ```bash
 npm run eval:agent
 ```
 
-The suite executes actual in-memory service/repository flows. Its report is explicitly an **offline fixture measurement**, not online production telemetry:
+套件执行真实的内存服务和仓储流程。报告明确属于离线夹具测量，不是线上生产遥测：
 
-| Objective metric | Offline gate |
+| 目标指标 | 离线门槛 |
 | --- | ---: |
-| Invalid clarification for complete briefs | <= 10% |
-| Correct single-field clarification for missing required fields | >= 90% |
-| Illegal state/tool blocking | 100% |
-| Candidate count accuracy (10/3/10) | 100% |
-| Refresh recovery | 100% |
-| Sensitive Agent dashboard event leakage | 0 |
-| Long-term memory misuse | <= 5% |
-| Immediate memory deletion | 100% |
+| 完整简报被错误追问的比例 | 不高于 10% |
+| 缺少必填项时只追问一个正确字段的比例 | 不低于 90% |
+| 非法状态或工具调用拦截率 | 100% |
+| 候选数量准确率（10/3/10） | 100% |
+| 刷新恢复率 | 100% |
+| Agent 看板敏感事件泄漏数 | 0 |
+| 长期记忆误用率 | 不高于 5% |
+| 记忆即时删除率 | 100% |
 
-State transitions, schemas, candidate counts, tool authorization, retry ceilings and sensitive-data guards are deterministic assertions. Hook quality and Top 3 explanation quality remain subjective: use blinded human pairwise comparison, swap A/B positions, and treat disagreement as a tie or human adjudication. Model scores explain ranking only and must not be presented as measured CTR or real click performance.
+状态迁移、Schema、候选数量、工具授权、重试上限和敏感数据护栏都使用确定性断言。Hook 质量与 Top 3 解释质量仍属于主观判断：需要采用人工盲评成对比较、交换 A/B 位置，并将分歧记为平局或交由人工裁决。模型评分只解释排序，不得被表述为实测 CTR 或真实点击表现。
 
-Stopping conditions are explicit: at most one format/count repair after the initial model call (two model calls total), two clarification questions, and three user-visible revision rounds. An optimization loop stops when its score does not improve; the application does not perform hidden unlimited rewriting.
+停止条件明确：首次模型调用后最多执行一次格式或数量修复，即合计不超过两次模型调用；最多追问两个澄清问题；最多三轮用户可见修改。优化循环在得分不再改善时停止，应用不会执行隐藏且无上限的改写。
 
-The original 60-case evaluation corpus remains unchanged. Agent fixtures live separately in `eval/agent-fixtures.json`.
+原有 60 个固定案例评测集保持不变。Agent 专用夹具单独存放在 `eval/agent-fixtures.json`。
 
-## Safety checks and rollout
+## 安全检查与发布
 
-Run the non-printing tracked-file credential scan with:
+运行不会打印匹配值的已跟踪文件凭据扫描：
 
 ```bash
 npm run security:scan
 ```
 
-The scan reports only file, line and rule; it never prints matched values.
+扫描只报告文件、行号和规则，永不打印命中的内容。
 
-Recommended rollout:
+建议按以下顺序发布：
 
-1. Keep the flag off and run unit, Agent evaluation, lint, typecheck, build and credential scan.
-2. Enable locally with JSON storage and exercise text/image, revision, recovery and memory deletion flows.
-3. Repeat against a live PostgreSQL instance and verify migrations, shard concurrency, ownership/revision conflicts, quotas and scheduled 30-day cleanup.
-4. Enable for a small production cohort, monitor aggregate events only, then expand gradually.
-5. Disable the flag to return users to classic mode without migrating or deleting classic history/favorites.
+1. 保持功能开关关闭，依次运行单元测试、Agent 评测、lint、类型检查、构建和凭据扫描。
+2. 在本地启用 JSON 存储，检查文本与图片、版本冲突、故障恢复和记忆删除流程。
+3. 在真实 PostgreSQL 实例上重复检查迁移、分片并发、所有权与版本冲突、配额和定时 30 天清理。
+4. 先对小规模生产用户开放，只监控聚合事件，再逐步扩大范围。
+5. 关闭功能开关即可让用户返回经典模式，不迁移或删除经典历史与收藏。
