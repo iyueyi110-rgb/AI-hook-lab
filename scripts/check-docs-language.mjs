@@ -7,6 +7,34 @@ const CJK_PATTERN = /[\u3400-\u9fff]/u;
 const ENGLISH_WORD_PATTERN = /[A-Za-z]+(?:['’-][A-Za-z]+)?/gu;
 const FENCE_PATTERN = /^\s*(```|~~~)/u;
 const HEADING_PATTERN = /^(#{1,3})\s+(.+?)\s*#*\s*$/u;
+const TECHNICAL_NAMES = new Set([
+  "Admin",
+  "Adjudication",
+  "Ahrefs Hook Generator",
+  "AI Hook Lab",
+  "Bad Case",
+  "Candidate",
+  "Codex",
+  "Copy.ai",
+  "Dataset Version",
+  "DeepSeek",
+  "Evaluation Run",
+  "Formal Result",
+  "Generation Task",
+  "Jasper",
+  "JavaScript",
+  "Next.js",
+  "Node.js",
+  "npm",
+  "PostgreSQL",
+  "Prompt Version",
+  "React",
+  "Review Assignment",
+  "Tailwind CSS",
+  "TypeScript",
+  "Vercel",
+  "WCAG AA",
+]);
 const TECHNICAL_LINE_PATTERNS = [
   /^<https?:\/\/\S+>$/u,
   /^https?:\/\/\S+$/u,
@@ -15,6 +43,13 @@ const TECHNICAL_LINE_PATTERNS = [
   /^(?:npm|pnpm|yarn|node|npx|git)\s+\S+/u,
   /^(?:\.{0,2}\/|[A-Za-z]:\\)\S+$/u,
 ];
+const TECHNICAL_ACRONYM_PATTERN =
+  /^(?:API|CLI|CSS|CSV|HMAC|HTML|HTTP|HTTPS|ID|IP|JSON|SDK|SHA-256|SQL|UI|URI|URL|UX|YAML)$/u;
+const HTTP_LABEL_PATTERN = /^HTTP\s+(?:Code|Header|Method|Status|\d{3})$/u;
+const ENVIRONMENT_VARIABLE_PATTERN = /^[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+$/u;
+const DOCUMENT_LOCATION_PATTERN = /^[A-Za-z][A-Za-z0-9.-]*\s+L\d+(?:-\d+)?$/u;
+const SHORT_CODE_PATTERN = /^(?:[A-Z]\d+|V\d+(?:\.\d+)+)$/u;
+const VERSIONED_TECHNICAL_NAME_PATTERN = /^(?:React|Tailwind CSS)\s+\d+(?:\.\d+)*$/u;
 
 function withoutInlineTechnicalSyntax(value) {
   return value
@@ -25,26 +60,26 @@ function withoutInlineTechnicalSyntax(value) {
     .trim();
 }
 
-function isTechnicalIdentifierLabel(value) {
-  const words = value.match(ENGLISH_WORD_PATTERN) ?? [];
+function isStructuredTechnicalIdentifier(value, visible) {
   return (
-    words.length > 0 &&
-    words.length <= 4 &&
-    words.every((word) => /^[A-Z][A-Za-z0-9]*$/u.test(word))
+    TECHNICAL_LINE_PATTERNS.some((pattern) => pattern.test(value.trim())) ||
+    ENVIRONMENT_VARIABLE_PATTERN.test(visible) ||
+    TECHNICAL_ACRONYM_PATTERN.test(visible) ||
+    HTTP_LABEL_PATTERN.test(visible) ||
+    DOCUMENT_LOCATION_PATTERN.test(visible) ||
+    SHORT_CODE_PATTERN.test(visible) ||
+    VERSIONED_TECHNICAL_NAME_PATTERN.test(visible) ||
+    TECHNICAL_NAMES.has(visible)
   );
 }
 
-function isPureEnglishExplanation(value, minimumWords = 3, allowIdentifierLabel = false) {
+function isPureEnglishExplanation(value, minimumWords = 3) {
   const visible = withoutInlineTechnicalSyntax(value);
   if (!visible || CJK_PATTERN.test(visible)) {
     return false;
   }
 
-  if (allowIdentifierLabel && isTechnicalIdentifierLabel(visible)) {
-    return false;
-  }
-
-  if (TECHNICAL_LINE_PATTERNS.some((pattern) => pattern.test(value.trim()))) {
+  if (isStructuredTechnicalIdentifier(value, visible)) {
     return false;
   }
 
@@ -147,7 +182,7 @@ export function inspectDocumentationText({ file, markdown }) {
         issues.push(`${file}:${lineNumber}: 禁止展示型 TODO/TBD`);
         continue;
       }
-      if (isPureEnglishExplanation(segment.text, 3, true)) {
+      if (isPureEnglishExplanation(segment.text, 1)) {
         issues.push(
           `${file}:${lineNumber}: 禁止纯英文说明性${segment.isContainer ? "文本" : "段落"}`,
         );

@@ -40,6 +40,31 @@ test("拒绝列表、引用和表格单元格中的纯英文说明文本", () =>
   assert.match(issues[2], /纯英文说明性文本/);
 });
 
+test("普通英文短标题不能作为技术标识放行", () => {
+  const issues = inspectDocumentationText({
+    file: "docs/example.md",
+    markdown: [
+      "| Product Context | Release Plan |",
+      "| --- | --- |",
+      "- Release Plan",
+    ].join("\n"),
+  });
+
+  assert.equal(issues.length, 3);
+  assert.match(issues[0], /纯英文说明性文本/);
+  assert.match(issues[1], /纯英文说明性文本/);
+  assert.match(issues[2], /纯英文说明性文本/);
+});
+
+test("允许结构化技术标识表格单元格", () => {
+  const issues = inspectDocumentationText({
+    file: "docs/example.md",
+    markdown: "| API | HTTP Status | NEXT_PUBLIC_AGENT_COACH_ENABLED |\n| --- | --- | --- |\n",
+  });
+
+  assert.deepEqual(issues, []);
+});
+
 test("拒绝英文首页引用、双语维护承诺和展示型待办", () => {
   const issues = inspectDocumentationText({
     file: "README.md",
