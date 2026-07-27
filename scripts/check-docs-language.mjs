@@ -25,9 +25,22 @@ function withoutInlineTechnicalSyntax(value) {
     .trim();
 }
 
-function isPureEnglishExplanation(value, minimumWords = 3) {
+function isTechnicalIdentifierLabel(value) {
+  const words = value.match(ENGLISH_WORD_PATTERN) ?? [];
+  return (
+    words.length > 0 &&
+    words.length <= 4 &&
+    words.every((word) => /^[A-Z][A-Za-z0-9]*$/u.test(word))
+  );
+}
+
+function isPureEnglishExplanation(value, minimumWords = 3, allowIdentifierLabel = false) {
   const visible = withoutInlineTechnicalSyntax(value);
   if (!visible || CJK_PATTERN.test(visible)) {
+    return false;
+  }
+
+  if (allowIdentifierLabel && isTechnicalIdentifierLabel(visible)) {
     return false;
   }
 
@@ -53,6 +66,33 @@ function isBilingualMaintenancePromise(value) {
     /(?:中英|中文和英文|中文与英文|双语).{0,12}(?:维护|同步|版本)/u.test(value) ||
     /(?:maintain|provide|keep).{0,24}(?:Chinese|English).{0,24}(?:Chinese|English)/iu.test(value)
   );
+}
+
+function extractVisibleSegments(line) {
+  let visible = line.trim();
+  let isContainer = false;
+
+  if (/^>/u.test(visible)) {
+    visible = visible.replace(/^(?:>\s*)+/u, "");
+    isContainer = true;
+  }
+
+  if (/^(?:[-*+]|\d+\.)\s+/u.test(visible)) {
+    visible = visible.replace(/^(?:[-*+]|\d+\.)\s+/u, "");
+    isContainer = true;
+  }
+
+  if (visible.startsWith("|") || visible.endsWith("|")) {
+    const cells = visible
+      .replace(/^\|/u, "")
+      .replace(/\|$/u, "")
+      .split("|")
+      .map((cell) => cell.trim())
+      .filter((cell) => cell && !/^:?-{3,}:?$/u.test(cell));
+    return cells.map((text) => ({ text, isContainer: true }));
+  }
+
+  return visible ? [{ text: visible, isContainer }] : [];
 }
 
 export function inspectDocumentationText({ file, markdown }) {
@@ -90,25 +130,28 @@ export function inspectDocumentationText({ file, markdown }) {
       issues.push(`${file}:${lineNumber}: 禁止双语维护承诺`);
     }
 
-    if (isDisplayTodo(line)) {
-      issues.push(`${file}:${lineNumber}: 禁止展示型 TODO/TBD`);
-      continue;
-    }
-
     const heading = line.match(HEADING_PATTERN);
     if (heading) {
+      if (isDisplayTodo(heading[2])) {
+        issues.push(`${file}:${lineNumber}: 禁止展示型 TODO/TBD`);
+        continue;
+      }
       if (isPureEnglishExplanation(heading[2], 1)) {
         issues.push(`${file}:${lineNumber}: 禁止纯英文说明性标题`);
       }
       continue;
     }
 
-    if (
-      !/^\s*(?:[-*+]|\d+\.)\s+/u.test(line) &&
-      !/^\s*[>|]/u.test(line) &&
-      isPureEnglishExplanation(trimmed)
-    ) {
-      issues.push(`${file}:${lineNumber}: 禁止纯英文说明性段落`);
+    for (const segment of extractVisibleSegments(line)) {
+      if (isDisplayTodo(segment.text)) {
+        issues.push(`${file}:${lineNumber}: 禁止展示型 TODO/TBD`);
+        continue;
+      }
+      if (isPureEnglishExplanation(segment.text, 3, true)) {
+        issues.push(
+          `${file}:${lineNumber}: 禁止纯英文说明性${segment.isContainer ? "文本" : "段落"}`,
+        );
+      }
     }
   }
 

@@ -23,6 +23,23 @@ test("拒绝纯英文说明性段落", () => {
   assert.match(issues[0], /纯英文说明性段落/);
 });
 
+test("拒绝列表、引用和表格单元格中的纯英文说明文本", () => {
+  const issues = inspectDocumentationText({
+    file: "docs/example.md",
+    markdown: [
+      "- Release notes are maintained here.",
+      "> This paragraph explains rollout details.",
+      "| 状态 | Release notes are maintained here. |",
+      "| --- | --- |",
+    ].join("\n"),
+  });
+
+  assert.equal(issues.length, 3);
+  assert.match(issues[0], /纯英文说明性文本/);
+  assert.match(issues[1], /纯英文说明性文本/);
+  assert.match(issues[2], /纯英文说明性文本/);
+});
+
 test("拒绝英文首页引用、双语维护承诺和展示型待办", () => {
   const issues = inspectDocumentationText({
     file: "README.md",
