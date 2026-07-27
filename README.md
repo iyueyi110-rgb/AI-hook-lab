@@ -8,12 +8,13 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 ## 快速入口
 
-- [在线 Demo](https://hookovo.icu/)：公开体验入口；投递前状态以 [Demo 验证记录](docs/portfolio/demo-verification.md) 为准。
+- 在线 Demo 状态：公网自动请求返回 200，但手机流量、无痕浏览器与桌面交互尚未完成人工验收，因此暂不作为公开入口。详见 [Demo 验证记录](docs/portfolio/demo-verification.md)。
 - [创作 Agent](docs/creative-agent.md)：查看简报补全、候选生成、人工确认、状态恢复与安全约束。
 - [运营分析 Agent](docs/portfolio/operations-agent.md)：查看只读工具、证据引用和人工升级门槛。
 - [60 个固定案例与评测方法](docs/evidence/README.md)：20 个主题 × 3 个平台，用于复核评测流程，不代表真实用户效果。
 - [数据存储与安全边界](SECURITY.md)：查看生产存储、权限、配额、密钥扫描和依赖审计说明。
 - [一页产品策略](docs/product/product-strategy.md)：查看北极星指标、竞品事实矩阵与分阶段路线图。
+- [作品集验收与简历对齐记录](docs/portfolio/acceptance-and-resume-alignment.md)：查看证据分级、门禁结果字段和未验证主张的同步规则。
 
 ## 本人与 AI 的分工
 
@@ -257,6 +258,7 @@ Mock 和子集运行只能验证流程，不能形成 Prompt 升级结论。完�
 | `npm run start` | 启动生产构建 |
 | `npm run lint` | 运行 ESLint |
 | `npm test` | 运行完整 Node 测试套件 |
+| `npm run docs:check` | 检查已跟踪 Markdown 的中文公开规范 |
 | `npm run eval:agent` | 运行创作 Agent 验收测试 |
 | `npm run security:scan` | 扫描 Git 跟踪文件中的凭据风险 |
 | `npm run eval:migrate` | 初始化或迁移评测存储 |
@@ -266,6 +268,7 @@ Mock 和子集运行只能验证流程，不能形成 Prompt 升级结论。完�
 
 ```bash
 npm test
+npm run docs:check
 npm run lint
 npm run build
 npm run security:scan
