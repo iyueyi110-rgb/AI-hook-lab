@@ -24,5 +24,11 @@ export default async function AdminDashboardPage() {
     if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard");
     if (access === "forbidden") forbidden();
   }
-  return <DashboardClient initialSummary={await getDashboardSummary()} opsAgentEnabled={isOpsAgentEnabled()} />;
+  return (
+    <DashboardClient
+      initialSummary={await getDashboardSummary()}
+      opsAgentEnabled={isOpsAgentEnabled()}
+      publicAccess={publicDashboard}
+    />
+  );
 }

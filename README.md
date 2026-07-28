@@ -182,6 +182,7 @@ chmod +x tools/start-ai-hook-mac.command
 | `DEEPSEEK_API_KEY` | 实时生成必需 | Hook 生成、创作 Agent 和运营分析 Agent 使用的 DeepSeek Key |
 | `DATABASE_URL` | 生产必需 | PostgreSQL 连接串；本地留空时使用 JSON 存储，生产环境留空会拒绝提供相关服务 |
 | `EVALUATION_STORE_PATH` | 否 | 覆盖本地评测 JSON 文件路径 |
+| `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时仅公开只读数据看板；其他后台、Agent 和写入接口仍需原权限 |
 | `AGENT_STORE_PATH` | 否 | 覆盖本地创作 Agent JSON 文件路径 |
 | `EVAL_INGEST_TOKEN` | 按需 | 评测脚本写入 `evaluation_set` 来源事件时使用 |
 | `ARK_API_KEY` | 图片理解必需 | 火山引擎 Ark API Key |

@@ -34,6 +34,23 @@ test("dashboard page and read API share the public dashboard policy", async () =
   }
 });
 
+test("public dashboard hides links to protected internal tools", async () => {
+  const page = await source("app/admin/dashboard/page.tsx");
+  const client = await source("app/admin/dashboard/DashboardClient.tsx");
+  assert.match(page, /publicAccess=\{publicDashboard\}/);
+  assert.match(client, /publicAccess = false/);
+  assert.match(client, /!publicAccess && opsAgentEnabled/);
+  assert.match(client, /!publicAccess && \(\s*<Link[^>]+href="\/evaluation"/s);
+});
+
+test("public dashboard switch is documented in environment templates", async () => {
+  const template = await source(".env.local.example");
+  const readme = await source("README.md");
+  assert.match(template, /^PUBLIC_DASHBOARD_ENABLED=false$/m);
+  assert.match(readme, /PUBLIC_DASHBOARD_ENABLED/);
+  assert.match(readme, /仅公开只读数据看板/);
+});
+
 test("dashboard APIs return 503 when production persistence is unavailable", async () => {
   const eventsRoute = await source("app/api/dashboard/events/route.ts");
   const summaryRoute = await source("app/api/dashboard/summary/route.ts");
