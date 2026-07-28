@@ -5,6 +5,7 @@ import type { AgentCommand, CreativeBrief } from "@/lib/agent/types";
 import type { GenerateResponse } from "@/lib/types";
 import {
   CoachClientError,
+  CoachRequestTimeoutError,
   CoachWriteInFlightError,
   buildCoachEndpoint,
   canSubmitCoachCommand,
@@ -14,9 +15,12 @@ import {
   performCoachWrite,
   readCoachResponse,
   saveCoachRunId,
+  withCoachRequestTimeout,
   type CoachClientResponse,
   type CoachMemoryEntry,
 } from "@/lib/creativeCoachClient";
+
+const COACH_READ_TIMEOUT_MS = 12_000;
 
 export interface CreativeCoachError {
   title: string;
@@ -48,6 +52,13 @@ interface CreateCoachRunInput {
 }
 
 function errorView(error: unknown): CreativeCoachError {
+  if (error instanceof CoachRequestTimeoutError) {
+    return {
+      title: "恢复请求超时",
+      message: "服务器没有及时返回任务或偏好数据。你可以重试恢复，也可以跳过恢复并开始新任务。",
+      code: error.code,
+    };
+  }
   if (error instanceof CoachClientError) {
     return {
       title: error.status === 409 ? "状态已更新" : "教练操作未完成",
@@ -116,11 +127,15 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
   }, [onFinalized, recordToolEvents]);
 
   const fetchRun = React.useCallback(async (runId: string, signal: AbortSignal) => {
-    const response = await fetch(buildCoachEndpoint("run", runId), {
-      cache: "no-store",
-      credentials: "same-origin",
+    const response = await withCoachRequestTimeout(
+      (requestSignal) => fetch(buildCoachEndpoint("run", runId), {
+        cache: "no-store",
+        credentials: "same-origin",
+        signal: requestSignal,
+      }),
+      COACH_READ_TIMEOUT_MS,
       signal,
-    });
+    );
     return readCoachResponse(response);
   }, []);
 
@@ -201,11 +216,15 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     const controller = new AbortController();
     memoryRequestRef.current = controller;
     try {
-      const raw = await fetch(buildCoachEndpoint("memory"), {
-        cache: "no-store",
-        credentials: "same-origin",
-        signal: controller.signal,
-      });
+      const raw = await withCoachRequestTimeout(
+        (requestSignal) => fetch(buildCoachEndpoint("memory"), {
+          cache: "no-store",
+          credentials: "same-origin",
+          signal: requestSignal,
+        }),
+        COACH_READ_TIMEOUT_MS,
+        controller.signal,
+      );
       const body = await raw.json().catch(() => null) as { entries?: CoachMemoryEntry[]; message?: string } | null;
       if (!raw.ok) throw new CoachClientError(raw.status, "memory_failed", body?.message ?? "无法读取偏好");
       if (!controller.signal.aborted && mountedRef.current) setMemory(Array.isArray(body?.entries) ? body.entries : []);
@@ -217,6 +236,25 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
       if (memoryRequestRef.current === controller) memoryRequestRef.current = null;
       if (mountedRef.current) setMemoryRestoring(false);
     }
+  }, []);
+
+  const retryRestore = React.useCallback(async () => {
+    if (mountedRef.current) {
+      setRunRestoring(true);
+      setMemoryRestoring(true);
+      setError(null);
+    }
+    await Promise.all([refreshRun(), refreshMemory()]);
+  }, [refreshMemory, refreshRun]);
+
+  const skipRestore = React.useCallback(() => {
+    readRequestRef.current?.abort();
+    memoryRequestRef.current?.abort();
+    saveCoachRunId(window.localStorage, null);
+    setResponse(null);
+    setError(null);
+    setRunRestoring(false);
+    setMemoryRestoring(false);
   }, []);
 
   React.useEffect(() => {
@@ -370,6 +408,8 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     restoring: runRestoring || memoryRestoring,
     createRun,
     refreshRun,
+    retryRestore,
+    skipRestore,
     submitCommand,
     uploadImage,
     cancelRun,

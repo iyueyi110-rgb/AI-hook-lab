@@ -94,6 +94,51 @@ test("a stale write refreshes once and is never replayed", async () => {
   assert.equal(refreshes, 1);
 });
 
+test("a coach read deadline aborts the pending request and returns a recoverable timeout error", async () => {
+  const withTimeout = (coachClient as unknown as {
+    withCoachRequestTimeout?: <T>(
+      operation: (signal: AbortSignal) => Promise<T>,
+      timeoutMs: number,
+      parentSignal?: AbortSignal,
+    ) => Promise<T>;
+  }).withCoachRequestTimeout;
+  assert.equal(typeof withTimeout, "function");
+
+  let aborted = false;
+  await assert.rejects(
+    withTimeout!(
+      (signal) => new Promise<never>(() => {
+        signal.addEventListener("abort", () => { aborted = true; }, { once: true });
+      }),
+      5,
+    ),
+    (error: unknown) => error instanceof Error
+      && error.name === "CoachRequestTimeoutError"
+      && (error as Error & { code?: string }).code === "request_timeout",
+  );
+  assert.equal(aborted, true);
+});
+
+test("the coach deadline remains a timeout when the aborted request rejects immediately", async () => {
+  const withTimeout = (coachClient as unknown as {
+    withCoachRequestTimeout: <T>(
+      operation: (signal: AbortSignal) => Promise<T>,
+      timeoutMs: number,
+      parentSignal?: AbortSignal,
+    ) => Promise<T>;
+  }).withCoachRequestTimeout;
+
+  await assert.rejects(
+    withTimeout(
+      (signal) => new Promise<never>((_, reject) => {
+        signal.addEventListener("abort", () => reject(new DOMException("aborted", "AbortError")), { once: true });
+      }),
+      5,
+    ),
+    (error: unknown) => error instanceof Error && error.name === "CoachRequestTimeoutError",
+  );
+});
+
 test("a synchronous coach write gate coalesces identical writes and rejects a different action", async () => {
   const createGate = (coachClient as unknown as { createCoachWriteGate?: () => { run<T>(key: string, operation: () => Promise<T>): Promise<T> } }).createCoachWriteGate;
   assert.equal(typeof createGate, "function");

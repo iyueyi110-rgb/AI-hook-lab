@@ -382,13 +382,24 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
 
   const candidatePanel = (
     <section aria-live="polite" className="min-w-0 space-y-4">
-      {!run && !coach.restoring && (
+      {!run && !coach.restoring && !coach.error && (
         <div className="editorial-panel grid min-h-[430px] content-between p-6">
           <div><p className="text-xs font-extrabold text-[var(--color-accent)]">候选工作区</p><h2 className="mt-4 max-w-[16ch] text-3xl font-black leading-tight tracking-[-0.035em]">先确认简报，再比较十个方向。</h2><p className="mt-3 max-w-[58ch] text-sm leading-6 text-[var(--color-graphite)]">教练会解释 Top 3 的排序依据。模型分只作参考，采用决定始终由你确认。</p></div>
           <div className="mt-10 grid gap-px overflow-hidden rounded-[10px] border border-[var(--color-line)] bg-[var(--color-line)] sm:grid-cols-3"><div className="bg-white p-4 text-xs leading-5">一次补问一个关键字段</div><div className="bg-white p-4 text-xs leading-5">首轮固定生成 10 条</div><div className="bg-white p-4 text-xs leading-5">单条改写固定返回 3 条</div></div>
         </div>
       )}
       {coach.restoring && <div className="editorial-panel min-h-[300px] p-6 soft-pulse" aria-label="正在恢复创作 Agent">正在恢复上次任务…</div>}
+      {!run && !coach.restoring && coach.error && (
+        <div className="editorial-panel min-h-[300px] p-6" role="alert">
+          <p className="text-xs font-extrabold text-[var(--color-danger)]">恢复未完成</p>
+          <h2 className="mt-3 text-2xl font-black">{coach.error.title}</h2>
+          <p className="mt-2 max-w-[58ch] text-sm leading-6 text-[var(--color-graphite)]">{coach.error.message}</p>
+          <div className="mt-5 flex flex-wrap gap-2">
+            <button className="button-primary" onClick={() => void coach.retryRestore()} type="button"><ArrowClockwise aria-hidden="true" size={16} weight="bold" />重试恢复</button>
+            <button className="button-secondary" onClick={coach.skipRestore} type="button">跳过恢复并开始新任务</button>
+          </div>
+        </div>
+      )}
       {run && candidates.length === 0 && (
         <div className="editorial-panel p-6">
           <p className="text-xs font-extrabold text-[var(--color-accent)]">{STATUS_LABELS[run.status]}</p>
