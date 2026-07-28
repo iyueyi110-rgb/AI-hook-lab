@@ -160,6 +160,41 @@ export class CoachClientError extends Error {
   }
 }
 
+export class CoachRequestTimeoutError extends Error {
+  readonly code = "request_timeout" as const;
+
+  constructor(timeoutMs: number) {
+    super(`创作 Agent 请求超过 ${Math.max(1, Math.ceil(timeoutMs / 1000))} 秒，请重试。`);
+    this.name = "CoachRequestTimeoutError";
+  }
+}
+
+export async function withCoachRequestTimeout<T>(
+  operation: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  parentSignal?: AbortSignal,
+): Promise<T> {
+  const controller = new AbortController();
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+  if (parentSignal?.aborted) abortFromParent();
+  else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => {
+    timeout = setTimeout(() => {
+      reject(new CoachRequestTimeoutError(timeoutMs));
+      controller.abort();
+    }, Math.max(1, timeoutMs));
+  });
+
+  try {
+    return await Promise.race([operation(controller.signal), deadline]);
+  } finally {
+    if (timeout) clearTimeout(timeout);
+    parentSignal?.removeEventListener("abort", abortFromParent);
+  }
+}
+
 export function isCreativeCoachEnabled(value: string | undefined): boolean {
   return value === "true";
 }

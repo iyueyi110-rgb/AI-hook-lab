@@ -26,6 +26,7 @@ import {
   validateAgentState,
   type StoredAgentRun,
 } from "./repository.ts";
+import * as agentRepository from "./repository.ts";
 import { AGENT_SCHEMA_SQL } from "./schema.ts";
 import { AGENT_MIGRATIONS, runAgentMigrations } from "./migrations.ts";
 
@@ -62,6 +63,35 @@ test("memory repository contract persists only whitelisted memory for its creato
   assert.deepEqual(listCreatorMemory(await repository.read(), firstId).entries, [{ key: "default_platform", value: "douyin", confidence: 0.6 }]);
   await repository.transaction((state) => deleteCreatorMemory(state, firstId, "default_platform", "douyin"));
   assert.deepEqual(listCreatorMemory(await repository.read(), firstId).entries, []);
+});
+
+test("the Agent PostgreSQL pool bounds connection and migration waits", () => {
+  const createPoolConfig = (agentRepository as unknown as {
+    createAgentPostgresPoolConfig?: (connectionString: string) => {
+      connectionString: string;
+      connectionTimeoutMillis?: number;
+      statement_timeout?: false | number;
+      query_timeout?: number;
+    };
+  }).createAgentPostgresPoolConfig;
+  assert.equal(typeof createPoolConfig, "function");
+
+  const config = createPoolConfig!("postgresql://example");
+  assert.equal(config.connectionString, "postgresql://example");
+  assert.ok(
+    typeof config.connectionTimeoutMillis === "number"
+      && config.connectionTimeoutMillis > 0
+      && config.connectionTimeoutMillis <= 10_000,
+  );
+  assert.ok(
+    typeof config.statement_timeout === "number"
+      && config.statement_timeout > 0
+      && config.statement_timeout <= 15_000,
+  );
+  assert.ok(
+    typeof config.query_timeout === "number"
+      && config.query_timeout >= config.statement_timeout,
+  );
 });
 
 test("memory CRUD rejects unknown keys and missing or expired sessions", () => {

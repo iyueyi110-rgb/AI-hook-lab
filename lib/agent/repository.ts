@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { Pool, type PoolClient } from "pg";
+import { Pool, type PoolClient, type PoolConfig } from "pg";
 
 import { DatabaseNotConfiguredError, getConfiguredDatabaseUrl, getPersistenceMode } from "../persistence.ts";
 import { trimRecentMessages } from "./budget.ts";
@@ -387,7 +387,7 @@ export class JsonAgentRepository implements AgentRepository {
 export class PostgresAgentRepository implements AgentRepository {
   readonly mode = "postgres" as const;
   private readonly pool: Pool;
-  constructor(connectionString: string) { this.pool = new Pool({ connectionString, max: 5 }); }
+  constructor(connectionString: string) { this.pool = new Pool(createAgentPostgresPoolConfig(connectionString)); }
   async initialize(): Promise<void> {
     await runAgentMigrations(this.pool);
   }
@@ -541,6 +541,17 @@ function stateForShard(state: AgentState, key: string): AgentState {
   shard.memories = state.memories.filter((memory) => ownerIds.has(memory.creatorSessionId));
   shard.usage = (state.usage ?? []).filter((usage) => usage.scopeType === "session" && usage.scopeId === digest);
   return shard;
+}
+
+export function createAgentPostgresPoolConfig(connectionString: string): PoolConfig {
+  return {
+    connectionString,
+    max: 5,
+    connectionTimeoutMillis: 5_000,
+    idleTimeoutMillis: 10_000,
+    statement_timeout: 10_000,
+    query_timeout: 12_000,
+  };
 }
 
 function isEmptyShard(state: AgentState): boolean {
