@@ -22,6 +22,18 @@ function generated(request: CoachGenerationRequest): GenerateResponse {
   };
 }
 
+function seedCandidates(count = 10) {
+  return Array.from({ length: count }, (_, index) => ({
+    id: `classic-${index}`,
+    text: `经典候选 ${index}`,
+    style: "反差",
+    reasoning: `引用经典候选 ${index}`,
+    scores: { impact: 8, platformFit: 8, actionability: 7, shareability: 7 },
+    overallScore: 8,
+    badcaseTags: [],
+  }));
+}
+
 function setup() {
   let id = 0;
   const service = createCreativeCoachService({
@@ -80,6 +92,39 @@ test("creates an HttpOnly 180-day SameSite session cookie and restores only owne
   assert.equal(crossSession.status, 404);
 });
 
+test("creates a reviewing run from strict seed candidates", async () => {
+  const handlers = setup();
+  const response = await handlers.createRun(jsonRequest("/api/agent/runs", {
+    brief,
+    seedCandidates: seedCandidates(),
+  }));
+  const body = await response.json();
+
+  assert.equal(response.status, 200);
+  assert.equal(body.run.status, "reviewing");
+  assert.equal(body.candidates.length, 10);
+  assert.deepEqual(body.allowedCommands, [
+    "select_candidate",
+    "rewrite_candidate",
+    "reject_batch",
+  ]);
+});
+
+test("rejects malformed seed candidates at the create-run boundary", async () => {
+  const handlers = setup();
+  const unknownField = await handlers.createRun(jsonRequest("/api/agent/runs", {
+    brief,
+    seedCandidates: [{ ...seedCandidates(1)[0], hiddenReasoning: "no" }],
+  }));
+  assert.equal(unknownField.status, 400);
+
+  const nonArray = await handlers.createRun(jsonRequest("/api/agent/runs", {
+    brief,
+    seedCandidates: "not-an-array",
+  }));
+  assert.equal(nonArray.status, 400);
+});
+
 test("validates the strict turn union, message size, state, and expected revision", async () => {
   const handlers = setup();
   const created = await createRun(handlers);
@@ -111,6 +156,85 @@ test("confirm_brief accepts only a strict optional brief patch", async () => {
     command: { type: "confirm_brief", briefPatch: { imageDescription: "安全描述", unknown: "no" } },
   }, second.cookie), second.body.run.id);
   assert.equal(rejected.status, 400);
+});
+
+test("strategy references are strict on seeded creation and brief confirmation", async () => {
+  let id = 0;
+  const strategy = {
+    async bindActive(runId: string, reference: { id: string; version: number }) {
+      return {
+        runId,
+        cardId: reference.id,
+        strategyVersion: reference.version,
+        appliedGuidanceHash: "a".repeat(64),
+        boundAt: new Date().toISOString(),
+      };
+    },
+    async resolveApplied(runId: string) {
+      return {
+        assignment: {
+          runId,
+          cardId: "strategy-1",
+          strategyVersion: 1,
+          appliedGuidanceHash: "a".repeat(64),
+          boundAt: new Date().toISOString(),
+        },
+        guidance: { do: ["用具体结果开头"], avoid: [] },
+      };
+    },
+    async unbind() {},
+    async recordFeedback() {},
+  };
+  const service = createCreativeCoachService({
+    repository: new MemoryAgentRepository(),
+    generate: async (request) => generated(request),
+    analyzeImage: async () => { throw new Error("unused"); },
+    id: (prefix) => `${prefix}-${++id}`,
+    strategy,
+    strategyCardsEnabled: true,
+  });
+  const handlers = createAgentHttpHandlers({ service, enabled: true, production: false });
+  const seeded = await handlers.createRun(jsonRequest("/api/agent/runs", {
+    brief,
+    seedCandidates: seedCandidates(),
+    strategyRef: { id: "strategy-1", version: 1 },
+  }));
+  assert.equal(seeded.status, 200);
+  assert.equal((await seeded.json()).run.strategyApplication.id, "strategy-1");
+
+  const malformed = await handlers.createRun(jsonRequest("/api/agent/runs", {
+    brief,
+    seedCandidates: seedCandidates(),
+    strategyRef: { id: "strategy-1", version: 1, guidance: "no" },
+  }));
+  assert.equal(malformed.status, 400);
+
+  const created = await createRun(handlers);
+  const confirmed = await handlers.turn(jsonRequest(`/api/agent/runs/${created.body.run.id}/turns`, {
+    expectedRevision: 0,
+    command: { type: "confirm_brief", strategyRef: { id: "strategy-1", version: 1 } },
+  }, created.cookie), created.body.run.id);
+  assert.equal(confirmed.status, 200);
+
+  const feedback = await handlers.strategyFeedback(
+    jsonRequest(
+      `/api/agent/runs/${created.body.run.id}/strategy-feedback`,
+      { strategyFit: "not_applicable", notApplicableReason: "audience" },
+      created.cookie,
+    ),
+    created.body.run.id,
+  );
+  assert.equal(feedback.status, 200);
+
+  const invalidFeedback = await handlers.strategyFeedback(
+    jsonRequest(
+      `/api/agent/runs/${created.body.run.id}/strategy-feedback`,
+      { strategyFit: "helpful", notApplicableReason: "audience" },
+      created.cookie,
+    ),
+    created.body.run.id,
+  );
+  assert.equal(invalidFeedback.status, 400);
 });
 
 test("turn responses use the unified contract and cancellation is revision checked", async () => {

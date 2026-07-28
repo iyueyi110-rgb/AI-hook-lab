@@ -4,6 +4,7 @@ import path from "node:path";
 import { Pool, type PoolClient, type PoolConfig } from "pg";
 
 import { DatabaseNotConfiguredError, getConfiguredDatabaseUrl, getPersistenceMode } from "../persistence.ts";
+import { withPostgresTransactionClient } from "../postgresTransactionContext.ts";
 import { trimRecentMessages } from "./budget.ts";
 import { recordMemory } from "./memory.ts";
 import { assertExpectedRevision } from "./machine.ts";
@@ -418,7 +419,7 @@ export class PostgresAgentRepository implements AgentRepository {
       );
       const before = mergeShardRows(result.rows);
       const state = structuredClone(before);
-      const value = await mutator(state);
+      const value = await withPostgresTransactionClient(client, () => mutator(state));
       validateAgentState(state);
       normalizeState(state);
       for (const key of keys) {

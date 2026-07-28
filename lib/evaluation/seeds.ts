@@ -1,3 +1,5 @@
+import type { ContentType, Platform } from "../types";
+import type { StrategyScopePair } from "../strategy/types";
 import type { EvaluationCase, EvaluationPlatform } from "./types";
 
 const CREATED_AT = "2026-07-13T00:00:00.000Z";
@@ -34,14 +36,17 @@ const PLATFORM_RULES: Record<EvaluationPlatform, {
   xiaohongshu: { code: "XHS", label: "小红书", emotionStyle: "生活化、经验分享、情绪价值", lengthLimit: 60 },
   douyin: { code: "DY", label: "抖音", emotionStyle: "口语化、直接、结果或冲突前置", lengthLimit: 45 },
   bilibili: { code: "BILI", label: "B站", emotionStyle: "问题导向、知识密度、过程分析", lengthLimit: 70 },
+  youtube: { code: "YT", label: "YouTube", emotionStyle: "清晰承诺、价值前置、适合视频开场", lengthLimit: 80 },
+  x: { code: "X", label: "X", emotionStyle: "简洁、观点鲜明、信息密度高", lengthLimit: 55 },
 };
+const PROMPT_EVALUATION_PLATFORMS = ["xiaohongshu", "douyin", "bilibili"] as const;
 
 export const EVALUATION_DATASET_VERSION = "hook-eval-v1";
 
 export const EVALUATION_CASES: EvaluationCase[] = TOPICS.flatMap(
   ([topic, category, targetAudience], topicIndex) =>
-    (Object.entries(PLATFORM_RULES) as Array<[EvaluationPlatform, (typeof PLATFORM_RULES)[EvaluationPlatform]]>)
-      .map(([platform, rule]) => {
+    PROMPT_EVALUATION_PLATFORMS.map((platform) => {
+        const rule = PLATFORM_RULES[platform];
         const topicNumber = String(topicIndex + 1).padStart(3, "0");
         const caseId = `CASE_${topicNumber}_${rule.code}`;
         return {
@@ -63,6 +68,35 @@ export const EVALUATION_CASES: EvaluationCase[] = TOPICS.flatMap(
         };
       }),
 );
+
+export function createStrategyEvaluationCases(
+  scopePair: StrategyScopePair,
+): EvaluationCase[] {
+  const rule = PLATFORM_RULES[scopePair.platform as Platform];
+  if (!rule) throw new Error("Unsupported strategy evaluation platform");
+  return TOPICS.map(([topic, category, targetAudience], topicIndex) => {
+    const topicNumber = String(topicIndex + 1).padStart(3, "0");
+    const caseId = `STRATEGY_${topicNumber}_${rule.code}_${scopePair.contentType}`;
+    return {
+      id: caseId,
+      caseId,
+      datasetVersion: "strategy-hook-topics-v1",
+      topicId: `STRATEGY_TOPIC_${topicNumber}`,
+      topic,
+      category,
+      platform: scopePair.platform,
+      contentType: scopePair.contentType as ContentType,
+      platformLabel: rule.label,
+      targetAudience,
+      emotionStyle: rule.emotionStyle,
+      lengthLimit: rule.lengthLimit,
+      dataOrigin: "evaluation_set",
+      status: "active",
+      createdAt: CREATED_AT,
+      updatedAt: CREATED_AT,
+    };
+  });
+}
 
 export function validateCanonicalCases(cases: EvaluationCase[]): string[] {
   const errors: string[] = [];

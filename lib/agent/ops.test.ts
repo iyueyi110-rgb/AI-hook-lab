@@ -28,13 +28,34 @@ function state(): EvaluationState {
 test("ops answer validator requires evidence for complete and numeric findings", () => {
   assert.throws(() => parseOpsAgentAnswer({ status: "complete", summary: "done", sources: [], findings: [], risks: [], recommendations: [], caveats: [], followUpQuestions: [] }, new Set()), OpsAnswerValidationError);
   assert.throws(() => parseOpsAgentAnswer({ status: "partial", summary: "partial", sources: [], findings: [{ title: "rate", detail: "提升 12%", sourceIds: [] }], risks: [], recommendations: [], caveats: [], followUpQuestions: [] }, new Set()), /numeric findings require a source/);
+  assert.throws(
+    () => parseOpsAgentAnswer(
+      {
+        status: "partial",
+        summary: "partial",
+        sources: [],
+        findings: [],
+        risks: [],
+        recommendations: [{
+          priority: "P1",
+          action: "create a strategy",
+          rationale: "test",
+          sourceIds: [],
+        }],
+        caveats: [],
+        followUpQuestions: [],
+      },
+      new Set(),
+    ),
+    /recommendation/,
+  );
 });
 
-test("ops launch evaluation inventory contains twelve domain and six safety scenarios", () => {
-  assert.equal(OPS_AGENT_EVAL_CASES.length, 18);
-  assert.equal(OPS_AGENT_EVAL_CASES.filter((item) => item.kind === "domain").length, 12);
+test("ops launch evaluation inventory contains thirteen domain and six safety scenarios", () => {
+  assert.equal(OPS_AGENT_EVAL_CASES.length, 19);
+  assert.equal(OPS_AGENT_EVAL_CASES.filter((item) => item.kind === "domain").length, 13);
   assert.equal(OPS_AGENT_EVAL_CASES.filter((item) => item.kind === "safety").length, 6);
-  assert.equal(new Set(OPS_AGENT_EVAL_CASES.map((item) => item.id)).size, 18);
+  assert.equal(new Set(OPS_AGENT_EVAL_CASES.map((item) => item.id)).size, 19);
   const coveredTools = new Set(OPS_AGENT_EVAL_CASES.flatMap((item) => item.expectedTools));
   assert.deepEqual([...coveredTools].sort(), OPS_TOOL_DEFINITIONS.map((item) => item.function.name).sort());
   assert.ok(OPS_AGENT_EVAL_CASES.every((item) => item.forbiddenBehavior.length > 0 && item.allowedStatuses.length > 0));
@@ -66,6 +87,40 @@ test("dashboard tool validates paired RFC 3339 bounds", async () => {
   const result = await execute("getDashboardSummary", { from: "2026-07-01T00:00:00Z" }, "admin");
   assert.equal(result.status, "error");
   if (result.status === "error") assert.equal(result.error.code, "invalid_arguments");
+});
+
+test("strategy performance tool returns absolute observational metrics without uplift", async () => {
+  const execute = createOpsToolExecutor({
+    now: () => new Date("2026-07-19T00:00:00Z"),
+    getEvaluationState: async () => state(),
+    getDashboardSummary: async (origin, filters) => summarizeDashboardEvents([
+      {
+        id: "shown",
+        type: "agent_strategy_event",
+        timestamp: "2026-07-18T00:00:00Z",
+        dataOrigin: "real_user",
+        payload: {
+          action: "shown",
+          presentationId: "p1",
+          strategyCardId: "card-1",
+          strategyCardVersion: 2,
+          platform: "douyin",
+          contentType: "tutorial",
+        },
+      },
+    ], origin, filters),
+  });
+  const result = await execute("getStrategyPerformance", {
+    strategyCardId: "card-1",
+    strategyCardVersion: 2,
+  }, "admin");
+  assert.equal(result.status, "success");
+  if (result.status === "success") {
+    const data = result.data as Record<string, unknown>;
+    assert.equal(data.uniqueExposure, 1);
+    assert.equal(Object.hasOwn(data, "uplift"), false);
+    assert.match(String(data.observationalWarning), /不代表因果/);
+  }
 });
 
 test("DeepSeek provider uses native tools and preserves tool call ids", async () => {
@@ -126,6 +181,8 @@ test("ops service executes a native tool loop and persists owner-scoped evidence
   const result = await service.submitTurn({ ownerUserId: "admin-1", actorRole: "admin", message: "概览" });
   assert.equal(result.answer.status, "complete");
   assert.equal(result.answer.sources[0]?.id, "source-1");
+  assert.equal(result.answer.sources[0]?.sampleSize, 1);
+  assert.deepEqual(result.answer.sources[0]?.caveats, []);
   const restored = await service.getSession("admin-1", result.sessionId);
   assert.equal(restored.messages.length, 2);
   await assert.rejects(() => service.getSession("admin-2", result.sessionId), /会话不存在/);

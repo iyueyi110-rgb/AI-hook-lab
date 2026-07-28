@@ -156,7 +156,7 @@ export function HookCard({
               type="button"
             >
               <CheckCircle aria-hidden="true" size={16} weight={selected ? "fill" : "bold"} />
-              {selected ? "已加入对比" : "加入对比"}
+              {selected ? "已选择" : "选择这条"}
             </button>
           </>
         ) : (

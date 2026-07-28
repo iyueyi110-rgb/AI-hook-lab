@@ -5,6 +5,7 @@ import Image from "next/image";
 import {
   Camera,
   CaretDown,
+  ChatCircleDots,
   MagicWand,
   SlidersHorizontal,
   X,
@@ -38,6 +39,8 @@ interface InputPanelProps {
   setWordLimit: (n: number) => void;
   status: GenerateStatus;
   onGenerate: () => void;
+  coachEnabled: boolean;
+  onClarify: () => void;
   imagePreviewUrl: string | null;
   imageAnalysis: ImageAnalysisResult | null;
   isAnalyzing: boolean;
@@ -69,6 +72,8 @@ export function InputPanel({
   setWordLimit,
   status,
   onGenerate,
+  coachEnabled,
+  onClarify,
   imagePreviewUrl,
   imageAnalysis,
   isAnalyzing,
@@ -390,8 +395,19 @@ export function InputPanel({
           type="button"
         >
           <MagicWand aria-hidden="true" size={18} weight="bold" />
-          {loading ? "正在生成 10 个 Hook" : "生成 10 个 Hook"}
+          {loading ? "正在生成 10 个候选" : "生成 10 个候选"}
         </button>
+        {coachEnabled && (
+          <button
+            className="button-secondary w-full"
+            disabled={loading || isAnalyzing}
+            onClick={onClarify}
+            type="button"
+          >
+            <ChatCircleDots aria-hidden="true" size={17} weight="bold" />
+            不确定怎么写？帮我梳理
+          </button>
+        )}
         <p className="text-center text-[11px] leading-4 text-[var(--color-muted)]">
           按 Ctrl / ⌘ + Enter 快速生成
         </p>

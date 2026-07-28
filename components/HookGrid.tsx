@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Copy, Lightbulb, WarningCircle } from "@phosphor-icons/react";
+import { ChatCircleDots, Check, Copy, Lightbulb, WarningCircle } from "@phosphor-icons/react";
 import { useEffect, useRef, useState } from "react";
 import type { GenerateResponse, HookResult, PlatformSatisfaction } from "@/lib/types";
 import { HookCard } from "./HookCard";
@@ -14,6 +14,9 @@ interface HookGridProps {
   onCopyHook: (hook: HookResult) => void;
   onRejectBatch: () => void;
   analysis?: GenerateResponse["analysis"] | null;
+  coachEnabled?: boolean;
+  coachAssisted?: boolean;
+  onPolish?: () => void;
   coachActions?: {
     onRewrite: (id: string) => void;
     onSelect: (id: string) => void;
@@ -36,6 +39,9 @@ export function HookGrid({
   onCopyHook,
   onRejectBatch,
   analysis,
+  coachEnabled = false,
+  coachAssisted = false,
+  onPolish,
   coachActions,
 }: HookGridProps) {
   const [copiedAll, setCopiedAll] = useState(false);
@@ -87,6 +93,12 @@ export function HookGrid({
           <h2 className="text-lg font-black tracking-[-0.025em]" id="results-heading">
             候选 Hook
           </h2>
+          {coachAssisted && (
+            <p className="mt-1 inline-flex items-center gap-1.5 rounded-full border border-[var(--color-accent)]/20 bg-[var(--color-accent-soft)] px-2.5 py-1 text-[10px] font-extrabold text-[var(--color-accent)]">
+              <ChatCircleDots aria-hidden="true" size={13} weight="bold" />
+              本轮由创作教练协助
+            </p>
+          )}
           <p className="mt-1 text-xs text-[var(--color-muted)]">
             {hooks.length} 个候选，{coachActions
               ? coachActions.selectedIds.length > 0
@@ -95,10 +107,18 @@ export function HookGrid({
               : "模型分用于排序，最终选择由你决定。"}
           </p>
         </div>
-        <button className="button-secondary self-start sm:self-auto" onClick={handleCopyAll} type="button">
-          {copiedAll ? <Check aria-hidden="true" size={16} weight="bold" /> : <Copy aria-hidden="true" size={16} weight="bold" />}
-          {copiedAll ? "已复制全部" : "复制全部"}
-        </button>
+        <div className="flex flex-wrap gap-2 self-start sm:justify-end">
+          {coachEnabled && !coachActions && onPolish && (
+            <button className="button-primary" onClick={onPolish} type="button">
+              <ChatCircleDots aria-hidden="true" size={16} weight="bold" />
+              继续打磨
+            </button>
+          )}
+          <button className="button-secondary" onClick={handleCopyAll} type="button">
+            {copiedAll ? <Check aria-hidden="true" size={16} weight="bold" /> : <Copy aria-hidden="true" size={16} weight="bold" />}
+            {copiedAll ? "已复制全部" : "复制全部"}
+          </button>
+        </div>
       </div>
 
       <HookCard

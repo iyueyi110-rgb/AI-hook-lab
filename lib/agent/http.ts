@@ -27,8 +27,11 @@ import {
   createCreativeCoachService,
   type CreativeCoachService,
 } from "./service.ts";
-import type { AgentCommand } from "./types.ts";
+import type { AgentCommand, CreativeBrief } from "./types.ts";
 import { AgentQuotaError, quotaConfigFromEnv, type AgentRequestContext } from "./quota.ts";
+import { getStrategyService, StrategyConflictError, StrategyInputError, StrategyNotFoundError } from "../strategy/service.ts";
+import { isStrategyCardsEnabled } from "../strategy/http.ts";
+import type { StrategyFit, StrategyNotApplicableReason } from "../strategy/types.ts";
 
 export const MAX_AGENT_JSON_BYTES = 64 * 1024;
 
@@ -149,12 +152,18 @@ function parseCommand(value: unknown): AgentCommand {
       exactKeys(command, ["type", "text"], ["type", "text"]);
       return { type: "message", text: nonEmpty(command.text, "message", MAX_AGENT_MESSAGE_LENGTH) };
     case "confirm_brief": {
-      exactKeys(command, ["type", "briefPatch"], ["type"]);
-      if (command.briefPatch === undefined) return { type: "confirm_brief" };
-      if (!command.briefPatch || typeof command.briefPatch !== "object" || Array.isArray(command.briefPatch)) {
+      exactKeys(command, ["type", "briefPatch", "strategyRef"], ["type"]);
+      if (command.briefPatch !== undefined && (!command.briefPatch || typeof command.briefPatch !== "object" || Array.isArray(command.briefPatch))) {
         throw new HttpError(400, "briefPatch must be an object");
       }
-      return { type: "confirm_brief", briefPatch: command.briefPatch } as AgentCommand;
+      if (command.strategyRef !== undefined && command.strategyRef !== null && (!command.strategyRef || typeof command.strategyRef !== "object" || Array.isArray(command.strategyRef))) {
+        throw new HttpError(400, "strategyRef must be an object or null");
+      }
+      return {
+        type: "confirm_brief",
+        ...(command.briefPatch === undefined ? {} : { briefPatch: command.briefPatch }),
+        ...(command.strategyRef === undefined ? {} : { strategyRef: command.strategyRef }),
+      } as AgentCommand;
     }
     case "confirm_final": case "retry":
       exactKeys(command, ["type"], ["type"]);
@@ -178,6 +187,9 @@ function errorResponse(error: unknown): Response {
   if (error instanceof AgentConflictError) return json({ error: error.code, message: error.message }, 409);
   if (error instanceof AgentNotFoundError || error instanceof CreatorSessionNotFoundError) return json({ error: "not_found", message: "Agent run was not found" }, 404);
   if (error instanceof AgentInputError || error instanceof AgentMemoryValidationError) return json({ error: "validation", message: error.message }, 400);
+  if (error instanceof StrategyInputError) return json({ error: error.message, message: error.message }, 400);
+  if (error instanceof StrategyConflictError) return json({ error: error.message, message: error.message }, 409);
+  if (error instanceof StrategyNotFoundError) return json({ error: "strategy_not_found", message: "strategy_not_found" }, 409);
   if (error instanceof AgentQuotaError) return json({ error: error.code, message: error.message }, 429, { "Retry-After": String(error.retryAfterSeconds) });
   if (error instanceof ImageAnalysisError) return json({ error: error.title, message: error.message }, error.status);
   if (error instanceof DatabaseNotConfiguredError) return json({ error: "database_unavailable", message: error.message }, 503);
@@ -203,6 +215,7 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
   async function getService(): Promise<CreativeCoachService> {
     if (!service) {
       const repository = getAgentRepository();
+      const strategyService = getStrategyService();
       ready = repository.initialize();
       service = createCreativeCoachService({
         repository,
@@ -219,6 +232,17 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         analyzeImage: (file) => analyzeImageFile(file, { apiKey: env.ARK_API_KEY, model: env.ARK_MODEL_ID }),
         turnTimeoutMs: DEFAULT_AGENT_TURN_TIMEOUT_MS,
         quotaConfig: quotaConfigFromEnv(env),
+        strategyCardsEnabled: isStrategyCardsEnabled(env),
+        strategy: {
+          bindActive: (runId, reference, scope, bindingNow) => strategyService.bindActive(runId, reference, scope, bindingNow),
+          async resolveApplied(runId) {
+            const applied = await strategyService.resolveApplied(runId);
+            return applied ? { assignment: applied.assignment, guidance: applied.version.guidance } : undefined;
+          },
+          unbind: (runId) => strategyService.unbind(runId),
+          recordFeedback: (runId, fit, reason) =>
+            strategyService.recordFeedback(runId, fit, reason),
+        },
       });
     }
     if (ready) await ready;
@@ -235,11 +259,19 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         const off = hidden(); if (off) return off;
         assertSameOrigin(request);
         const body = await readJson(request);
-        exactKeys(body, ["brief", "hasImage", "ignoreMemory"]);
+        exactKeys(body, ["brief", "hasImage", "ignoreMemory", "seedCandidates", "strategyRef"]);
         if (body.brief !== undefined && (!body.brief || typeof body.brief !== "object" || Array.isArray(body.brief))) throw new HttpError(400, "brief must be an object");
         if (body.hasImage !== undefined && typeof body.hasImage !== "boolean") throw new HttpError(400, "hasImage must be boolean");
         if (body.ignoreMemory !== undefined && typeof body.ignoreMemory !== "boolean") throw new HttpError(400, "ignoreMemory must be boolean");
-        const result = await (await getService()).createRun(cookieValue(request), { brief: body.brief as Record<string, unknown> | undefined, hasImage: body.hasImage as boolean | undefined, ignoreMemory: body.ignoreMemory as boolean | undefined }, agentRequestContext(request, env, production));
+        if (body.seedCandidates !== undefined && !Array.isArray(body.seedCandidates)) throw new HttpError(400, "seedCandidates must be an array");
+        if (body.strategyRef !== undefined && (!body.strategyRef || typeof body.strategyRef !== "object" || Array.isArray(body.strategyRef))) throw new HttpError(400, "strategyRef must be an object");
+        const result = await (await getService()).createRun(cookieValue(request), {
+          brief: body.brief as Partial<CreativeBrief> | undefined,
+          hasImage: body.hasImage as boolean | undefined,
+          ignoreMemory: body.ignoreMemory as boolean | undefined,
+          seedCandidates: body.seedCandidates,
+          strategyRef: body.strategyRef as { id: string; version: number } | undefined,
+        }, agentRequestContext(request, env, production));
         return json(result.response, 200, { "Set-Cookie": sessionCookie(result.sessionToken, production), "Cache-Control": "no-store" });
       });
     },
@@ -266,6 +298,40 @@ export function createAgentHttpHandlers(options: HandlerOptions = {}) {
         const body = await readJson(request);
         exactKeys(body, ["expectedRevision", "command"], ["expectedRevision", "command"]);
         return json(await (await getService()).submitTurn(cookieValue(request), nonEmpty(runId, "runId", 200), integer(body.expectedRevision, "expectedRevision"), parseCommand(body.command), agentRequestContext(request, env, production)));
+      });
+    },
+    async strategyFeedback(request: Request, runId: string): Promise<Response> {
+      return handle(async () => {
+        const off = hidden(); if (off) return off;
+        assertSameOrigin(request);
+        const body = await readJson(request);
+        exactKeys(body, ["strategyFit", "notApplicableReason"], ["strategyFit"]);
+        const fit = body.strategyFit;
+        if (!["helpful", "unhelpful", "not_applicable"].includes(String(fit))) {
+          throw new HttpError(400, "strategyFit is invalid");
+        }
+        const reason = body.notApplicableReason;
+        if (
+          reason !== undefined &&
+          !["platform", "content_type", "audience", "tone", "topic", "other"].includes(
+            String(reason),
+          )
+        ) {
+          throw new HttpError(400, "notApplicableReason is invalid");
+        }
+        if (fit === "not_applicable" && reason === undefined) {
+          throw new HttpError(400, "notApplicableReason is required");
+        }
+        if (fit !== "not_applicable" && reason !== undefined) {
+          throw new HttpError(400, "notApplicableReason is not allowed");
+        }
+        await (await getService()).recordStrategyFeedback(
+          cookieValue(request),
+          nonEmpty(runId, "runId", 200),
+          fit as StrategyFit,
+          reason as StrategyNotApplicableReason | undefined,
+        );
+        return json({ ok: true });
       });
     },
     async image(request: Request, runId: string): Promise<Response> {

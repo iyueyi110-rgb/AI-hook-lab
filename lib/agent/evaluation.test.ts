@@ -179,12 +179,22 @@ test("offline fixtures meet the measurable acceptance thresholds through real co
   }
 
   for (const field of ["topic", "platform", "contentType"] as const) {
+    const fieldSignals = {
+      topic: ["topic", "主题"],
+      platform: ["platform", "平台"],
+      contentType: ["contentType", "内容类型"],
+    }[field];
     for (let index = 0; index < 10; index += 1) {
       const brief = { ...completeBrief } as Record<string, unknown>;
       delete brief[field];
       const created = await createService().createRun(undefined, { brief });
       const asked = created.response.messages.at(-1)?.content ?? "";
-      observations.push({ kind: "missing_field", expectedField: field, correctlyAsked: asked.includes(field), questionCount: created.response.run.clarificationAttempts ?? 0 });
+      observations.push({
+        kind: "missing_field",
+        expectedField: field,
+        correctlyAsked: fieldSignals.some((signal) => asked.includes(signal)),
+        questionCount: created.response.run.clarificationAttempts ?? 0,
+      });
     }
   }
 

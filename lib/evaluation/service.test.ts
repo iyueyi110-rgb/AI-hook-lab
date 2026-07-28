@@ -1,8 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { MemoryEvaluationRepository } from "./repository.ts";
 import { EvaluationService } from "./service.ts";
+import { JsonStrategyRepository } from "../strategy/repository.ts";
+import { StrategyService } from "../strategy/service.ts";
 
 test("admin creates isolated reviewer accounts and a full immutable run snapshot", async () => {
   const service = await setupService();
@@ -24,6 +29,106 @@ test("admin creates isolated reviewer accounts and a full immutable run snapshot
   assert.equal(run.snapshotHash.length, 64);
   assert.equal(run.dataOrigin, "evaluation_set");
   assert.notEqual(run.baselinePromptContent, run.candidatePromptContent);
+});
+
+test("approved strategies create isolated 20-topic Live blind evaluations", async () => {
+  const strategyFile = path.join(
+    await mkdtemp(path.join(tmpdir(), "strategy-evaluation-service-")),
+    "strategies.json",
+  );
+  const strategyService = new StrategyService(
+    new JsonStrategyRepository(strategyFile),
+    () => new Date("2026-07-28T00:00:00Z"),
+  );
+  const created = await strategyService.createDraft("admin-1", {
+    title: "抖音教程具体结果策略",
+    scopePairs: [{ platform: "douyin", contentType: "tutorial" }],
+    guidance: {
+      do: ["使用口语化的具体结果开头"],
+      avoid: ["避免使用本文将介绍"],
+    },
+    hypothesis: "降低平台不匹配",
+  });
+  const submitted = await strategyService.action(
+    created.card.id,
+    1,
+    "admin-1",
+    { action: "submit_review", expectedRevision: 0 },
+  );
+  await strategyService.action(created.card.id, 1, "admin-1", {
+    action: "approve_experiment",
+    expectedRevision: submitted.revision,
+  });
+
+  const repository = new MemoryEvaluationRepository();
+  const service = new EvaluationService(
+    repository,
+    {
+      async generate() {
+        return {
+          hooks: [0, 1, 2].map((index) => ({
+            content: `Hook ${index}`,
+            styleTag: "test",
+            recommendReason: "test",
+          })),
+        };
+      },
+    },
+    strategyService,
+  );
+  await service.initialize();
+  const admin = await service.setupFirstAdmin(
+    "admin",
+    "管理员",
+    "admin-password-123",
+  );
+  const reviewerA = await service.createUser(admin.id, {
+    username: "reviewer-strategy-a",
+    displayName: "评测员 A",
+    password: "reviewer-password-123",
+    role: "evaluator",
+  });
+  const reviewerB = await service.createUser(admin.id, {
+    username: "reviewer-strategy-b",
+    displayName: "评测员 B",
+    password: "reviewer-password-456",
+    role: "evaluator",
+  });
+  const adjudicator = await service.createUser(admin.id, {
+    username: "judge-strategy",
+    displayName: "裁决员",
+    password: "adjudicator-pass-123",
+    role: "adjudicator",
+  });
+  const originalKey = process.env.DEEPSEEK_API_KEY;
+  process.env.DEEPSEEK_API_KEY = "test-key";
+  try {
+    const run = await service.createStrategyRun(admin.id, {
+      runName: "策略盲评",
+      executionMode: "live",
+      evaluatorIds: [reviewerA.id, reviewerB.id],
+      adjudicatorId: adjudicator.id,
+      modelName: "deepseek-chat",
+      modelParameters: { temperature: 0.7 },
+      strategyRef: { id: created.card.id, version: 1 },
+      scopePair: { platform: "douyin", contentType: "tutorial" },
+    });
+    assert.equal(run.evaluationKind, "strategy");
+    assert.equal(run.caseCount, 20);
+    assert.equal(run.generationTasks.length, 40);
+    assert.equal(run.reviewAssignments.length, 40);
+    assert.equal(new Set(run.cases.map((item) => item.topicId)).size, 20);
+    assert.equal(run.baselinePromptId, run.candidatePromptId);
+    assert.doesNotMatch(run.baselinePromptContent, /APPROVED_STRATEGY_JSON/);
+    assert.match(run.candidatePromptContent, /APPROVED_STRATEGY_JSON/);
+    assert.deepEqual(run.strategyConfig?.scopePair, {
+      platform: "douyin",
+      contentType: "tutorial",
+    });
+  } finally {
+    if (originalKey === undefined) delete process.env.DEEPSEEK_API_KEY;
+    else process.env.DEEPSEEK_API_KEY = originalKey;
+  }
 });
 
 test("one recoverable generation step processes baseline and candidate for one case", async () => {

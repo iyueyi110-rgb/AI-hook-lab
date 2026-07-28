@@ -1,7 +1,10 @@
 export type DataOrigin = "real_user" | "evaluation_set" | "simulation";
 export type ExecutionMode = "live" | "mock";
 export type UserRole = "admin" | "evaluator" | "adjudicator";
-export type EvaluationPlatform = "xiaohongshu" | "douyin" | "bilibili";
+import type { ContentType, Platform } from "../types";
+import type { StrategyCardRef, StrategyScopePair } from "../strategy/types";
+
+export type EvaluationPlatform = Platform;
 export type PromptRole = "baseline" | "candidate";
 export type RunStatus =
   | "draft"
@@ -27,6 +30,7 @@ export interface EvaluationCase {
   topic: string;
   category: string;
   platform: EvaluationPlatform;
+  contentType?: ContentType;
   platformLabel: string;
   targetAudience: string;
   emotionStyle: string;
@@ -125,6 +129,15 @@ export interface EvaluationRunSnapshot {
   generationTasks: EvaluationGenerationTask[];
   formalResults: FormalEvaluationResult[];
   pairwiseDecisions: PairwiseDecision[];
+  evaluationKind?: "prompt" | "strategy";
+  strategyConfig?: {
+    evaluationKind: "strategy";
+    scopePair: StrategyScopePair;
+    baselineStrategyRef: null;
+    candidateStrategyRef: StrategyCardRef;
+    strategyContentHash: string;
+    topicSetVersion: "strategy-hook-topics-v1";
+  };
 }
 
 export interface EvaluationCandidate {

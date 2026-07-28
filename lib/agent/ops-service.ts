@@ -46,6 +46,7 @@ export interface OpsAgentTurnResult {
   sessionId: string;
   revision: number;
   traceId: string;
+  assistantMessageId: string;
   answer: OpsAgentAnswer;
   createdAt: string;
 }
@@ -214,7 +215,15 @@ export class OpsAgentService {
         try {
           const sourceIds = new Set(successes.map((item) => item.source.id));
           answer = parseOpsAgentAnswer(parseJsonContent(response.content), sourceIds);
-          const trustedSources = new Map(successes.map((item) => [item.source.id, item.source]));
+          const trustedSources = new Map(successes.map((item) => [
+            item.source.id,
+            {
+              ...item.source,
+              sampleSize: item.sampleSize,
+              caveats: [...item.caveats],
+              eligibility: "draft_only" as const,
+            },
+          ]));
           answer.sources = [...trustedSources.values()];
           break;
         } catch (error) {
@@ -242,7 +251,14 @@ export class OpsAgentService {
       trace.stopReason = stopReason;
       session = await this.repository.save(session, acquiredRevision);
       console.info(JSON.stringify({ event: "ops_agent_turn", traceId, sessionId: session.id, model: trace.model, modelCalls: trace.modelCalls, toolCalls: trace.toolCalls, inputTokens: trace.inputTokens, outputTokens: trace.outputTokens, cachedInputTokens: trace.cachedInputTokens, status: answer.status, stopReason }));
-      return { sessionId: session.id, revision: session.revision, traceId, answer, createdAt: assistantMessage.createdAt };
+      return {
+        sessionId: session.id,
+        revision: session.revision,
+        traceId,
+        assistantMessageId: assistantMessage.id,
+        answer,
+        createdAt: assistantMessage.createdAt,
+      };
     } catch (error) {
       const failedAt = this.now();
       session.status = "idle";

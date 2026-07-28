@@ -1,4 +1,5 @@
 import type { DataOrigin } from "../evaluation/types";
+import type { EvidenceEligibility } from "../strategy/types";
 
 export type OpsAgentStatus = "complete" | "needs_clarification" | "partial";
 
@@ -9,6 +10,17 @@ export interface OpsAgentSource {
   asOf: string;
   window?: { from: string; to: string };
   filters: Record<string, string>;
+  sampleSize?: number;
+  caveats?: string[];
+  eligibility?: EvidenceEligibility;
+}
+
+export interface OpsRecommendation {
+  kind: "strategy_candidate" | "analysis_action";
+  priority: "P0" | "P1" | "P2";
+  action: string;
+  rationale: string;
+  sourceIds: string[];
 }
 
 export interface OpsAgentAnswer {
@@ -17,18 +29,14 @@ export interface OpsAgentAnswer {
   sources: OpsAgentSource[];
   findings: Array<{ title: string; detail: string; sourceIds: string[] }>;
   risks: string[];
-  recommendations: Array<{
-    priority: "P0" | "P1" | "P2";
-    action: string;
-    rationale: string;
-    sourceIds: string[];
-  }>;
+  recommendations: OpsRecommendation[];
   caveats: string[];
   followUpQuestions: string[];
 }
 
 export type OpsToolName =
   | "getDashboardSummary"
+  | "getStrategyPerformance"
   | "listEvaluationRuns"
   | "getEvaluationReport"
   | "getBadCaseAnalysis"
@@ -174,10 +182,24 @@ export function parseOpsAgentAnswer(value: unknown, successfulSourceIds: Readonl
     return { title: raw.title, detail: raw.detail, sourceIds };
   });
   const recommendations = value.recommendations.map((raw) => {
-    if (!isRecord(raw) || !(["P0", "P1", "P2"] as const).includes(raw.priority as "P0") || typeof raw.action !== "string" || typeof raw.rationale !== "string") {
+    if (
+      !isRecord(raw)
+      || !(["strategy_candidate", "analysis_action"] as const).includes(
+        raw.kind as "strategy_candidate",
+      )
+      || !(["P0", "P1", "P2"] as const).includes(raw.priority as "P0")
+      || typeof raw.action !== "string"
+      || typeof raw.rationale !== "string"
+    ) {
       throw new OpsAnswerValidationError("recommendation is invalid");
     }
-    return { priority: raw.priority as "P0" | "P1" | "P2", action: raw.action, rationale: raw.rationale, sourceIds: validateSourceIds(raw.sourceIds) };
+    return {
+      kind: raw.kind as OpsRecommendation["kind"],
+      priority: raw.priority as OpsRecommendation["priority"],
+      action: raw.action,
+      rationale: raw.rationale,
+      sourceIds: validateSourceIds(raw.sourceIds),
+    };
   });
   if (status === "complete" && successfulSourceIds.size === 0) {
     throw new OpsAnswerValidationError("complete answers require successful evidence");

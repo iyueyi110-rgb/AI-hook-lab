@@ -2,7 +2,7 @@
 
 ## 产品定位
 
-AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创作简报、多版本 Hook 生成、人工反馈、离线评测和运营分析连接成可复核的内容优化闭环。产品保留“一次生成 10 条 Hook”的经典模式，并提供受约束的创作 Agent、只读运营分析 Agent、图片理解和 Prompt 评测工作台。
+AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创作简报、多版本 Hook 生成、人工反馈、离线评测和运营分析连接成可复核的内容优化闭环。首页以统一创作台承载快速生成和按需介入的创作 Agent，并提供只读运营分析 Agent、图片理解和 Prompt 评测工作台。
 
 本人把它作为 AI 产品经理作品集：重点展示问题定义、产品规则、指标口径、安全边界与版本决策，而不是把模型输出或模拟数据包装成真实业务结果。
 
@@ -11,6 +11,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 - 在线 Demo 状态：公网自动请求返回 200，但手机流量、无痕浏览器与桌面交互尚未完成人工验收，因此暂不作为公开入口。详见 [Demo 验证记录](docs/portfolio/demo-verification.md)。
 - [创作 Agent](docs/creative-agent.md)：查看简报补全、候选生成、人工确认、状态恢复与安全约束。
 - [运营分析 Agent](docs/portfolio/operations-agent.md)：查看只读工具、证据引用和人工升级门槛。
+- [受治理策略桥接层](docs/strategy-governance.md)：查看策略版本、证据门禁、创作绑定和观察性分析边界。
 - [60 个固定案例与评测方法](docs/evidence/README.md)：20 个主题 × 3 个平台，用于复核评测流程，不代表真实用户效果。
 - [数据存储与安全边界](SECURITY.md)：查看生产存储、权限、配额、密钥扫描和依赖审计说明。
 - [一页产品策略](docs/product/product-strategy.md)：查看北极星指标、竞品事实矩阵与分阶段路线图。
@@ -55,11 +56,11 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 | 离线评测 | 使用固定案例对比 baseline 与 candidate Prompt，支持双人盲评、A/B 对比、第三人裁决、Bad Case 复盘和报告导出 |
 | 运营分析 Agent | 管理员通过只读工具查询看板和评测证据，获得带来源引用的发现、风险和 Prompt 优化建议 |
 
-## 产品模式
+## 创作路径
 
 ### 经典生成
 
-经典模式使用 `/api/generate` 完成单次生成，适合快速获取和比较多个开头方案。
+“生成 10 个候选”使用 `/api/generate` 完成单次生成，适合主题已经明确、希望快速获取和比较多个开头方案的用户。
 
 - 5 个内容平台：小红书、抖音、B 站、YouTube、X
 - 5 类内容：视频、图文、产品广告、教程、观点帖
@@ -70,7 +71,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 ### 创作 Agent
 
-设置 `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` 后，首页会显示“经典生成 / 创作 Agent”模式切换。
+设置 `NEXT_PUBLIC_AGENT_COACH_ENABLED=true` 后，首页会显示“帮我梳理”和“继续打磨”入口。Agent 默认隐藏；用户主动启用后才从右侧展开，并自动携带当前创作简报。经典候选进入 Agent 时会经过严格的候选转换边界，执行路径仍与 `/api/generate` 分离。
 
 创作 Agent 采用受约束的单 Agent 工作流：
 
@@ -84,7 +85,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 ### 图片理解
 
-经典模式和创作 Agent 均可使用火山引擎 Ark 视觉模型理解图片。
+创作台可使用火山引擎 Ark 视觉模型理解图片，结构化图片描述会随共享简报进入所选执行路径。
 
 - 支持 JPEG、PNG、WebP
 - 单张图片不超过 5 MB
@@ -98,6 +99,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 - `/admin/dashboard`：查看生成健康度、内容价值、人工反馈、Bad Case 和数据来源分布
 - `/admin/dashboard/agent`：用自然语言查询看板、评测批次、Prompt 版本和 Bad Case 证据
+- `/admin/dashboard/strategies`：审核、评测、激活、归档和比较不可变策略版本
 
 运营分析 Agent 仅提供组织级只读工具，不会修改 Prompt、发布版本、写入评测结果或发送消息。数字结论必须关联数据来源；模拟数据和未完成评测不能形成正式升级结论。该功能由 `OPS_AGENT_ENABLED` 控制，开发环境默认开启，生产环境默认关闭。
 
@@ -182,6 +184,7 @@ chmod +x tools/start-ai-hook-mac.command
 | `DEEPSEEK_API_KEY` | 实时生成必需 | Hook 生成、创作 Agent 和运营分析 Agent 使用的 DeepSeek Key |
 | `DATABASE_URL` | 生产必需 | PostgreSQL 连接串；本地留空时使用 JSON 存储，生产环境留空会拒绝提供相关服务 |
 | `EVALUATION_STORE_PATH` | 否 | 覆盖本地评测 JSON 文件路径 |
+| `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时仅公开只读数据看板；其他后台、Agent 和写入接口仍需原权限 |
 | `AGENT_STORE_PATH` | 否 | 覆盖本地创作 Agent JSON 文件路径 |
 | `EVAL_INGEST_TOKEN` | 按需 | 评测脚本写入 `evaluation_set` 来源事件时使用 |
 | `ARK_API_KEY` | 图片理解必需 | 火山引擎 Ark API Key |
@@ -189,6 +192,7 @@ chmod +x tools/start-ai-hook-mac.command
 | `NEXT_PUBLIC_AGENT_COACH_ENABLED` | 否 | 设置为 `true` 后开放创作 Agent 界面和 API |
 | `AGENT_CLEANUP_TOKEN` | 生产建议配置 | 调用 Agent 数据清理接口时使用的 Bearer Token |
 | `OPS_AGENT_ENABLED` | 否 | 控制管理员运营分析 Agent；生产环境需显式设为 `true` |
+| `STRATEGY_CARDS_ENABLED` | 否 | 控制新策略查询和新 Agent 绑定；关闭后已绑定运行仍可完成 |
 | `AGENT_IP_HASH_SECRET` | 生产必需 | 用于匿名配额 IP HMAC，建议使用至少 32 位独立高熵随机值 |
 | `AGENT_TRUSTED_IP_HEADER` | 否 | 由可信部署代理覆盖的客户端 IP 请求头，默认 `x-vercel-forwarded-for` |
 | `AGENT_QUOTA_*` | 否 | 调整会话/IP 运行次数、模型调用、图片调用和活跃任务配额 |
@@ -294,6 +298,7 @@ hooks/                  历史、收藏、分析与创作 Agent 状态
 lib/generation/         Hook 生成与结构化输出校验
 lib/agent/              创作 Agent、运营 Agent、配额和持久化
 lib/evaluation/         离线评测领域逻辑、权限、报告与导出
+lib/strategy/           策略卡、证据门禁、审核、绑定和双存储仓储
 db/migrations/          PostgreSQL 评测系统迁移
 eval/                   评测脚本与结果模板
 scripts/                密钥扫描与本地开发辅助脚本
@@ -308,6 +313,9 @@ docs/portfolio/         招聘方入口、AI 协作边界与 Demo 记录
 - [创作 Agent：架构、安全、评测与发布](docs/creative-agent.md)
 - [离线评测系统说明](docs/evaluation-system.md)
 - [运营分析 Agent](docs/portfolio/operations-agent.md)
+- [受治理策略桥接层](docs/strategy-governance.md)
+- [策略卡管理员操作手册](docs/strategy-admin-guide.md)
+- [策略卡故障 Runbook](docs/strategy-runbook.md)
 - [公开证据索引](docs/evidence/README.md)
 - [真实创作者验证计划](docs/product/real-user-validation-plan.md)
 - [AI 治理说明](docs/product/ai-governance.md)

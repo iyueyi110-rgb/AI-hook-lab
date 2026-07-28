@@ -45,6 +45,8 @@ export function runSummary(run: EvaluationRunRecord) {
     status: run.status,
     executionMode: run.executionMode,
     dataOrigin: run.dataOrigin,
+    evaluationKind: run.evaluationKind ?? "prompt",
+    strategyConfig: run.strategyConfig,
     caseCount: run.caseCount,
     generatedTasks: run.generationTasks.filter((item) => item.terminalStatus === "success").length,
     totalGenerationTasks: run.generationTasks.length,

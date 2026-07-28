@@ -4,6 +4,12 @@ export type AdminAccess = "unauthenticated" | "forbidden" | "authorized";
 
 type RoleOnlyUser = Pick<EvaluationUser, "role">;
 
+export function isPublicDashboardEnabled(
+  value = process.env.PUBLIC_DASHBOARD_ENABLED,
+): boolean {
+  return value === "true";
+}
+
 export function classifyAdminAccess(user: RoleOnlyUser | null): AdminAccess {
   if (!user) return "unauthenticated";
   return user.role === "admin" ? "authorized" : "forbidden";

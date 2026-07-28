@@ -16,6 +16,8 @@ export interface DashboardFeedbackFilters {
   platform?: string;
   promptVersion?: string;
   trigger?: string;
+  strategyCardId?: string;
+  strategyCardVersion?: number;
   /** Inclusive RFC 3339 lower bound. */
   from?: string;
   /** Exclusive RFC 3339 upper bound. */
@@ -40,7 +42,8 @@ export type DashboardEventType =
   | "agent_revision"
   | "agent_final_confirmed"
   | "agent_memory_applied"
-  | "agent_memory_deleted";
+  | "agent_memory_deleted"
+  | "agent_strategy_event";
 
 export interface DashboardEvent {
   id: string;
@@ -108,6 +111,26 @@ export interface DashboardSummary {
       { agreed: number; missedByModel: number; modelOnly: number }
     >;
   };
+  strategies: {
+    totals: {
+      uniqueShown: number;
+      selected: number;
+      ignored: number;
+      feedback: number;
+      selectedTasks: number;
+      completedTasks: number;
+      adoptedTasks: number;
+      badcaseCount: number;
+      platformMismatchCount: number;
+    };
+    selectionRate: number;
+    generationCompletionRate: number;
+    taskAdoptionRate: number;
+    avgSatisfaction: number;
+    fitDistribution: Record<string, number>;
+    notApplicableReasonDistribution: Record<string, number>;
+    observationalWarning: string;
+  };
   recentEvents: DashboardEvent[];
 }
 
@@ -135,6 +158,7 @@ const EVENT_TYPES = new Set<DashboardEventType>([
   "agent_final_confirmed",
   "agent_memory_applied",
   "agent_memory_deleted",
+  "agent_strategy_event",
 ]);
 const PLATFORMS = new Set(Object.keys(PLATFORM_CONFIG));
 const CONTENT_TYPES = new Set(Object.keys(CONTENT_TYPE_CONFIG));
@@ -236,6 +260,16 @@ const AGENT_COMMANDS = new Set([
 const AGENT_TOOL_STATUSES = new Set(["requested", "running", "completed", "error", "denied"]);
 const AGENT_CLARIFICATION_FIELDS = new Set(["topic", "platform", "contentType"]);
 const AGENT_MEMORY_DELETE_SCOPES = new Set(["single", "all"]);
+const STRATEGY_EVENT_ACTIONS = new Set(["shown", "selected", "ignored", "feedback"]);
+const STRATEGY_FITS = new Set(["helpful", "unhelpful", "not_applicable"]);
+const STRATEGY_NOT_APPLICABLE_REASONS = new Set([
+  "platform",
+  "content_type",
+  "audience",
+  "tone",
+  "topic",
+  "other",
+]);
 
 interface PayloadFieldRule {
   persist?: boolean;
@@ -499,6 +533,27 @@ const EVENT_PAYLOAD_SCHEMAS: Record<DashboardEventType, EventPayloadSchema> = {
     },
     required: ["scope", "memoryCount"],
   },
+  agent_strategy_event: {
+    fields: {
+      action: enumRule(STRATEGY_EVENT_ACTIONS),
+      presentationId: browserContextRule,
+      strategyCardId: browserContextRule,
+      strategyCardVersion: numberRule(1, 1_000_000, true),
+      taskId: browserContextRule,
+      platform: platformRule,
+      contentType: contentTypeRule,
+      strategyFit: enumRule(STRATEGY_FITS),
+      notApplicableReason: enumRule(STRATEGY_NOT_APPLICABLE_REASONS),
+    },
+    required: [
+      "action",
+      "presentationId",
+      "strategyCardId",
+      "strategyCardVersion",
+      "platform",
+      "contentType",
+    ],
+  },
 };
 
 function validateCreatorFeedbackConditions(payload: Record<string, unknown>): void {
@@ -541,6 +596,21 @@ function validateCreatorFeedbackConditions(payload: Record<string, unknown>): vo
 
   if (payload.usageOutcome !== undefined) invalidPayload("usageOutcome");
   if (!hasReasons) invalidPayload("reasonTags");
+}
+
+function validateStrategyEventConditions(payload: Record<string, unknown>): void {
+  if (payload.action !== "feedback") {
+    if (payload.strategyFit !== undefined || payload.notApplicableReason !== undefined) {
+      invalidPayload("strategyFit");
+    }
+    return;
+  }
+  if (payload.strategyFit === undefined) invalidPayload("strategyFit");
+  if (payload.strategyFit === "not_applicable") {
+    if (payload.notApplicableReason === undefined) invalidPayload("notApplicableReason");
+  } else if (payload.notApplicableReason !== undefined) {
+    invalidPayload("notApplicableReason");
+  }
 }
 
 function createId(): string {
@@ -589,6 +659,7 @@ export function validateDashboardPayload(
   }
 
   if (eventType === "creator_feedback") validateCreatorFeedbackConditions(payload);
+  if (eventType === "agent_strategy_event") validateStrategyEventConditions(payload);
 
   return payload;
 }
@@ -699,6 +770,27 @@ export function summarizeDashboardEvents(
 ): DashboardSummary {
   const fromMs = feedbackFilters.from ? Date.parse(feedbackFilters.from) : undefined;
   const toMs = feedbackFilters.to ? Date.parse(feedbackFilters.to) : undefined;
+  const selectedStrategyTaskIdsForFilter = new Set(
+    allEvents
+      .filter((event) => {
+        if (event.dataOrigin !== origin || event.type !== "agent_strategy_event") return false;
+        const timestampMs = Date.parse(event.timestamp);
+        if (fromMs !== undefined && timestampMs < fromMs) return false;
+        if (toMs !== undefined && timestampMs >= toMs) return false;
+        if (event.payload?.action !== "selected") return false;
+        if (
+          feedbackFilters.strategyCardId &&
+          event.payload?.strategyCardId !== feedbackFilters.strategyCardId
+        ) return false;
+        if (
+          feedbackFilters.strategyCardVersion !== undefined &&
+          event.payload?.strategyCardVersion !== feedbackFilters.strategyCardVersion
+        ) return false;
+        return true;
+      })
+      .map((event) => event.payload?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string"),
+  );
   const events = allEvents.filter((event) => {
     if (event.dataOrigin !== origin) return false;
     const timestampMs = Date.parse(event.timestamp);
@@ -718,6 +810,26 @@ export function summarizeDashboardEvents(
     ) {
       return false;
     }
+    if (
+      feedbackFilters.strategyCardId ||
+      feedbackFilters.strategyCardVersion !== undefined
+    ) {
+      if (event.type === "agent_strategy_event") {
+        if (
+          feedbackFilters.strategyCardId &&
+          event.payload?.strategyCardId !== feedbackFilters.strategyCardId
+        ) return false;
+        if (
+          feedbackFilters.strategyCardVersion !== undefined &&
+          event.payload?.strategyCardVersion !== feedbackFilters.strategyCardVersion
+        ) return false;
+      } else if (
+        typeof event.payload?.taskId !== "string" ||
+        !selectedStrategyTaskIdsForFilter.has(event.payload.taskId)
+      ) {
+        return false;
+      }
+    }
     return true;
   });
   const generationsStarted = events.filter((event) => event.type === "generation_start").length;
@@ -731,6 +843,7 @@ export function summarizeDashboardEvents(
   const satisfactionEvents = events.filter((event) => event.type === "platform_satisfaction");
   const feedbackEvents = events.filter((event) => event.type === "creator_feedback");
   const submittedFeedback = feedbackEvents.filter((event) => event.payload?.status === "submitted");
+  const strategyEvents = events.filter((event) => event.type === "agent_strategy_event");
 
   const hooksGenerated = completed.reduce(
     (sum, event) => sum + (Number(event.payload?.hookCount) || 0),
@@ -821,6 +934,78 @@ export function summarizeDashboardEvents(
 
   const hooksFavorited = Math.max(0, favs - unfavs);
   const hooksAdopted = Math.max(0, adopted - unadopted);
+
+  const uniqueStrategyShown = new Set(
+    strategyEvents
+      .filter((event) => event.payload?.action === "shown")
+      .map((event) =>
+        [
+          event.payload?.presentationId,
+          event.payload?.strategyCardId,
+          event.payload?.strategyCardVersion,
+        ].join(":"),
+      ),
+  );
+  const selectedStrategyEvents = strategyEvents.filter(
+    (event) => event.payload?.action === "selected",
+  );
+  const ignoredStrategyEvents = strategyEvents.filter(
+    (event) => event.payload?.action === "ignored",
+  );
+  const strategyFeedbackEvents = strategyEvents.filter(
+    (event) => event.payload?.action === "feedback",
+  );
+  const selectedStrategyTaskIds = new Set(
+    selectedStrategyEvents
+      .map((event) => event.payload?.taskId)
+      .filter((taskId): taskId is string => typeof taskId === "string" && taskId.length > 0),
+  );
+  const completedStrategyTasks = new Set(
+    completed
+      .map((event) => event.payload?.taskId)
+      .filter(
+        (taskId): taskId is string =>
+          typeof taskId === "string" && selectedStrategyTaskIds.has(taskId),
+      ),
+  );
+  const adoptedStrategyTasks = new Set(
+    events
+      .filter((event) => event.type === "hook_adopted")
+      .map((event) => event.payload?.taskId)
+      .filter(
+        (taskId): taskId is string =>
+          typeof taskId === "string" && selectedStrategyTaskIds.has(taskId),
+      ),
+  );
+  const strategySatisfaction = satisfactionEvents.filter(
+    (event) =>
+      typeof event.payload?.taskId === "string" &&
+      selectedStrategyTaskIds.has(event.payload.taskId),
+  );
+  const strategyBadcaseTags = completed
+    .filter(
+      (event) =>
+        typeof event.payload?.taskId === "string" &&
+        selectedStrategyTaskIds.has(event.payload.taskId),
+    )
+    .flatMap((event) =>
+      Array.isArray(event.payload?.badcaseTags)
+        ? event.payload.badcaseTags.map(String)
+        : [],
+    );
+  const strategyFitDistribution: Record<string, number> = {};
+  const strategyNotApplicableReasonDistribution: Record<string, number> = {};
+  strategyFeedbackEvents.forEach((event) => {
+    const fit = event.payload?.strategyFit;
+    if (typeof fit === "string") {
+      strategyFitDistribution[fit] = (strategyFitDistribution[fit] ?? 0) + 1;
+    }
+    const reason = event.payload?.notApplicableReason;
+    if (typeof reason === "string") {
+      strategyNotApplicableReasonDistribution[reason] =
+        (strategyNotApplicableReasonDistribution[reason] ?? 0) + 1;
+    }
+  });
 
   const shownPromptIds = new Set(
     feedbackEvents
@@ -953,6 +1138,39 @@ export function summarizeDashboardEvents(
       platformDistribution: feedbackPlatformDistribution,
       promptVersionDistribution: feedbackPromptVersionDistribution,
       modelHumanAlignment,
+    },
+    strategies: {
+      totals: {
+        uniqueShown: uniqueStrategyShown.size,
+        selected: selectedStrategyEvents.length,
+        ignored: ignoredStrategyEvents.length,
+        feedback: strategyFeedbackEvents.length,
+        selectedTasks: selectedStrategyTaskIds.size,
+        completedTasks: completedStrategyTasks.size,
+        adoptedTasks: adoptedStrategyTasks.size,
+        badcaseCount: strategyBadcaseTags.length,
+        platformMismatchCount: strategyBadcaseTags.filter(
+          (tag) => tag === "platform_mismatch",
+        ).length,
+      },
+      selectionRate: rate(selectedStrategyEvents.length, uniqueStrategyShown.size),
+      generationCompletionRate: rate(
+        completedStrategyTasks.size,
+        selectedStrategyTaskIds.size,
+      ),
+      taskAdoptionRate: rate(adoptedStrategyTasks.size, selectedStrategyTaskIds.size),
+      avgSatisfaction:
+        strategySatisfaction.length > 0
+          ? round(
+              strategySatisfaction.reduce(
+                (sum, event) => sum + (Number(event.payload?.rating) || 0),
+                0,
+              ) / strategySatisfaction.length,
+            )
+          : 0,
+      fitDistribution: strategyFitDistribution,
+      notApplicableReasonDistribution: strategyNotApplicableReasonDistribution,
+      observationalWarning: "观察性数据，不代表因果；未经生产随机对照验证，不能推断提升效果。",
     },
     recentEvents: events.slice(-20).reverse(),
   };

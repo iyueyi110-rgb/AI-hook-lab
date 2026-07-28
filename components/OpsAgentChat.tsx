@@ -16,7 +16,12 @@ import type { OpsAgentAnswer, OpsAgentMessage } from "@/lib/agent/ops-types";
 const STORAGE_KEY = "ai-hook-lab:ops-agent-session";
 
 interface SessionPointer { sessionId: string; revision: number }
-interface TurnResponse extends SessionPointer { traceId: string; answer: OpsAgentAnswer; createdAt: string }
+interface TurnResponse extends SessionPointer {
+  traceId: string;
+  assistantMessageId: string;
+  answer: OpsAgentAnswer;
+  createdAt: string;
+}
 
 const quickPrompts = [
   "分析最近 7 天的真实用户生成健康度",
@@ -42,7 +47,19 @@ function SourceStrip({ answer }: { answer: OpsAgentAnswer }) {
   );
 }
 
-function AnswerCard({ answer, timestamp }: { answer: OpsAgentAnswer; timestamp: string }) {
+function AnswerCard({
+  answer,
+  timestamp,
+  messageId,
+  draftStates,
+  onCreateStrategyDraft,
+}: {
+  answer: OpsAgentAnswer;
+  timestamp: string;
+  messageId: string;
+  draftStates: Record<string, "loading" | "created" | "error">;
+  onCreateStrategyDraft: (messageId: string, recommendationIndex: number) => void;
+}) {
   const sourceNumber = new Map(answer.sources.map((source, index) => [source.id, index + 1]));
   const statusLabel = answer.status === "complete" ? "分析完成" : answer.status === "partial" ? "部分结果" : "需要确认";
   return (
@@ -84,7 +101,37 @@ function AnswerCard({ answer, timestamp }: { answer: OpsAgentAnswer; timestamp: 
         <section className="px-4 py-4 sm:px-5">
           <h3 className="text-xs font-black">建议行动</h3>
           <div className="mt-3 space-y-3">
-            {answer.recommendations.map((item, index) => <div className="grid gap-2 border-t border-[var(--color-line)] pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[3rem_1fr]" key={`${item.action}-${index}`}><span className="text-xs font-black text-[var(--color-accent)]">{item.priority}</span><div><p className="text-sm font-bold">{item.action}</p><p className="mt-1 text-xs leading-5 text-[var(--color-graphite)]">{item.rationale}</p>{item.sourceIds.length > 0 && <p className="mt-1 text-[10px] font-bold text-[var(--color-accent)]">证据 {item.sourceIds.map((id) => sourceNumber.get(id)).filter(Boolean).join("、")}</p>}</div></div>)}
+            {answer.recommendations.map((item, index) => {
+              const draftState = draftStates[`${messageId}:${index}`];
+              return (
+                <div className="grid gap-2 border-t border-[var(--color-line)] pt-3 first:border-t-0 first:pt-0 sm:grid-cols-[3rem_1fr]" key={`${item.action}-${index}`}>
+                  <span className="text-xs font-black text-[var(--color-accent)]">{item.priority}</span>
+                  <div>
+                    <p className="text-sm font-bold">{item.action}</p>
+                    <p className="mt-1 text-xs leading-5 text-[var(--color-graphite)]">{item.rationale}</p>
+                    {item.sourceIds.length > 0 && <p className="mt-1 text-[10px] font-bold text-[var(--color-accent)]">证据 {item.sourceIds.map((id) => sourceNumber.get(id)).filter(Boolean).join("、")}</p>}
+                    {item.kind === "strategy_candidate" && (
+                      <div className="mt-2 flex items-center gap-2">
+                        <button
+                          className="button-secondary min-h-9"
+                          disabled={draftState === "loading" || draftState === "created"}
+                          onClick={() => onCreateStrategyDraft(messageId, index)}
+                          type="button"
+                        >
+                          {draftState === "loading" ? "正在创建…" : draftState === "created" ? "草稿已创建" : "创建策略草稿"}
+                        </button>
+                        {draftState === "created" && (
+                          <a className="text-xs font-bold text-[var(--color-accent)] underline" href="/admin/dashboard/strategies">前往审核</a>
+                        )}
+                        {draftState === "error" && (
+                          <span className="text-xs font-bold text-[var(--color-danger)]">创建失败，请重试</span>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         </section>
       )}
@@ -102,6 +149,7 @@ export function OpsAgentChat() {
   const [restoring, setRestoring] = useState(true);
   const [error, setError] = useState("");
   const [failedText, setFailedText] = useState("");
+  const [draftStates, setDraftStates] = useState<Record<string, "loading" | "created" | "error">>({});
   const abortRef = useRef<AbortController | null>(null);
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -140,7 +188,13 @@ export function OpsAgentChat() {
       }
       const next = { sessionId: data.sessionId, revision: data.revision };
       setPointer(next); sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
-      setMessages((current) => [...current, { id: data.traceId, role: "assistant", content: data.answer.summary, answer: data.answer, createdAt: data.createdAt }]);
+      setMessages((current) => [...current, {
+        id: data.assistantMessageId,
+        role: "assistant",
+        content: data.answer.summary,
+        answer: data.answer,
+        createdAt: data.createdAt,
+      }]);
     } catch (caught) {
       setMessages((current) => current.filter((item) => item.id !== optimistic.id));
       if (caught instanceof Error && caught.name === "AbortError") {
@@ -154,6 +208,30 @@ export function OpsAgentChat() {
       } else { setError(caught instanceof Error ? caught.message : "请求失败"); setFailedText(value); }
     } finally { abortRef.current = null; setLoading(false); inputRef.current?.focus(); }
   }, [loading, pointer]);
+
+  const createStrategyDraft = useCallback(async (
+    assistantMessageId: string,
+    recommendationIndex: number,
+  ) => {
+    if (!pointer?.sessionId) return;
+    const key = `${assistantMessageId}:${recommendationIndex}`;
+    setDraftStates((current) => ({ ...current, [key]: "loading" }));
+    try {
+      const response = await fetch("/api/admin/strategies/from-ops", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          sessionId: pointer.sessionId,
+          assistantMessageId,
+          recommendationIndex,
+        }),
+      });
+      if (!response.ok) throw new Error();
+      setDraftStates((current) => ({ ...current, [key]: "created" }));
+    } catch {
+      setDraftStates((current) => ({ ...current, [key]: "error" }));
+    }
+  }, [pointer]);
 
   const newConversation = () => { abortRef.current?.abort(); sessionStorage.removeItem(STORAGE_KEY); setPointer(null); setMessages([]); setError(""); setFailedText(""); setInput(""); };
   const submit = (event: FormEvent) => { event.preventDefault(); void sendMessage(input); };
@@ -171,7 +249,16 @@ export function OpsAgentChat() {
               </div>
             </section>
           )}
-          {messages.map((message) => message.role === "assistant" && message.answer ? <AnswerCard answer={message.answer} key={message.id} timestamp={message.createdAt} /> : <div className="ml-auto max-w-[80%] rounded-[10px] bg-[var(--color-ink)] px-4 py-3 text-sm leading-6 text-white" key={message.id}>{message.content}</div>)}
+          {messages.map((message) => message.role === "assistant" && message.answer ? (
+            <AnswerCard
+              answer={message.answer}
+              draftStates={draftStates}
+              key={message.id}
+              messageId={message.id}
+              onCreateStrategyDraft={createStrategyDraft}
+              timestamp={message.createdAt}
+            />
+          ) : <div className="ml-auto max-w-[80%] rounded-[10px] bg-[var(--color-ink)] px-4 py-3 text-sm leading-6 text-white" key={message.id}>{message.content}</div>)}
           {loading && <div className="editorial-panel flex items-center gap-3 px-4 py-4 text-sm text-[var(--color-muted)]"><span className="soft-pulse h-2.5 w-2.5 rounded-full bg-[var(--color-accent)]" />正在查询并核对数据…</div>}
           {error && <div className="flex items-start justify-between gap-3 rounded-[10px] border border-[var(--color-danger)] bg-[var(--color-danger-soft)] p-4 text-sm text-[var(--color-danger)]" role="alert"><div className="flex gap-2"><WarningCircle aria-hidden="true" className="mt-0.5 shrink-0" size={17} weight="fill" /><div><p className="font-bold">请求失败</p><p className="mt-1 text-xs">{error}</p></div></div>{failedText && <button className="button-secondary min-h-9" onClick={() => void sendMessage(failedText)} type="button"><ArrowClockwise aria-hidden="true" size={14} />重试</button>}</div>}
           <div ref={endRef} />

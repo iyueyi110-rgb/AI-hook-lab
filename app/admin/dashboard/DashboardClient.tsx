@@ -72,6 +72,26 @@ function emptySummary(): DashboardSummary {
         platform_mismatch: { agreed: 0, missedByModel: 0, modelOnly: 0 },
       },
     },
+    strategies: {
+      totals: {
+        uniqueShown: 0,
+        selected: 0,
+        ignored: 0,
+        feedback: 0,
+        selectedTasks: 0,
+        completedTasks: 0,
+        adoptedTasks: 0,
+        badcaseCount: 0,
+        platformMismatchCount: 0,
+      },
+      selectionRate: 0,
+      generationCompletionRate: 0,
+      taskAdoptionRate: 0,
+      avgSatisfaction: 0,
+      fitDistribution: {},
+      notApplicableReasonDistribution: {},
+      observationalWarning: "观察性数据，不代表因果；未经生产随机对照验证，不能推断提升效果。",
+    },
     recentEvents: [],
   };
 }
@@ -88,6 +108,7 @@ function formatEventType(type: string): string {
     hook_unadopted: "取消采用",
     platform_satisfaction: "平台满意度",
     creator_feedback: "创作者反馈",
+    agent_strategy_event: "策略卡事件",
   };
   return labels[type] ?? type;
 }
@@ -205,7 +226,15 @@ function Distribution({ title, description, items, formatKey }: {
   );
 }
 
-export function DashboardClient({ initialSummary, opsAgentEnabled = false }: { initialSummary?: DashboardSummary; opsAgentEnabled?: boolean }) {
+export function DashboardClient({
+  initialSummary,
+  opsAgentEnabled = false,
+  publicAccess = false,
+}: {
+  initialSummary?: DashboardSummary;
+  opsAgentEnabled?: boolean;
+  publicAccess?: boolean;
+}) {
   const [summary, setSummary] = useState<DashboardSummary>(initialSummary ?? emptySummary);
   const [origin, setOrigin] = useState<DataOrigin>("real_user");
   const [feedbackPlatform, setFeedbackPlatform] = useState("");
@@ -345,16 +374,18 @@ export function DashboardClient({ initialSummary, opsAgentEnabled = false }: { i
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
-            {opsAgentEnabled && (
+            {!publicAccess && opsAgentEnabled && (
               <Link className="button-primary" href="/admin/dashboard/agent">
                 <Brain aria-hidden="true" size={16} weight="bold" />
                 运营分析 Agent
               </Link>
             )}
-            <Link className="button-secondary" href="/evaluation">
-              <Flask aria-hidden="true" size={16} weight="bold" />
-              离线评测
-            </Link>
+            {!publicAccess && (
+              <Link className="button-secondary" href="/evaluation">
+                <Flask aria-hidden="true" size={16} weight="bold" />
+                离线评测
+              </Link>
+            )}
             <button className="button-secondary" disabled={loading} onClick={() => void loadSummary()} type="button">
               <ArrowClockwise aria-hidden="true" className={loading ? "animate-spin" : ""} size={16} weight="bold" />
               {loading ? "刷新中" : "刷新数据"}
@@ -379,6 +410,33 @@ export function DashboardClient({ initialSummary, opsAgentEnabled = false }: { i
           <Distribution description="真实操作、评测集和模拟事件严格隔离。" formatKey={formatOrigin} items={summary.dataOriginDistribution} title="数据来源" />
           <Distribution description="比较 baseline 与 candidate 的运行覆盖。" items={summary.promptVersionDistribution} title="Prompt 版本" />
         </div>
+
+        <section className="editorial-panel mt-6 overflow-hidden" aria-labelledby="strategy-observational-heading">
+          <div className="border-b border-[var(--color-line)] p-4 sm:p-5">
+            <h2 className="text-base font-black" id="strategy-observational-heading">策略卡使用信号</h2>
+            <p className="mt-2 rounded-[8px] border border-[var(--color-warning)] bg-[var(--color-warning-soft)] px-3 py-2 text-xs font-bold text-[var(--color-warning)]">
+              ⚠️ {summary.strategies.observationalWarning}
+            </p>
+          </div>
+          <div className="grid divide-y divide-[var(--color-line)] sm:grid-cols-2 sm:divide-x sm:divide-y-0 lg:grid-cols-4">
+            {[
+              { label: "唯一曝光", value: summary.strategies.totals.uniqueShown, hint: "按展示批次与策略版本去重" },
+              { label: "选择率", value: `${summary.strategies.selectionRate}%`, hint: `${summary.strategies.totals.selected}/${summary.strategies.totals.uniqueShown} 次选择/曝光` },
+              { label: "生成完成率", value: `${summary.strategies.generationCompletionRate}%`, hint: `${summary.strategies.totals.completedTasks}/${summary.strategies.totals.selectedTasks} 个已选策略任务` },
+              { label: "任务级采用率", value: `${summary.strategies.taskAdoptionRate}%`, hint: `${summary.strategies.totals.adoptedTasks}/${summary.strategies.totals.selectedTasks} 个已选策略任务` },
+            ].map((metric) => (
+              <div className="p-4 sm:p-5" key={metric.label}>
+                <p className="text-[11px] font-bold text-[var(--color-muted)]">{metric.label}</p>
+                <p className="mt-2 text-2xl font-black tabular-nums tracking-[-0.04em]">{metric.value}</p>
+                <p className="mt-1 text-[10px] leading-4 text-[var(--color-muted)]">{metric.hint}</p>
+              </div>
+            ))}
+          </div>
+          <div className="grid gap-4 border-t border-[var(--color-line)] p-4 sm:p-5 lg:grid-cols-2">
+            <Distribution description="仅展示用户生成后的主观适配反馈。" items={summary.strategies.fitDistribution} title="策略适配反馈" />
+            <Distribution description="仅统计选择“不适用”时的枚举原因。" items={summary.strategies.notApplicableReasonDistribution} title="不适用原因" />
+          </div>
+        </section>
 
         <section className="mt-6" aria-labelledby="creator-feedback-heading">
           <div className="editorial-panel overflow-hidden">

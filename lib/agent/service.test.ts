@@ -87,6 +87,104 @@ function service(overrides: {
   });
 }
 
+test("creates a reviewing run from a complete brief and seeded candidates without initial generation", async () => {
+  let generationCalls = 0;
+  const coach = service({
+    generate: async (request) => {
+      generationCalls += 1;
+      return generated(request);
+    },
+  });
+
+  const seeded = await coach.createRun(undefined, {
+    brief: completeBrief,
+    seedCandidates: hooks(10, "classic"),
+  });
+
+  assert.equal(seeded.response.run.status, "reviewing");
+  assert.equal(seeded.response.candidates.length, 10);
+  assert.equal(seeded.response.topCandidates.length, 3);
+  assert.deepEqual(seeded.response.allowedCommands, [
+    "select_candidate",
+    "rewrite_candidate",
+    "reject_batch",
+  ]);
+  assert.equal(seeded.response.run.revisionRounds, 0);
+  assert.equal(seeded.response.run.revision, 0);
+  assert.equal(seeded.response.run.toolCalls.length, 1);
+  assert.equal(seeded.response.run.toolCalls[0]?.tool, "compare_candidates");
+  assert.deepEqual(seeded.response.run.toolCalls[0]?.input, {
+    candidateCount: 10,
+    source: "classic",
+  });
+  assert.equal(generationCalls, 0);
+
+  const rewritten = await coach.submitTurn(
+    seeded.sessionToken,
+    seeded.response.run.id,
+    seeded.response.run.revision,
+    { type: "rewrite_candidate", candidateId: seeded.response.candidates[0]!.id },
+  );
+  assert.equal(rewritten.run.status, "reviewing");
+  assert.equal(rewritten.candidates.length, 3);
+  assert.equal(generationCalls, 1);
+});
+
+test("rejects seeded candidates unless the brief and candidate payload are bounded", async () => {
+  const coach = service();
+
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: { topic: "缺平台" },
+      seedCandidates: hooks(1),
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      seedCandidates: [],
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      seedCandidates: hooks(11),
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      seedCandidates: [{ ...hooks(1)[0], hiddenReasoning: "not allowed" }],
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      seedCandidates: [{ ...hooks(1)[0], text: "x".repeat(501) }],
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      seedCandidates: [{ ...hooks(1)[0], overallScore: 11 }],
+    }),
+    AgentInputError,
+  );
+  await assert.rejects(
+    () => coach.createRun(undefined, {
+      brief: completeBrief,
+      hasImage: true,
+      seedCandidates: hooks(1),
+    }),
+    AgentInputError,
+  );
+});
+
 test("authorizes every real tool invocation in its fixed execution state", async () => {
   const authorized: Array<[AgentRunStatus, ToolName]> = [];
   const coach = service({ authorizeTool: (status, tool) => authorized.push([status, tool]) });
@@ -336,15 +434,20 @@ test("a complete brief reaches confirmation without an unnecessary clarification
 
 test("clarifies one required field at a time and stops after two questions", async () => {
   const coach = service();
+  const missingTopic = await coach.createRun(undefined, {
+    brief: { platform: "xiaohongshu", contentType: "video" },
+  });
+  assert.match(missingTopic.response.messages.at(-1)?.content ?? "", /主题/);
+
   const created = await coach.createRun(undefined, { brief: { topic: "AI 周报" } });
   const token = created.sessionToken;
   const runId = created.response.run.id;
   assert.equal(created.response.run.clarificationAttempts, 1);
-  assert.match(created.response.messages.at(-1)?.content ?? "", /platform/i);
+  assert.match(created.response.messages.at(-1)?.content ?? "", /平台/);
 
   const second = await coach.submitTurn(token, runId, 0, { type: "message", text: "douyin" });
   assert.equal(second.run.clarificationAttempts, 2);
-  assert.match(second.messages.at(-1)?.content ?? "", /contentType/i);
+  assert.match(second.messages.at(-1)?.content ?? "", /内容类型/);
 
   const ready = await coach.submitTurn(token, runId, 1, { type: "message", text: "video" });
   assert.equal(ready.run.status, "awaiting_brief_confirmation");

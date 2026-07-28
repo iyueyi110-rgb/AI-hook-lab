@@ -11,8 +11,20 @@ import type { EvaluationCase, PromptVersion, UserRole } from "@/lib/evaluation/t
 interface PublicUser { id: string; username: string; displayName: string; role: UserRole; status: string; }
 interface RunSummary { id: string; runName: string; status: string; executionMode: string; dataOrigin: string; caseCount: number; generatedTasks: number; totalGenerationTasks: number; candidateCount: number; selectedCount: number; primaryReviewCount: number; pairwiseReviewCount: number; adjudicationCount: number; createdAt: string; updatedAt: string; }
 interface InitialState { user: PublicUser; storageMode: string; cases: EvaluationCase[]; promptVersions: PromptVersion[]; users: PublicUser[]; runs: RunSummary[]; }
+interface StrategyTarget {
+  id: string;
+  version: number;
+  platform: string;
+  contentType: string;
+}
 
-export function EvaluationClient({ initial }: { initial: InitialState }) {
+export function EvaluationClient({
+  initial,
+  strategyTarget,
+}: {
+  initial: InitialState;
+  strategyTarget?: StrategyTarget;
+}) {
   const router = useRouter();
   const [error, setError] = useState("");
   const evaluators = initial.users.filter((item) => item.role === "evaluator" && item.status === "active");
@@ -30,13 +42,25 @@ export function EvaluationClient({ initial }: { initial: InitialState }) {
   async function createRun(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    const response = await fetch("/api/evaluation/runs", {
+    const response = await fetch(
+      strategyTarget ? "/api/evaluation/strategy-runs" : "/api/evaluation/runs",
+      {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        runName: form.get("runName"), executionMode: form.get("executionMode"),
+        runName: form.get("runName"),
+        ...(strategyTarget ? {} : { executionMode: form.get("executionMode") }),
         evaluatorIds: [form.get("evaluatorA"), form.get("evaluatorB")], adjudicatorId: form.get("adjudicatorId"),
         modelName: "deepseek-chat", modelParameters: { temperature: 0.7, max_tokens: 2048 },
-        baselinePromptId: form.get("baselinePromptId"), candidatePromptId: form.get("candidatePromptId"),
+        baselinePromptId: form.get("baselinePromptId"),
+        ...(strategyTarget
+          ? {
+              strategyRef: { id: strategyTarget.id, version: strategyTarget.version },
+              scopePair: {
+                platform: strategyTarget.platform,
+                contentType: strategyTarget.contentType,
+              },
+            }
+          : { candidatePromptId: form.get("candidatePromptId") }),
       }),
     });
     const result = await response.json();
@@ -93,13 +117,13 @@ export function EvaluationClient({ initial }: { initial: InitialState }) {
 
         {initial.user.role === "admin" && (
           <div className="mt-6 grid gap-4 lg:grid-cols-[1.25fr_0.75fr]">
-            <section className="editorial-panel p-5"><div className="flex items-center gap-2"><Plus size={18} weight="bold" /><h2 className="text-sm font-black">创建评测批次</h2></div><p className="mt-2 text-xs text-[var(--color-muted)]">完整批次自动快照 60 个案例、两个 Prompt 和统一模型参数。</p>
+            <section className="editorial-panel p-5"><div className="flex items-center gap-2"><Plus size={18} weight="bold" /><h2 className="text-sm font-black">{strategyTarget ? "创建策略盲评批次" : "创建评测批次"}</h2></div><p className="mt-2 text-xs text-[var(--color-muted)]">{strategyTarget ? `策略 ${strategyTarget.id} v${strategyTarget.version} · ${strategyTarget.platform}/${strategyTarget.contentType} · 固定 20 主题、40 次 Live 生成。` : "完整批次自动快照 60 个案例、两个 Prompt 和统一模型参数。"}</p>
               <form className="mt-5 grid gap-4 sm:grid-cols-2" onSubmit={createRun}>
-                <label className="text-xs font-bold sm:col-span-2">批次名称<input className="control-base mt-2 min-h-11 w-full px-3" defaultValue={`Prompt 评测 ${new Date().toLocaleDateString('zh-CN')}`} name="runName" required /></label>
-                <label className="text-xs font-bold">执行模式<select className="control-base mt-2 min-h-11 w-full px-3" name="executionMode"><option value="mock">Mock 流程演示</option><option value="live">Live 模型评测</option></select></label>
+                <label className="text-xs font-bold sm:col-span-2">批次名称<input className="control-base mt-2 min-h-11 w-full px-3" defaultValue={`${strategyTarget ? "策略盲评" : "Prompt 评测"} ${new Date().toLocaleDateString('zh-CN')}`} name="runName" required /></label>
+                {!strategyTarget && <label className="text-xs font-bold">执行模式<select className="control-base mt-2 min-h-11 w-full px-3" name="executionMode"><option value="mock">Mock 流程演示</option><option value="live">Live 模型评测</option></select></label>}
                 <label className="text-xs font-bold">裁决员<select className="control-base mt-2 min-h-11 w-full px-3" name="adjudicatorId" required><option value="">请选择</option>{adjudicators.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
                 <label className="text-xs font-bold">Baseline Prompt<select className="control-base mt-2 min-h-11 w-full px-3" name="baselinePromptId" required>{initial.promptVersions.filter((item) => item.role === 'baseline').map((item) => <option key={item.id} value={item.id}>{item.version} · {item.name}</option>)}</select></label>
-                <label className="text-xs font-bold">Candidate Prompt<select className="control-base mt-2 min-h-11 w-full px-3" name="candidatePromptId" required>{initial.promptVersions.filter((item) => item.role === 'candidate').map((item) => <option key={item.id} value={item.id}>{item.version} · {item.name}</option>)}</select></label>
+                {!strategyTarget && <label className="text-xs font-bold">Candidate Prompt<select className="control-base mt-2 min-h-11 w-full px-3" name="candidatePromptId" required>{initial.promptVersions.filter((item) => item.role === 'candidate').map((item) => <option key={item.id} value={item.id}>{item.version} · {item.name}</option>)}</select></label>}
                 <label className="text-xs font-bold">评测员 A<select className="control-base mt-2 min-h-11 w-full px-3" name="evaluatorA" required><option value="">请选择</option>{evaluators.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
                 <label className="text-xs font-bold">评测员 B<select className="control-base mt-2 min-h-11 w-full px-3" name="evaluatorB" required><option value="">请选择</option>{evaluators.map((item) => <option key={item.id} value={item.id}>{item.displayName}</option>)}</select></label>
                 <button className="button-primary sm:col-span-2" disabled={evaluators.length < 2 || adjudicators.length < 1} type="submit">创建并进入批次 <ArrowRight size={16} weight="bold" /></button>
