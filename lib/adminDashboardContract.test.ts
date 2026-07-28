@@ -25,6 +25,15 @@ test("dashboard summary API independently returns 401 and 403", async () => {
   assert.match(route, /getDashboardSummary\(requested, \{ platform, promptVersion, trigger, from, to \}\)/);
 });
 
+test("dashboard page and read API share the public dashboard policy", async () => {
+  const page = await source("app/admin/dashboard/page.tsx");
+  const route = await source("app/api/dashboard/summary/route.ts");
+  for (const entry of [page, route]) {
+    assert.match(entry, /isPublicDashboardEnabled/);
+    assert.match(entry, /if \(!publicDashboard\)/);
+  }
+});
+
 test("dashboard APIs return 503 when production persistence is unavailable", async () => {
   const eventsRoute = await source("app/api/dashboard/events/route.ts");
   const summaryRoute = await source("app/api/dashboard/summary/route.ts");

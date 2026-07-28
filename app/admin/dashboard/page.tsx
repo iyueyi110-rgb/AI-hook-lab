@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { forbidden, redirect } from "next/navigation";
 
 import { DatabaseUnavailablePanel } from "@/components/DatabaseUnavailablePanel";
-import { classifyAdminAccess } from "@/lib/adminAccess";
+import { classifyAdminAccess, isPublicDashboardEnabled } from "@/lib/adminAccess";
 import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
 import { getDashboardSummary } from "@/lib/dashboardStore";
 import { getCurrentEvaluationUser } from "@/lib/evaluation/server";
@@ -18,8 +18,11 @@ export const metadata: Metadata = {
 
 export default async function AdminDashboardPage() {
   if (getPersistenceMode() === "unavailable") return <DatabaseUnavailablePanel />;
-  const access = classifyAdminAccess(await getCurrentEvaluationUser());
-  if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard");
-  if (access === "forbidden") forbidden();
+  const publicDashboard = isPublicDashboardEnabled();
+  if (!publicDashboard) {
+    const access = classifyAdminAccess(await getCurrentEvaluationUser());
+    if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard");
+    if (access === "forbidden") forbidden();
+  }
   return <DashboardClient initialSummary={await getDashboardSummary()} opsAgentEnabled={isOpsAgentEnabled()} />;
 }
