@@ -1,8 +1,13 @@
 "use client";
 
 import * as React from "react";
-import type { AgentCommand, CreativeBrief } from "@/lib/agent/types";
+import type { AgentCommand, Candidate, CreativeBrief } from "@/lib/agent/types";
 import type { GenerateResponse } from "@/lib/types";
+import type {
+  StrategyCardRef,
+  StrategyFit,
+  StrategyNotApplicableReason,
+} from "@/lib/strategy/types";
 import {
   CoachClientError,
   CoachRequestTimeoutError,
@@ -38,17 +43,20 @@ type CoachEventType =
   | "agent_revision"
   | "agent_final_confirmed"
   | "agent_memory_applied"
-  | "agent_memory_deleted";
+  | "agent_memory_deleted"
+  | "agent_strategy_event";
 
 interface UseCreativeCoachOptions {
   onFinalized?: (response: GenerateResponse) => void;
   track?: (type: CoachEventType, payload: Record<string, unknown>) => void;
 }
 
-interface CreateCoachRunInput {
+export interface CreateCoachRunInput {
   brief: Partial<CreativeBrief>;
   hasImage?: boolean;
   ignoreMemory?: boolean;
+  seedCandidates?: Candidate[];
+  strategyRef?: StrategyCardRef;
 }
 
 function errorView(error: unknown): CreativeCoachError {
@@ -399,6 +407,36 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     }
   }, [track]);
 
+  const recordStrategyFeedback = React.useCallback(async (
+    fit: StrategyFit,
+    reason?: StrategyNotApplicableReason,
+  ) => {
+    if (!response?.run.strategyApplication) return false;
+    try {
+      const raw = await fetch(`/api/agent/runs/${encodeURIComponent(response.run.id)}/strategy-feedback`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          strategyFit: fit,
+          ...(reason ? { notApplicableReason: reason } : {}),
+        }),
+      });
+      const body = await raw.json().catch(() => null) as { message?: string; error?: string } | null;
+      if (!raw.ok) {
+        throw new CoachClientError(
+          raw.status,
+          body?.error ?? "strategy_feedback_failed",
+          body?.message ?? "无法保存策略反馈",
+        );
+      }
+      return true;
+    } catch (caught) {
+      setError(errorView(caught));
+      return false;
+    }
+  }, [response]);
+
   return {
     response,
     memory,
@@ -416,6 +454,7 @@ export function useCreativeCoach(options: UseCreativeCoachOptions = {}) {
     refreshMemory,
     deleteMemory,
     clearMemory,
+    recordStrategyFeedback,
     clearError: () => setError(null),
     reset: () => {
       readRequestRef.current?.abort();

@@ -7,7 +7,11 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
-import { summarizeDashboardEvents, type DashboardEvent } from "./dashboardStore.ts";
+import {
+  summarizeDashboardEvents,
+  validateDashboardPayload,
+  type DashboardEvent,
+} from "./dashboardStore.ts";
 
 const execFileAsync = promisify(execFile);
 const dashboardStoreUrl = new URL("./dashboardStore.ts", import.meta.url).href;
@@ -149,6 +153,93 @@ test("dashboard time window is inclusive at from and exclusive at to", () => {
   assert.equal(summary.totals.events, 2);
   assert.equal(summary.totals.generationsStarted, 1);
   assert.equal(summary.totals.hooksGenerated, 3);
+});
+
+test("strategy analytics rejects content and enforces feedback conditions", () => {
+  assert.throws(
+    () => validateDashboardPayload("agent_strategy_event", {
+      action: "shown",
+      presentationId: "presentation-1",
+      strategyCardId: "card-1",
+      strategyCardVersion: 1,
+      platform: "douyin",
+      contentType: "video",
+      guidance: "do not persist strategy text",
+    }),
+    /guidance/,
+  );
+
+  assert.throws(
+    () => validateDashboardPayload("agent_strategy_event", {
+      action: "feedback",
+      presentationId: "presentation-1",
+      strategyCardId: "card-1",
+      strategyCardVersion: 1,
+      platform: "douyin",
+      contentType: "video",
+      strategyFit: "not_applicable",
+    }),
+    /notApplicableReason/,
+  );
+
+  assert.deepEqual(
+    validateDashboardPayload("agent_strategy_event", {
+      action: "feedback",
+      presentationId: "presentation-1",
+      strategyCardId: "card-1",
+      strategyCardVersion: 1,
+      taskId: "task-1",
+      platform: "douyin",
+      contentType: "video",
+      strategyFit: "not_applicable",
+      notApplicableReason: "audience",
+    }),
+    {
+      action: "feedback",
+      presentationId: "presentation-1",
+      strategyCardId: "card-1",
+      strategyCardVersion: 1,
+      taskId: "task-1",
+      platform: "douyin",
+      contentType: "video",
+      strategyFit: "not_applicable",
+      notApplicableReason: "audience",
+    },
+  );
+});
+
+test("strategy analytics deduplicates exposures and reports observational absolutes only", () => {
+  const events: DashboardEvent[] = [
+    { id: "s1", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:00Z", dataOrigin: "real_user", payload: { action: "shown", presentationId: "p1", strategyCardId: "card-1", strategyCardVersion: 1, platform: "douyin", contentType: "video" } },
+    { id: "s2", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:01Z", dataOrigin: "real_user", payload: { action: "shown", presentationId: "p1", strategyCardId: "card-1", strategyCardVersion: 1, platform: "douyin", contentType: "video" } },
+    { id: "s3", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:02Z", dataOrigin: "real_user", payload: { action: "selected", presentationId: "p1", strategyCardId: "card-1", strategyCardVersion: 1, taskId: "task-1", platform: "douyin", contentType: "video" } },
+    { id: "s4", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:03Z", dataOrigin: "real_user", payload: { action: "feedback", presentationId: "p1", strategyCardId: "card-1", strategyCardVersion: 1, taskId: "task-1", platform: "douyin", contentType: "video", strategyFit: "helpful" } },
+    { id: "s5", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:04Z", dataOrigin: "real_user", payload: { action: "shown", presentationId: "p2", strategyCardId: "card-1", strategyCardVersion: 1, platform: "douyin", contentType: "video" } },
+    { id: "s6", type: "agent_strategy_event", timestamp: "2026-07-01T00:00:05Z", dataOrigin: "real_user", payload: { action: "ignored", presentationId: "p2", strategyCardId: "card-1", strategyCardVersion: 1, taskId: "task-2", platform: "douyin", contentType: "video" } },
+    { id: "g1", type: "generation_complete", timestamp: "2026-07-01T00:00:06Z", dataOrigin: "real_user", payload: { taskId: "task-1", hookCount: 10, badcaseTags: ["platform_mismatch"] } },
+    { id: "a1", type: "hook_adopted", timestamp: "2026-07-01T00:00:07Z", dataOrigin: "real_user", payload: { taskId: "task-1", hookId: "hook-1" } },
+    { id: "r1", type: "platform_satisfaction", timestamp: "2026-07-01T00:00:08Z", dataOrigin: "real_user", payload: { taskId: "task-1", hookId: "hook-1", rating: 4 } },
+  ];
+
+  const summary = summarizeDashboardEvents(events, "real_user");
+  assert.deepEqual(summary.strategies.totals, {
+    uniqueShown: 2,
+    selected: 1,
+    ignored: 1,
+    feedback: 1,
+    selectedTasks: 1,
+    completedTasks: 1,
+    adoptedTasks: 1,
+    badcaseCount: 1,
+    platformMismatchCount: 1,
+  });
+  assert.equal(summary.strategies.selectionRate, 50);
+  assert.equal(summary.strategies.generationCompletionRate, 100);
+  assert.equal(summary.strategies.taskAdoptionRate, 100);
+  assert.equal(summary.strategies.avgSatisfaction, 4);
+  assert.deepEqual(summary.strategies.fitDistribution, { helpful: 1 });
+  assert.match(summary.strategies.observationalWarning, /不代表因果/);
+  assert.equal(Object.hasOwn(summary.strategies, "uplift"), false);
 });
 
 test("feedback response rate only links submissions to prompts recorded as shown", () => {

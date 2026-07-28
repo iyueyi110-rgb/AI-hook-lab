@@ -1,41 +1,45 @@
 "use client";
 
-import Image from "next/image";
 import * as React from "react";
 import {
   ArrowClockwise,
-  Camera,
   CheckCircle,
   ChatCircleDots,
   ListChecks,
-  SlidersHorizontal,
   Trash,
   X,
 } from "@phosphor-icons/react";
-import { HookGrid } from "@/components/HookGrid";
 import { useCreativeCoach } from "@/hooks/useCreativeCoach";
 import type { AnalyticsEventType } from "@/hooks/useAnalytics";
-import { CONTENT_TYPE_CONFIG, EMOTION_TONE_CONFIG, PLATFORM_CONFIG, PLATFORM_STYLES } from "@/lib/constants";
-import type { AgentCommand, AgentRunStatus, CreativeBrief, WordLimitBand } from "@/lib/agent/types";
-import type { ContentType, EmotionTone, GenerateResponse, HookResult, Platform } from "@/lib/types";
-import { buildCoachBriefInput, canEditCoachBrief } from "@/lib/creativeCoachClient";
-
-interface CreativeCoachWorkspaceProps {
-  onFinalized: (response: GenerateResponse) => void;
-  track: (type: AnalyticsEventType, payload?: Record<string, unknown>) => void;
-}
+import { candidatesToHooks } from "@/lib/creativeWorkbench";
+import type {
+  AgentCommand,
+  AgentRunStatus,
+  Candidate,
+  CreativeBrief,
+} from "@/lib/agent/types";
+import {
+  createStrategyPresentationId,
+  fetchActiveStrategies,
+} from "@/lib/strategy/client";
+import type { ActiveStrategyView } from "@/lib/strategy/service";
+import type {
+  StrategyFit,
+  StrategyNotApplicableReason,
+} from "@/lib/strategy/types";
+import type { GenerateResponse, HookResult } from "@/lib/types";
 
 const STATUS_LABELS: Record<AgentRunStatus, string> = {
-  understanding: "理解需求",
-  analyzing_image: "分析图片",
+  understanding: "正在梳理需求",
+  analyzing_image: "正在分析图片",
   awaiting_brief_confirmation: "等待确认简报",
-  generating: "生成候选",
-  reviewing: "比较候选",
-  revising: "改写候选",
+  generating: "正在生成候选",
+  reviewing: "正在比较候选",
+  revising: "正在改写候选",
   awaiting_final_confirmation: "等待最终确认",
-  completed: "已完成",
+  completed: "本轮已完成",
   failed: "需要重试",
-  cancelled: "已取消",
+  cancelled: "本轮已取消",
 };
 
 const MEMORY_LABELS: Record<string, string> = {
@@ -47,122 +51,302 @@ const MEMORY_LABELS: Record<string, string> = {
   avoid_badcase_tag: "避免问题",
 };
 
-const WORD_BANDS: WordLimitBand[] = ["30-50", "60-80", "90-110", "120-150"];
-
-function toHook(candidate: NonNullable<ReturnType<typeof useCreativeCoach>["response"]>["candidates"][number]): HookResult {
-  return {
-    id: candidate.id,
-    text: candidate.text,
-    style: candidate.style,
-    reasoning: candidate.reasoning,
-    score: candidate.overallScore,
-    overallScore: candidate.overallScore,
-    scores: candidate.scores,
-    badcaseTags: candidate.badcaseTags,
-  };
+function allowed(commands: AgentCommand["type"][], command: AgentCommand["type"]): boolean {
+  return commands.includes(command);
 }
 
-function allowed(allowedCommands: AgentCommand["type"][], command: AgentCommand["type"]): boolean {
-  return allowedCommands.includes(command);
+function isTerminal(status?: AgentRunStatus): boolean {
+  return status === "completed" || status === "cancelled";
 }
 
-export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWorkspaceProps) {
+export interface CreativeCoachWorkspaceState {
+  status?: AgentRunStatus;
+  allowedCommands: AgentCommand["type"][];
+  needsInput: boolean;
+  selectedCandidateId?: string;
+  recommendedIds: string[];
+  comparisonExplanations: string[];
+  hasCandidates: boolean;
+}
+
+export interface CreativeCoachWorkspaceHandle {
+  startClarification: (brief: Partial<CreativeBrief>) => Promise<void>;
+  startPolishing: (brief: Partial<CreativeBrief>, seedCandidates: Candidate[]) => Promise<void>;
+  rewriteCandidate: (candidateId: string, instruction?: string) => Promise<void>;
+  selectCandidate: (candidateId: string) => Promise<void>;
+  rejectBatch: (reason?: string) => Promise<void>;
+}
+
+interface CreativeCoachWorkspaceProps {
+  open: boolean;
+  currentBrief: Partial<CreativeBrief>;
+  onOpenChange: (open: boolean) => void;
+  onCandidatesChange: (hooks: HookResult[]) => void;
+  onStateChange: (state: CreativeCoachWorkspaceState | null) => void;
+  onFinalized: (response: GenerateResponse) => void;
+  track: (type: AnalyticsEventType, payload?: Record<string, unknown>) => void;
+}
+
+export const CreativeCoachWorkspace = React.forwardRef<
+  CreativeCoachWorkspaceHandle,
+  CreativeCoachWorkspaceProps
+>(function CreativeCoachWorkspace({
+  open,
+  currentBrief,
+  onOpenChange,
+  onCandidatesChange,
+  onStateChange,
+  onFinalized,
+  track,
+}, ref) {
   const coach = useCreativeCoach({ onFinalized, track });
-  const [topic, setTopic] = React.useState("");
-  const [platform, setPlatform] = React.useState<Platform>("xiaohongshu");
-  const [platformTouched, setPlatformTouched] = React.useState(false);
-  const [contentType, setContentType] = React.useState<ContentType>("video");
-  const [targetAudience, setTargetAudience] = React.useState("");
-  const [emotionTone, setEmotionTone] = React.useState<EmotionTone>("curious");
-  const [emotionToneTouched, setEmotionToneTouched] = React.useState(false);
-  const [wordLimitBand, setWordLimitBand] = React.useState<WordLimitBand>("60-80");
-  const [wordLimitTouched, setWordLimitTouched] = React.useState(false);
-  const [briefEdits, setBriefEdits] = React.useState<Partial<CreativeBrief>>({});
-  const [ignoreMemory, setIgnoreMemory] = React.useState(false);
-  const [imageFile, setImageFile] = React.useState<File | null>(null);
-  const [imagePreview, setImagePreview] = React.useState<string | null>(null);
   const [message, setMessage] = React.useState("");
-  const [rewriteId, setRewriteId] = React.useState<string | null>(null);
-  const [rewriteInstruction, setRewriteInstruction] = React.useState("");
-  const [rejectOpen, setRejectOpen] = React.useState(false);
-  const [rejectReason, setRejectReason] = React.useState("");
-  const [comparisonIds, setComparisonIds] = React.useState<string[]>([]);
-  const [coachOpen, setCoachOpen] = React.useState(false);
-  const [modalViewport, setModalViewport] = React.useState(false);
+  const [pendingSeeded, setPendingSeeded] = React.useState<{
+    brief: Partial<CreativeBrief>;
+    seedCandidates: Candidate[];
+  } | null>(null);
+  const [strategies, setStrategies] = React.useState<ActiveStrategyView[]>([]);
+  const [strategyChoice, setStrategyChoice] = React.useState<string | "ignore" | null>(null);
+  const [strategyLoading, setStrategyLoading] = React.useState(false);
+  const [strategyError, setStrategyError] = React.useState("");
+  const [strategyRefresh, setStrategyRefresh] = React.useState(0);
+  const [strategyPresentationId, setStrategyPresentationId] = React.useState("");
+  const [feedbackFit, setFeedbackFit] = React.useState<StrategyFit | "">("");
+  const [feedbackReason, setFeedbackReason] = React.useState<StrategyNotApplicableReason | "">("");
+  const [feedbackSent, setFeedbackSent] = React.useState(false);
   const closeButtonRef = React.useRef<HTMLButtonElement>(null);
-  const openButtonRef = React.useRef<HTMLButtonElement>(null);
-  const coachPanelRef = React.useRef<HTMLElement>(null);
+  const panelRef = React.useRef<HTMLElement>(null);
   const previousFocusRef = React.useRef<HTMLElement | null>(null);
+  const wasOpenRef = React.useRef(false);
 
   const current = coach.response;
   const run = current?.run;
-  const rememberedPlatform = coach.memory.find((entry) => entry.key === "default_platform")?.value as Platform | undefined;
-  const rememberedTone = coach.memory.find((entry) => entry.key === "preferred_tone")?.value as EmotionTone | undefined;
-  const rememberedWordBand = coach.memory.find((entry) => entry.key === "word_limit_band")?.value as WordLimitBand | undefined;
   const allowedCommands = current?.allowedCommands ?? [];
   const needsInput = Boolean(current?.needsInput);
-  const briefEditable = canEditCoachBrief(run, allowedCommands, needsInput);
-  const candidates = React.useMemo(() => current?.candidates.map(toHook) ?? [], [current?.candidates]);
-  const comparisonCandidates = React.useMemo(
-    () => comparisonIds
-      .map((candidateId) => candidates.find((candidate) => candidate.id === candidateId))
-      .filter((candidate): candidate is HookResult => Boolean(candidate)),
-    [candidates, comparisonIds],
+  const candidateHooks = React.useMemo(
+    () => candidatesToHooks(current?.candidates ?? []),
+    [current?.candidates],
   );
-  const finalCandidate = candidates.find((candidate) => candidate.id === run?.selectedCandidateId);
-  const topIds = current?.topCandidates.map((candidate) => candidate.id) ?? [];
-  const displayedTopic = run ? briefEdits.topic ?? run.briefDraft?.topic ?? "" : topic;
-  const displayedPlatform = run
-    ? briefEdits.platform ?? run.briefDraft?.platform ?? platform
-    : !ignoreMemory && !platformTouched && rememberedPlatform && rememberedPlatform in PLATFORM_CONFIG ? rememberedPlatform : platform;
-  const displayedContentType = run ? briefEdits.contentType ?? run.briefDraft?.contentType ?? contentType : contentType;
-  const displayedTargetAudience = run ? briefEdits.targetAudience ?? run.briefDraft?.targetAudience ?? "" : targetAudience;
-  const displayedEmotionTone = run
-    ? briefEdits.emotionTone ?? run.briefDraft?.emotionTone ?? emotionTone
-    : !ignoreMemory && !emotionToneTouched && rememberedTone && rememberedTone in EMOTION_TONE_CONFIG ? rememberedTone : emotionTone;
-  const displayedWordLimitBand = run
-    ? briefEdits.wordLimitBand ?? run.briefDraft?.wordLimitBand ?? wordLimitBand
-    : !ignoreMemory && !wordLimitTouched && rememberedWordBand && WORD_BANDS.includes(rememberedWordBand) ? rememberedWordBand : wordLimitBand;
-  const displayedImageDescription = run ? briefEdits.imageDescription ?? run.briefDraft?.imageDescription ?? "" : "";
-  const modalOpen = coachOpen && modalViewport;
-
-  React.useEffect(() => () => {
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-  }, [imagePreview]);
+  const recommendedIds = React.useMemo(
+    () => current?.topCandidates.map((candidate) => candidate.id) ?? [],
+    [current?.topCandidates],
+  );
+  const state = React.useMemo<CreativeCoachWorkspaceState | null>(() => {
+    if (!current) return null;
+    return {
+      status: current.run.status,
+      allowedCommands: current.allowedCommands,
+      needsInput: current.needsInput,
+      selectedCandidateId: current.run.selectedCandidateId,
+      recommendedIds,
+      comparisonExplanations: current.comparisonExplanations,
+      hasCandidates: current.candidates.length > 0,
+    };
+  }, [current, recommendedIds]);
 
   React.useEffect(() => {
-    const media = window.matchMedia("(max-width: 1279px)");
-    const update = () => setModalViewport(media.matches);
-    update();
-    media.addEventListener("change", update);
-    return () => media.removeEventListener("change", update);
-  }, []);
+    onStateChange(state);
+  }, [onStateChange, state]);
 
   React.useEffect(() => {
-    if (modalOpen) closeButtonRef.current?.focus();
-  }, [modalOpen]);
+    if (candidateHooks.length > 0) onCandidatesChange(candidateHooks);
+  }, [candidateHooks, onCandidatesChange]);
 
-  const openCoach = React.useCallback(() => {
-    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    setCoachOpen(true);
-  }, []);
+  React.useImperativeHandle(ref, () => ({
+    async startClarification(brief) {
+      coach.skipRestore();
+      setPendingSeeded(null);
+      await coach.createRun({ brief });
+    },
+    async startPolishing(brief, seedCandidates) {
+      coach.skipRestore();
+      setPendingSeeded({ brief, seedCandidates });
+      setStrategyChoice(null);
+    },
+    async rewriteCandidate(candidateId, instruction) {
+      await coach.submitCommand({
+        type: "rewrite_candidate",
+        candidateId,
+        ...(instruction?.trim() ? { instruction: instruction.trim() } : {}),
+      });
+    },
+    async selectCandidate(candidateId) {
+      await coach.submitCommand({ type: "select_candidate", candidateId });
+    },
+    async rejectBatch(reason) {
+      await coach.submitCommand({
+        type: "reject_batch",
+        ...(reason?.trim() ? { reason: reason.trim() } : {}),
+      });
+    },
+  }), [coach]);
 
-  const closeCoach = React.useCallback(() => {
-    const returnTarget = previousFocusRef.current ?? openButtonRef.current;
-    setCoachOpen(false);
-    queueMicrotask(() => returnTarget?.focus());
-  }, []);
+  const strategyBrief = pendingSeeded?.brief ?? (
+    current?.pendingConfirmation === "brief" ? currentBrief : undefined
+  );
+  const strategyPlatform = strategyBrief?.platform;
+  const strategyContentType = strategyBrief?.contentType;
 
   React.useEffect(() => {
+    if (!open || !strategyPlatform || !strategyContentType) return;
+    const controller = new AbortController();
+    const presentationId = createStrategyPresentationId();
+    setStrategyLoading(true);
+    setStrategyError("");
+    setStrategyChoice(null);
+    void fetchActiveStrategies(strategyPlatform, strategyContentType, controller.signal)
+      .then((items) => {
+        if (controller.signal.aborted) return;
+        setStrategies(items);
+        setStrategyPresentationId(presentationId);
+        if (items.length === 0) setStrategyChoice("ignore");
+        items.forEach((strategy) => track("agent_strategy_event", {
+          action: "shown",
+          presentationId,
+          strategyCardId: strategy.id,
+          strategyCardVersion: strategy.version,
+          platform: strategyPlatform,
+          contentType: strategyContentType,
+        }));
+      })
+      .catch((error) => {
+        if (controller.signal.aborted) return;
+        setStrategies([]);
+        setStrategyChoice("ignore");
+        setStrategyError(error instanceof Error ? error.message : "无法读取策略卡");
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setStrategyLoading(false);
+      });
+    return () => controller.abort();
+  }, [
+    open,
+    strategyContentType,
+    strategyPlatform,
+    strategyRefresh,
+    track,
+  ]);
+
+  React.useEffect(() => {
+    if (
+      coach.error?.status === 409 &&
+      ["strategy_not_active", "strategy_expired", "strategy_scope_mismatch"].includes(
+        coach.error.code ?? "",
+      )
+    ) {
+      setStrategyRefresh((value) => value + 1);
+    }
+  }, [coach.error?.code, coach.error?.status]);
+
+  const selectedStrategy = React.useMemo(() => {
+    if (!strategyChoice || strategyChoice === "ignore") return undefined;
+    return strategies.find((strategy) => `${strategy.id}:${strategy.version}` === strategyChoice);
+  }, [strategies, strategyChoice]);
+
+  const strategyRef = React.useMemo(
+    () => selectedStrategy
+      ? { id: selectedStrategy.id, version: selectedStrategy.version }
+      : undefined,
+    [selectedStrategy],
+  );
+
+  const trackStrategyDecision = React.useCallback((
+    action: "selected" | "ignored",
+    taskId: string,
+    brief: Partial<CreativeBrief>,
+  ) => {
+    if (!brief.platform || !brief.contentType) return;
+    const reference = selectedStrategy ?? strategies[0];
+    if (!reference) return;
+    track("agent_strategy_event", {
+      action,
+      presentationId: strategyPresentationId || taskId,
+      strategyCardId: reference.id,
+      strategyCardVersion: reference.version,
+      taskId,
+      platform: brief.platform,
+      contentType: brief.contentType,
+    });
+  }, [selectedStrategy, strategies, strategyPresentationId, track]);
+
+  const beginSeededRun = React.useCallback(async () => {
+    if (!pendingSeeded || !strategyChoice) return;
+    const next = await coach.createRun({
+      brief: pendingSeeded.brief,
+      seedCandidates: pendingSeeded.seedCandidates,
+      ...(strategyRef ? { strategyRef } : {}),
+    });
+    if (!next) return;
+    trackStrategyDecision(strategyRef ? "selected" : "ignored", next.run.id, pendingSeeded.brief);
+    setPendingSeeded(null);
+  }, [coach, pendingSeeded, strategyChoice, strategyRef, trackStrategyDecision]);
+
+  const confirmBrief = React.useCallback(async () => {
+    if (!strategyChoice) return;
+    const next = await coach.submitCommand({
+      type: "confirm_brief",
+      briefPatch: currentBrief,
+      ...(strategyRef ? { strategyRef } : { strategyRef: null }),
+    });
+    if (!next) return;
+    trackStrategyDecision(strategyRef ? "selected" : "ignored", next.run.id, currentBrief);
+  }, [coach, currentBrief, strategyChoice, strategyRef, trackStrategyDecision]);
+
+  const submitStrategyFeedback = React.useCallback(async () => {
+    if (!run?.strategyApplication || !run.brief || !feedbackFit) return;
+    if (feedbackFit === "not_applicable" && !feedbackReason) return;
+    const saved = await coach.recordStrategyFeedback(
+      feedbackFit,
+      feedbackFit === "not_applicable" ? feedbackReason || undefined : undefined,
+    );
+    if (!saved) return;
+    track("agent_strategy_event", {
+      action: "feedback",
+      presentationId: strategyPresentationId || run.id,
+      strategyCardId: run.strategyApplication.id,
+      strategyCardVersion: run.strategyApplication.version,
+      taskId: run.id,
+      platform: run.brief.platform,
+      contentType: run.brief.contentType,
+      strategyFit: feedbackFit,
+      ...(feedbackFit === "not_applicable" ? { notApplicableReason: feedbackReason } : {}),
+    });
+    setFeedbackSent(true);
+  }, [
+    coach,
+    feedbackFit,
+    feedbackReason,
+    run,
+    strategyPresentationId,
+    track,
+  ]);
+
+  const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
+
+  React.useEffect(() => {
+    if (open && !wasOpenRef.current) {
+      previousFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
+      queueMicrotask(() => closeButtonRef.current?.focus());
+    }
+    if (!open && wasOpenRef.current) {
+      const returnTarget = previousFocusRef.current;
+      queueMicrotask(() => returnTarget?.focus());
+    }
+    wasOpenRef.current = open;
+  }, [open]);
+
+  React.useEffect(() => {
+    if (!open) return;
     const handleDialogKey = (event: KeyboardEvent) => {
-      if (!modalOpen) return;
       if (event.key === "Escape") {
         event.preventDefault();
-        closeCoach();
+        close();
         return;
       }
       if (event.key !== "Tab") return;
-      const panel = coachPanelRef.current;
+      const panel = panelRef.current;
       if (!panel) return;
       const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
         'button:not([disabled]), textarea:not([disabled]), input:not([disabled]), select:not([disabled]), [href], [tabindex]:not([tabindex="-1"])',
@@ -185,387 +369,437 @@ export function CreativeCoachWorkspace({ onFinalized, track }: CreativeCoachWork
     };
     window.addEventListener("keydown", handleDialogKey);
     return () => window.removeEventListener("keydown", handleDialogKey);
-  }, [closeCoach, modalOpen]);
+  }, [close, open]);
 
-  const brief = React.useMemo<Partial<CreativeBrief>>(() => buildCoachBriefInput({
-    topic: displayedTopic,
-    platform: displayedPlatform,
-    contentType: displayedContentType,
-    targetAudience: displayedTargetAudience,
-    emotionTone: displayedEmotionTone,
-    wordLimitBand: displayedWordLimitBand,
-    imageDescription: displayedImageDescription,
-  }, {
-    ignoreMemory,
-    platformTouched,
-    emotionToneTouched,
-    wordLimitTouched,
-    rememberedPlatform,
-    rememberedTone,
-    rememberedWordBand,
-  }), [displayedContentType, displayedEmotionTone, displayedImageDescription, displayedPlatform, displayedTargetAudience, displayedTopic, displayedWordLimitBand, emotionToneTouched, ignoreMemory, platformTouched, rememberedPlatform, rememberedTone, rememberedWordBand, wordLimitTouched]);
-  const structuredBrief = React.useMemo<Partial<CreativeBrief>>(() => {
-    const merged: Partial<CreativeBrief> = {
-      ...(run?.briefDraft ?? {}),
-      ...brief,
-      topic: displayedTopic.trim(),
-      platform: displayedPlatform,
-      contentType: displayedContentType,
-      emotionTone: displayedEmotionTone,
-      wordLimitBand: displayedWordLimitBand,
-    };
-    if (merged.preferredStyle && !PLATFORM_STYLES[displayedPlatform].includes(merged.preferredStyle)) delete merged.preferredStyle;
-    return merged;
-  }, [brief, displayedContentType, displayedEmotionTone, displayedPlatform, displayedTopic, displayedWordLimitBand, run?.briefDraft]);
-
-  const start = async () => {
-    if (!displayedTopic.trim() || coach.loading) return;
-    const created = await coach.createRun({ brief, hasImage: Boolean(imageFile), ignoreMemory });
-    if (created && imageFile) await coach.uploadImage(imageFile, created);
-  };
-
-  const submitMessage = () => {
+  const submitMessage = (event: React.FormEvent) => {
+    event.preventDefault();
     const text = message.trim();
     if (!text || !allowed(allowedCommands, "message")) return;
     setMessage("");
     void coach.submitCommand({ type: "message", text });
   };
 
-  const selectImage = (file?: File) => {
-    if (!file) return;
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImageFile(file);
-    setImagePreview(URL.createObjectURL(file));
-  };
-
-  const clearImage = () => {
-    if (imagePreview) URL.revokeObjectURL(imagePreview);
-    setImagePreview(null);
-    setImageFile(null);
-  };
-
-  const changeIgnoreMemory = (checked: boolean) => {
-    setIgnoreMemory(checked);
-    if (checked) {
-      if (!platformTouched) setPlatform("xiaohongshu");
-      if (!emotionToneTouched) setEmotionTone("curious");
-      if (!wordLimitTouched) setWordLimitBand("60-80");
-    }
-  };
-
-  const toggleComparison = (candidateId: string) => {
-    setComparisonIds((currentIds) => currentIds.includes(candidateId)
-      ? currentIds.filter((currentId) => currentId !== candidateId)
-      : [...currentIds, candidateId]);
-  };
-
-  const reset = () => {
-    coach.reset();
-    setBriefEdits({});
-    clearImage();
-    setRewriteId(null);
-    setRejectOpen(false);
-    setComparisonIds([]);
-    setPlatformTouched(false);
-    setEmotionToneTouched(false);
-    setWordLimitTouched(false);
-  };
-
-  const retryImageOperation = async () => {
-    const retried = await coach.submitCommand({ type: "retry" });
-    if (retried?.run.status === "analyzing_image" && imageFile) {
-      await coach.uploadImage(imageFile, retried);
-    }
-  };
-
-  const briefPanel = (
-    <section aria-labelledby="coach-brief-heading" className="editorial-panel overflow-hidden xl:sticky xl:top-24">
-      <div className="border-b border-[var(--color-line)] p-5">
-        <div className="flex items-center gap-2 text-xs font-extrabold text-[var(--color-accent)]">
-          <SlidersHorizontal aria-hidden="true" size={16} weight="bold" />
-          创作简报
-        </div>
-        <h1 className="mt-3 text-2xl font-black tracking-[-0.035em]" id="coach-brief-heading">把需求说清楚，再开始写。</h1>
-        <p className="mt-2 text-xs leading-5 text-[var(--color-graphite)]">主题、平台和内容类型是必填项。教练最多补问两次。</p>
-      </div>
-      <div className="space-y-4 p-5">
-        {(!run || run?.status === "analyzing_image") && (
-          <div>
-            <label className="mb-2 block text-xs font-extrabold" htmlFor="coach-image">内容截图{run ? "（需要重新选择）" : "（可选）"}</label>
-            <div className="relative rounded-[10px] border border-dashed border-[var(--color-line-strong)] bg-[var(--color-canvas)] p-3">
-              <input accept="image/jpeg,image/png,image/webp" className="sr-only" id="coach-image" onChange={(event) => { selectImage(event.target.files?.[0]); event.target.value = ""; }} type="file" />
-              <label className="flex min-h-20 cursor-pointer items-center gap-3" htmlFor="coach-image">
-                {imagePreview ? (
-                  <Image alt="待分析的内容截图" className="h-20 w-20 rounded-md border border-[var(--color-line)] object-cover" height={80} src={imagePreview} unoptimized width={80} />
-                ) : <Camera aria-hidden="true" className="text-[var(--color-accent)]" size={24} weight="bold" />}
-                <span className="text-xs font-bold leading-5">{imageFile ? imageFile.name : "上传 JPEG、PNG 或 WebP，最大 5MB"}</span>
+  const selectedCandidate = current?.candidates.find(
+    (candidate) => candidate.id === run?.selectedCandidateId,
+  );
+  const strategySelector = strategyBrief ? (
+    <section className="rounded-[10px] border border-[var(--color-line)] p-3">
+      <p className="text-xs font-extrabold">可选运营策略</p>
+      <p className="mt-1 text-[11px] leading-5 text-[var(--color-muted)]">
+        仅展示已通过离线评测并由管理员激活、且与当前平台和内容类型精确匹配的策略。每轮最多使用一张。
+      </p>
+      {strategyLoading && (
+        <p className="mt-3 text-xs font-bold text-[var(--color-accent)]">正在检查可用策略…</p>
+      )}
+      {strategyError && (
+        <p className="mt-3 rounded-[8px] bg-[var(--color-warning-soft)] p-2 text-xs text-[var(--color-warning)]">
+          {strategyError}。本轮仍可明确忽略策略继续。
+        </p>
+      )}
+      {!strategyLoading && strategies.length > 0 && (
+        <div className="mt-3 space-y-2">
+          {strategies.map((strategy) => {
+            const value = `${strategy.id}:${strategy.version}`;
+            return (
+              <label
+                className={`block cursor-pointer rounded-[8px] border p-3 ${
+                  strategyChoice === value
+                    ? "border-[var(--color-accent)] bg-[var(--color-accent-soft)]"
+                    : "border-[var(--color-line)]"
+                }`}
+                key={value}
+              >
+                <span className="flex items-start gap-2">
+                  <input
+                    checked={strategyChoice === value}
+                    className="mt-0.5"
+                    name="strategy-card"
+                    onChange={() => setStrategyChoice(value)}
+                    type="radio"
+                  />
+                  <span className="min-w-0">
+                    <span className="block text-xs font-black">{strategy.title} · v{strategy.version}</span>
+                    <span className="mt-1 block text-[11px] leading-5 text-[var(--color-graphite)]">
+                      {strategy.guidance.do.slice(0, 2).join("；")}
+                      {strategy.guidance.avoid.length > 0
+                        ? `；避免：${strategy.guidance.avoid.join("；")}`
+                        : ""}
+                    </span>
+                    <span className="mt-2 block text-[10px] leading-4 text-[var(--color-muted)]">
+                      策略建议受众：{strategy.audienceLabel || "未指定"}<br />
+                      当前任务受众：{strategyBrief.targetAudience || "未填写"}<br />
+                      受众未自动匹配，请自行核对
+                      <br />
+                      证据更新：{new Date(strategy.evidenceUpdatedAt).toLocaleDateString("zh-CN")}
+                    </span>
+                  </span>
+                </span>
               </label>
-              {imageFile && <button aria-label="清除内容截图" className="absolute right-2 top-2 button-secondary !min-h-8 !p-1.5" onClick={clearImage} type="button"><X aria-hidden="true" size={14} /></button>}
-            </div>
-            <p className="mt-2 text-[10px] leading-4 text-[var(--color-muted)]">图片走创作 Agent 分析接口，原图不保存，也不会写入浏览器历史。</p>
-            {run?.status === "analyzing_image" && (
-              <button className="button-secondary mt-3 w-full" disabled={!imageFile || coach.loading} onClick={() => imageFile && void coach.uploadImage(imageFile)} type="button">分析这张图片</button>
-            )}
-          </div>
-        )}
-        <div>
-          <label className="mb-2 block text-xs font-extrabold" htmlFor="coach-topic">主题</label>
-          <textarea className="control-base min-h-24 w-full resize-none px-3 py-2 text-sm" disabled={coach.loading || !briefEditable} id="coach-topic" maxLength={500} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, topic: event.target.value })) : setTopic(event.target.value)} placeholder="例如：用 AI 写好每周复盘" value={displayedTopic} />
+            );
+          })}
         </div>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-          <label className="text-xs font-extrabold">发布平台
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setPlatformTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, platform: event.target.value as Platform })); else setPlatform(event.target.value as Platform); }} value={displayedPlatform}>
-              {(Object.keys(PLATFORM_CONFIG) as Platform[]).map((item) => <option key={item} value={item}>{PLATFORM_CONFIG[item].label}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-extrabold">内容类型
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, contentType: event.target.value as ContentType })) : setContentType(event.target.value as ContentType)} value={displayedContentType}>
-              {(Object.keys(CONTENT_TYPE_CONFIG) as ContentType[]).map((item) => <option key={item} value={item}>{CONTENT_TYPE_CONFIG[item].label}</option>)}
-            </select>
-          </label>
-        </div>
-        <label className="block text-xs font-extrabold">目标用户
-          <input className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} maxLength={300} onChange={(event) => run ? setBriefEdits((currentEdits) => ({ ...currentEdits, targetAudience: event.target.value })) : setTargetAudience(event.target.value)} placeholder="留空则使用默认受众" value={displayedTargetAudience} />
+      )}
+      {!strategyLoading && (
+        <label className="mt-2 flex cursor-pointer items-start gap-2 rounded-[8px] border border-[var(--color-line)] p-3">
+          <input
+            checked={strategyChoice === "ignore"}
+            className="mt-0.5"
+            name="strategy-card"
+            onChange={() => setStrategyChoice("ignore")}
+            type="radio"
+          />
+          <span>
+            <span className="block text-xs font-black">本轮忽略策略</span>
+            <span className="mt-1 block text-[10px] text-[var(--color-muted)]">
+              不影响创作 Agent 的原有确认、改写和最终确认流程。
+            </span>
+          </span>
         </label>
-        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-1">
-          <label className="text-xs font-extrabold">情绪风格
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setEmotionToneTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, emotionTone: event.target.value as EmotionTone })); else setEmotionTone(event.target.value as EmotionTone); }} value={displayedEmotionTone}>
-              {(Object.keys(EMOTION_TONE_CONFIG) as EmotionTone[]).map((item) => <option key={item} value={item}>{EMOTION_TONE_CONFIG[item].label}</option>)}
-            </select>
-          </label>
-          <label className="text-xs font-extrabold">字数区间
-            <select className="control-base mt-2 h-10 w-full px-3 text-sm" disabled={coach.loading || !briefEditable} onChange={(event) => { setWordLimitTouched(true); if (run) setBriefEdits((currentEdits) => ({ ...currentEdits, wordLimitBand: event.target.value as WordLimitBand })); else setWordLimitBand(event.target.value as WordLimitBand); }} value={displayedWordLimitBand}>
-              {WORD_BANDS.map((item) => <option key={item} value={item}>{item} 字</option>)}
-            </select>
-          </label>
-        </div>
-        {run?.briefDraft?.imageDescription && (
-          <div className="rounded-[10px] border border-[var(--color-line)] bg-[var(--color-surface-subtle)] p-3">
-            <label className="text-[11px] font-extrabold" htmlFor="coach-image-description">图片结构化理解</label>
-            <textarea
-              className="control-base mt-2 min-h-24 w-full resize-y px-3 py-2 text-xs leading-5"
-              disabled={coach.loading || !briefEditable}
-              id="coach-image-description"
-              maxLength={500}
-              onChange={(event) => setBriefEdits((currentEdits) => ({ ...currentEdits, imageDescription: event.target.value }))}
-              value={displayedImageDescription}
-            />
-            <p className="mt-2 text-[10px] text-[var(--color-muted)]">如理解有偏差，请在确认简报前直接修正；生成会使用这里的内容。</p>
-          </div>
-        )}
-        {run?.status === "understanding" && run.requiresFormCompletion && (
-          <button
-            className="button-primary w-full"
-            disabled={coach.loading || !displayedTopic.trim() || !displayedPlatform || !displayedContentType || !allowed(allowedCommands, "message")}
-            onClick={() => void coach.submitCommand({ type: "message", text: JSON.stringify(structuredBrief) })}
-            type="button"
-          >
-            <ListChecks aria-hidden="true" size={17} weight="bold" />
-            提交完整简报
-          </button>
-        )}
-        {!run && (
-          <label className="flex items-start gap-2 text-xs leading-5 text-[var(--color-graphite)]">
-            <input checked={ignoreMemory} className="mt-1 accent-[var(--color-accent)]" onChange={(event) => changeIgnoreMemory(event.target.checked)} type="checkbox" />
-            本轮忽略已保存偏好
-          </label>
-        )}
-        {!run ? (
-          <button className="button-primary w-full" disabled={!displayedTopic.trim() || coach.loading || coach.restoring} onClick={() => void start()} type="button">
-            <ChatCircleDots aria-hidden="true" size={18} weight="bold" />
-            {coach.loading ? "正在创建…" : "开始创作 Agent"}
-          </button>
-        ) : null}
-      </div>
-    </section>
-  );
-
-  const candidatePanel = (
-    <section aria-live="polite" className="min-w-0 space-y-4">
-      {!run && !coach.restoring && !coach.error && (
-        <div className="editorial-panel grid min-h-[430px] content-between p-6">
-          <div><p className="text-xs font-extrabold text-[var(--color-accent)]">候选工作区</p><h2 className="mt-4 max-w-[16ch] text-3xl font-black leading-tight tracking-[-0.035em]">先确认简报，再比较十个方向。</h2><p className="mt-3 max-w-[58ch] text-sm leading-6 text-[var(--color-graphite)]">教练会解释 Top 3 的排序依据。模型分只作参考，采用决定始终由你确认。</p></div>
-          <div className="mt-10 grid gap-px overflow-hidden rounded-[10px] border border-[var(--color-line)] bg-[var(--color-line)] sm:grid-cols-3"><div className="bg-white p-4 text-xs leading-5">一次补问一个关键字段</div><div className="bg-white p-4 text-xs leading-5">首轮固定生成 10 条</div><div className="bg-white p-4 text-xs leading-5">单条改写固定返回 3 条</div></div>
-        </div>
-      )}
-      {coach.restoring && <div className="editorial-panel min-h-[300px] p-6 soft-pulse" aria-label="正在恢复创作 Agent">正在恢复上次任务…</div>}
-      {!run && !coach.restoring && coach.error && (
-        <div className="editorial-panel min-h-[300px] p-6" role="alert">
-          <p className="text-xs font-extrabold text-[var(--color-danger)]">恢复未完成</p>
-          <h2 className="mt-3 text-2xl font-black">{coach.error.title}</h2>
-          <p className="mt-2 max-w-[58ch] text-sm leading-6 text-[var(--color-graphite)]">{coach.error.message}</p>
-          <div className="mt-5 flex flex-wrap gap-2">
-            <button className="button-primary" onClick={() => void coach.retryRestore()} type="button"><ArrowClockwise aria-hidden="true" size={16} weight="bold" />重试恢复</button>
-            <button className="button-secondary" onClick={coach.skipRestore} type="button">跳过恢复并开始新任务</button>
-          </div>
-        </div>
-      )}
-      {run && candidates.length === 0 && (
-        <div className="editorial-panel p-6">
-          <p className="text-xs font-extrabold text-[var(--color-accent)]">{STATUS_LABELS[run.status]}</p>
-          <h2 className="mt-3 text-2xl font-black">{run.status === "awaiting_brief_confirmation" ? "请确认简报" : run.status === "analyzing_image" ? "正在理解图片" : "教练正在准备下一步"}</h2>
-          <p className="mt-2 text-sm leading-6 text-[var(--color-graphite)]">所有生成与改写都需要明确状态和人工确认，不会在后台无限迭代。</p>
-          {current?.pendingConfirmation === "brief" && (
-            <button className="button-primary mt-5" disabled={!needsInput || !allowed(allowedCommands, "confirm_brief") || coach.loading} onClick={() => void coach.submitCommand({ type: "confirm_brief", briefPatch: brief })} type="button"><CheckCircle aria-hidden="true" size={17} weight="bold" />确认简报并生成 10 条</button>
-          )}
-        </div>
-      )}
-      {candidates.length > 0 && (
-        <HookGrid
-          coachActions={{
-            onRewrite: (id) => { setRewriteId(id); setRejectOpen(false); },
-            onSelect: toggleComparison,
-            canRewrite: needsInput && allowed(allowedCommands, "rewrite_candidate") && !coach.loading,
-            canSelect: needsInput && allowed(allowedCommands, "select_candidate") && !coach.loading,
-            canReject: needsInput && allowed(allowedCommands, "reject_batch") && !coach.loading,
-            selectedIds: comparisonCandidates.map((candidate) => candidate.id),
-            recommendedIds: topIds,
-            comparisonExplanations: current?.comparisonExplanations ?? [],
-            rejecting: coach.loading,
-          }}
-          favoritedIds={[]}
-          hooks={candidates}
-          onCopyHook={() => undefined}
-          onRejectBatch={() => { if (allowed(allowedCommands, "reject_batch")) { setRejectOpen(true); setRewriteId(null); } }}
-          onSetSatisfaction={() => undefined}
-          onToggleAdopted={() => undefined}
-          onToggleFavorite={() => undefined}
-        />
-      )}
-      {rewriteId && (
-        <form className="editorial-panel p-5" onSubmit={(event) => { event.preventDefault(); void coach.submitCommand({ type: "rewrite_candidate", candidateId: rewriteId, ...(rewriteInstruction.trim() ? { instruction: rewriteInstruction.trim() } : {}) }); setRewriteId(null); setRewriteInstruction(""); }}>
-          <label className="text-sm font-extrabold" htmlFor="rewrite-instruction">希望怎样改写这条？</label>
-          <textarea className="control-base mt-3 min-h-20 w-full px-3 py-2 text-sm" id="rewrite-instruction" maxLength={1000} onChange={(event) => setRewriteInstruction(event.target.value)} placeholder="例如：语气更克制，保留数字信息" value={rewriteInstruction} />
-          <div className="mt-3 flex gap-2"><button className="button-primary" disabled={coach.loading || !allowed(allowedCommands, "rewrite_candidate")} type="submit">生成 3 条改写</button><button className="button-secondary" onClick={() => setRewriteId(null)} type="button">取消</button></div>
-        </form>
-      )}
-      {rejectOpen && (
-        <form className="editorial-panel p-5" onSubmit={(event) => { event.preventDefault(); void coach.submitCommand({ type: "reject_batch", ...(rejectReason.trim() ? { reason: rejectReason.trim() } : {}) }); setRejectOpen(false); setRejectReason(""); }}>
-          <label className="text-sm font-extrabold" htmlFor="reject-reason">这批候选最主要的问题是什么？</label>
-          <textarea className="control-base mt-3 min-h-20 w-full px-3 py-2 text-sm" id="reject-reason" maxLength={1000} onChange={(event) => setRejectReason(event.target.value)} placeholder="例如：都太像广告，没有个人经验感" value={rejectReason} />
-          <div className="mt-3 flex gap-2"><button className="button-primary" disabled={coach.loading || !allowed(allowedCommands, "reject_batch")} type="submit">重新生成 10 条</button><button className="button-secondary" onClick={() => setRejectOpen(false)} type="button">取消</button></div>
-        </form>
-      )}
-      {run && ["completed", "cancelled"].includes(run.status) && <section className="editorial-panel p-5"><CheckCircle aria-hidden="true" className="text-[var(--color-success)]" size={26} weight="fill" /><h2 className="mt-3 text-xl font-black">{run.status === "completed" ? "本轮创作已完成" : "本轮任务已取消"}</h2>{run.status === "completed" && <p className="mt-2 text-sm text-[var(--color-graphite)]">最终结果已加入历史记录。</p>}<button className="button-secondary mt-4" onClick={reset} type="button">开始新任务</button></section>}
-    </section>
-  );
-
-  const comparisonRail = candidates.length > 0 ? (
-    <section aria-labelledby="coach-comparison-heading" className="shrink-0 border-t border-[var(--color-line)] p-4">
-      {current?.pendingConfirmation === "final" ? (
-        <div>
-          <p className="text-xs font-extrabold text-[var(--color-success)]">最终确认</p>
-          <h2 className="mt-2 text-lg font-black" id="coach-comparison-heading">确认采用这个方案？</h2>
-          {finalCandidate && (
-            <article className="mt-3 border-l-2 border-l-[var(--color-success)] bg-[var(--color-surface-subtle)] p-3">
-              <div className="flex items-center justify-between gap-3 text-[11px] font-extrabold">
-                <span className="text-[var(--color-success)]">{finalCandidate.style}</span>
-                <span className="tabular-nums text-[var(--color-muted)]">模型分 {finalCandidate.overallScore ?? finalCandidate.score ?? 0}/10</span>
-              </div>
-              <p className="mt-2 text-xs font-semibold leading-5 text-[var(--color-ink)]">{finalCandidate.text}</p>
-            </article>
-          )}
-          <p className="mt-3 text-[11px] leading-5 text-[var(--color-muted)]">确认后会保存结果并写入历史记录；返回比较不会丢失当前对比清单。</p>
-          <div className="mt-3 grid gap-2">
-            <button className="button-primary w-full" disabled={coach.loading || !allowed(allowedCommands, "confirm_final")} onClick={() => void coach.submitCommand({ type: "confirm_final" })} type="button">确认采用</button>
-            <button className="button-secondary w-full" disabled={coach.loading || !allowed(allowedCommands, "message")} onClick={() => void coach.submitCommand({ type: "message", text: "返回候选继续比较" })} type="button">返回比较</button>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-extrabold text-[var(--color-accent)]">对比与确认</p>
-              <h2 className="mt-1 text-sm font-black" id="coach-comparison-heading">已选 {comparisonCandidates.length} 条方案</h2>
-            </div>
-            {comparisonCandidates.length > 0 && (
-              <button className="text-[11px] font-bold text-[var(--color-muted)] underline" disabled={coach.loading || !allowed(allowedCommands, "select_candidate")} onClick={() => setComparisonIds([])} type="button">清空</button>
-            )}
-          </div>
-          {comparisonCandidates.length === 0 ? (
-            <p className="mt-3 bg-[var(--color-surface-subtle)] p-3 text-[11px] leading-5 text-[var(--color-muted)]">点击候选卡片中的“加入对比”，可以同时保留多个方案。</p>
-          ) : (
-            <>
-              <p className="mt-2 text-[11px] leading-5 text-[var(--color-muted)]">集中对照文案、风格和模型分，再确定唯一最终方案。</p>
-              <ul className="mt-3 max-h-[38vh] space-y-2 overflow-y-auto pr-1">
-                {comparisonCandidates.map((candidate) => {
-                  const candidateIndex = candidates.findIndex((item) => item.id === candidate.id);
-                  return (
-                    <li className="border border-[var(--color-line)] bg-[var(--color-surface)] p-3" key={candidate.id}>
-                      <div className="flex items-center justify-between gap-3 text-[11px] font-extrabold">
-                        <span><span className="mr-2 tabular-nums text-[var(--color-muted)]">{String(candidateIndex + 1).padStart(2, "0")}</span><span className="text-[var(--color-accent)]">{candidate.style}</span></span>
-                        <span className="tabular-nums text-[var(--color-muted)]">{candidate.overallScore ?? candidate.score ?? 0}/10</span>
-                      </div>
-                      <p className="mt-2 text-xs font-semibold leading-5 text-[var(--color-ink)]">{candidate.text}</p>
-                      <div className="mt-3 flex items-center gap-2">
-                        <button className="button-primary !min-h-8 flex-1 !px-3 !py-1.5 text-[11px]" disabled={coach.loading || !needsInput || !allowed(allowedCommands, "select_candidate")} onClick={() => void coach.submitCommand({ type: "select_candidate", candidateId: candidate.id })} type="button">设为最终方案</button>
-                        <button aria-label={`从对比中移除第 ${candidateIndex + 1} 条方案`} className="button-secondary !min-h-8 !p-1.5" disabled={coach.loading || !allowed(allowedCommands, "select_candidate")} onClick={() => toggleComparison(candidate.id)} type="button"><X aria-hidden="true" size={15} /></button>
-                      </div>
-                    </li>
-                  );
-                })}
-              </ul>
-            </>
-          )}
-        </div>
       )}
     </section>
   ) : null;
 
-  const coachPanel = (
-    <aside
-      aria-label="创作 Agent 对话"
-      aria-modal={modalOpen || undefined}
-      className={`editorial-panel z-40 flex max-h-[calc(100vh-7rem)] flex-col overflow-hidden xl:sticky xl:top-24 max-xl:fixed max-xl:bottom-4 max-xl:right-4 max-xl:top-24 max-xl:w-[360px] max-xl:shadow-[var(--shadow-panel)] max-md:inset-0 max-md:max-h-none max-md:w-auto max-md:rounded-none ${coachOpen ? "max-xl:flex" : "max-xl:hidden"}`}
-      ref={coachPanelRef}
-      role={modalOpen ? "dialog" : undefined}
-      tabIndex={modalOpen ? -1 : undefined}
-    >
-      <div className="flex items-center justify-between border-b border-[var(--color-line)] p-4">
-        <div><p className="text-xs font-extrabold text-[var(--color-accent)]">创作 Agent</p><p className="mt-1 text-sm font-black">{run ? STATUS_LABELS[run.status] : "等待开始"}</p></div>
-        <button aria-label="关闭创作 Agent 面板" className="button-secondary !min-h-8 !p-1.5 xl:!hidden" onClick={closeCoach} ref={closeButtonRef} type="button"><X aria-hidden="true" size={16} /></button>
-      </div>
-      <div aria-live="polite" className="min-h-0 flex-1 space-y-3 overflow-y-auto p-4">
-        {!run && <p className="rounded-[10px] bg-[var(--color-surface-subtle)] p-3 text-xs leading-5">填写左侧简报后开始。我会按当前状态补问、比较和改写，不展示隐藏推理。</p>}
-        {run?.messages.filter((item) => item.role !== "tool").map((item) => <div className={`max-w-[92%] rounded-[10px] px-3 py-2 text-xs leading-5 ${item.role === "user" ? "ml-auto bg-[var(--color-ink)] text-white" : "bg-[var(--color-surface-subtle)]"}`} key={item.id}>{item.content}</div>)}
-        {run?.toolCalls.slice(-4).map((call) => <p className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]" key={call.id}><ListChecks aria-hidden="true" size={14} />{call.tool === "analyze_image" ? "图片分析" : call.tool === "compare_candidates" ? "候选比较" : call.tool === "save_final_choice" ? "保存最终选择" : "生成候选"}：{call.status === "completed" ? "已完成" : "进行中"}</p>)}
-        {coach.error && <div className="rounded-[10px] bg-[var(--color-danger-soft)] p-3 text-xs leading-5 text-[var(--color-danger)]" role="alert"><p className="font-extrabold">{coach.error.title}</p><p className="mt-1">{coach.error.message}</p></div>}
-        {run?.status === "failed" && run.recoverable && allowed(allowedCommands, "retry") && (
-          <div className="rounded-[10px] border border-[var(--color-warning)] bg-[var(--color-warning-soft)] p-3 text-xs leading-5">
-            <p className="font-extrabold">上一步可以安全重试</p>
-            {run.resumeStatus === "analyzing_image" && !imageFile && <p className="mt-1 text-[var(--color-graphite)]">请先在简报区重新选择原图片。</p>}
-            <button className="button-secondary mt-3" disabled={coach.loading || !needsInput || (run.resumeStatus === "analyzing_image" && !imageFile)} onClick={() => run.resumeStatus === "analyzing_image" ? void retryImageOperation() : void coach.submitCommand({ type: "retry" })} type="button"><ArrowClockwise aria-hidden="true" size={15} />重试</button>
+  return open ? (
+    <>
+      <button
+        aria-label="关闭创作 Agent 遮罩"
+        className="fixed inset-0 z-40 bg-black/25"
+        onClick={close}
+        type="button"
+      />
+      <aside
+        aria-labelledby="creative-coach-title"
+        aria-modal="true"
+        className="fixed inset-y-0 right-0 z-50 flex w-full max-w-[420px] flex-col border-l border-[var(--color-line)] bg-[var(--color-surface)] shadow-[var(--shadow-panel)]"
+        ref={panelRef}
+        role="dialog"
+        tabIndex={-1}
+      >
+        <header className="flex items-center justify-between border-b border-[var(--color-line)] px-4 py-4">
+          <div>
+            <p className="flex items-center gap-2 text-xs font-extrabold text-[var(--color-accent)]">
+              <ChatCircleDots aria-hidden="true" size={16} weight="bold" />
+              创作 Agent
+            </p>
+            <h2 className="mt-1 text-base font-black" id="creative-coach-title">
+              {run ? STATUS_LABELS[run.status] : "按需协助本轮创作"}
+            </h2>
           </div>
-        )}
-        {coach.loading && <p className="soft-pulse text-xs font-bold text-[var(--color-accent)]">教练正在处理…</p>}
-      </div>
-      {run && needsInput && allowed(allowedCommands, "message") && run.status === "understanding" && (
-        <form className="border-t border-[var(--color-line)] p-3" onSubmit={(event) => { event.preventDefault(); submitMessage(); }}>
-          <label className="sr-only" htmlFor="coach-message">回复创作 Agent</label>
-          <textarea className="control-base min-h-20 w-full resize-none px-3 py-2 text-sm" id="coach-message" maxLength={2000} onChange={(event) => setMessage(event.target.value)} placeholder="回复缺失信息" value={message} />
-          <button className="button-primary mt-2 w-full" disabled={!message.trim() || coach.loading} type="submit">发送回复</button>
-        </form>
-      )}
-      {comparisonRail}
-      <div className="border-t border-[var(--color-line)] p-4">
-        <div className="flex items-center justify-between"><p className="text-xs font-extrabold">偏好记忆{run ? ` · 本轮已参考 ${run.appliedMemoryKeys?.length ?? 0} 项` : ""}</p>{coach.memory.length > 0 && <button className="text-[11px] font-bold text-[var(--color-danger)]" onClick={() => void coach.clearMemory()} type="button">全部清除</button>}</div>
-        {coach.memory.length === 0 ? <p className="mt-2 text-[11px] text-[var(--color-muted)]">暂无已保存偏好</p> : <ul className="mt-2 space-y-2">{coach.memory.map((entry) => <li className="flex items-center justify-between gap-2 text-[11px]" key={entry.id}><span className="min-w-0 truncate">{MEMORY_LABELS[entry.key] ?? entry.key}：{entry.value}（{Math.round(entry.confidence * 100)}%）</span><button aria-label={`删除偏好：${MEMORY_LABELS[entry.key] ?? entry.key}`} className="shrink-0 text-[var(--color-danger)]" onClick={() => void coach.deleteMemory(entry.id)} type="button"><Trash aria-hidden="true" size={14} /></button></li>)}</ul>}
-        {run && !["completed", "cancelled"].includes(run.status) && <button className="mt-3 text-[11px] font-bold text-[var(--color-muted)] underline" disabled={coach.loading} onClick={() => void coach.cancelRun()} type="button">取消本轮任务</button>}
-      </div>
-    </aside>
-  );
+          <button
+            aria-label="关闭创作 Agent 面板"
+            className="button-secondary !min-h-8 !p-1.5"
+            onClick={close}
+            ref={closeButtonRef}
+            type="button"
+          >
+            <X aria-hidden="true" size={16} />
+          </button>
+        </header>
 
-  return (
-    <main className="mx-auto grid w-full max-w-[1600px] gap-5 px-4 py-6 pb-20 md:px-6 md:py-8 xl:grid-cols-[minmax(280px,0.72fr)_minmax(0,1.28fr)_360px] xl:items-start">
-      <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
-        {briefPanel}
-        {candidatePanel}
-      </div>
-      {coachPanel}
-      <div aria-hidden={modalOpen || undefined} className="contents" inert={modalOpen ? true : undefined}>
-        <button aria-expanded={coachOpen} aria-label="打开创作 Agent 面板" className="button-primary fixed bottom-4 right-4 z-30 xl:!hidden" onClick={openCoach} ref={openButtonRef} type="button"><ChatCircleDots aria-hidden="true" size={18} weight="bold" />创作 Agent{comparisonCandidates.length > 0 ? ` · 对比 ${comparisonCandidates.length}` : ""}</button>
-      </div>
-      {coachOpen && <button aria-label="关闭创作 Agent 遮罩" className="fixed inset-0 z-30 bg-black/25 max-md:hidden xl:hidden" onClick={closeCoach} type="button" />}
-    </main>
-  );
-}
+        <div aria-live="polite" className="min-h-0 flex-1 space-y-4 overflow-y-auto p-4">
+          {coach.restoring && !run && (
+            <p className="soft-pulse rounded-[10px] bg-[var(--color-surface-subtle)] p-3 text-xs font-bold">
+              正在恢复上次任务…
+            </p>
+          )}
+
+          {!run && !coach.restoring && coach.error && (
+            <section className="rounded-[10px] border border-[var(--color-danger)]/30 bg-[var(--color-danger-soft)] p-4" role="alert">
+              <p className="text-xs font-extrabold text-[var(--color-danger)]">恢复未完成</p>
+              <h3 className="mt-2 text-lg font-black">{coach.error.title}</h3>
+              <p className="mt-2 text-xs leading-5 text-[var(--color-graphite)]">{coach.error.message}</p>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <button className="button-primary" onClick={() => void coach.retryRestore()} type="button">
+                  <ArrowClockwise aria-hidden="true" size={16} weight="bold" />
+                  重试恢复
+                </button>
+                <button className="button-secondary" onClick={coach.skipRestore} type="button">
+                  跳过恢复并开始新任务
+                </button>
+              </div>
+            </section>
+          )}
+
+          {!run && !coach.restoring && !coach.error && (
+            <p className="rounded-[10px] bg-[var(--color-surface-subtle)] p-3 text-xs leading-5 text-[var(--color-graphite)]">
+              我会沿用左侧创作简报。你可以让我补齐模糊需求，或把当前候选带进来继续比较和改写。
+            </p>
+          )}
+
+          {!run && pendingSeeded && (
+            <>
+              {strategySelector}
+              <button
+                className="button-primary w-full"
+                disabled={coach.loading || strategyLoading || !strategyChoice}
+                onClick={() => void beginSeededRun()}
+                type="button"
+              >
+                <CheckCircle aria-hidden="true" size={16} weight="bold" />
+                带入当前候选并继续打磨
+              </button>
+            </>
+          )}
+
+          {run?.messages
+            .filter((item) => item.role !== "tool")
+            .map((item) => (
+              <div
+                className={`max-w-[92%] rounded-[10px] px-3 py-2 text-xs leading-5 ${
+                  item.role === "user"
+                    ? "ml-auto bg-[var(--color-ink)] text-white"
+                    : "bg-[var(--color-surface-subtle)]"
+                }`}
+                key={item.id}
+              >
+                {item.content}
+              </div>
+            ))}
+
+          {run?.toolCalls.slice(-4).map((call) => (
+            <p className="flex items-center gap-2 text-[11px] text-[var(--color-muted)]" key={call.id}>
+              <ListChecks aria-hidden="true" size={14} />
+              {call.tool === "compare_candidates"
+                ? "候选比较"
+                : call.tool === "save_final_choice"
+                  ? "保存最终选择"
+                  : call.tool === "rewrite_hook"
+                    ? "改写候选"
+                    : "生成候选"}
+              ：{call.status === "completed" ? "已完成" : "进行中"}
+            </p>
+          ))}
+
+          {run?.status === "understanding" && run.requiresFormCompletion && (
+            <button
+              className="button-primary w-full"
+              disabled={coach.loading || !currentBrief.topic || !allowed(allowedCommands, "message")}
+              onClick={() => void coach.submitCommand({ type: "message", text: JSON.stringify(currentBrief) })}
+              type="button"
+            >
+              <ListChecks aria-hidden="true" size={16} weight="bold" />
+              用当前表单补全简报
+            </button>
+          )}
+
+          {current?.pendingConfirmation === "brief" && (
+            <section className="rounded-[10px] border border-[var(--color-accent)]/30 bg-[var(--color-accent-soft)] p-4">
+              <p className="text-xs font-extrabold text-[var(--color-accent)]">简报已就绪</p>
+              <p className="mt-2 text-xs leading-5 text-[var(--color-graphite)]">
+                确认后会按当前主题、平台和内容类型生成 10 条候选。
+              </p>
+              <div className="mt-3">{strategySelector}</div>
+              <button
+                className="button-primary mt-3 w-full"
+                disabled={coach.loading || strategyLoading || !strategyChoice || !needsInput || !allowed(allowedCommands, "confirm_brief")}
+                onClick={() => void confirmBrief()}
+                type="button"
+              >
+                <CheckCircle aria-hidden="true" size={16} weight="bold" />
+                确认简报并生成
+              </button>
+            </section>
+          )}
+
+          {candidateHooks.length > 0 && run?.status !== "awaiting_final_confirmation" && (
+            <section className="rounded-[10px] border border-[var(--color-line)] p-3">
+              <p className="text-xs font-extrabold">候选已同步到结果区</p>
+              <p className="mt-1 text-[11px] leading-5 text-[var(--color-muted)]">
+                可直接在候选卡上改写或选择。这里保留状态、问题和操作记录。
+              </p>
+              {recommendedIds.length > 0 && (
+                <p className="mt-2 text-[11px] font-bold text-[var(--color-accent)]">
+                  已标出 Agent 推荐的 Top {recommendedIds.length}
+                </p>
+              )}
+            </section>
+          )}
+
+          {run?.strategyApplication && (
+            <section className="rounded-[10px] border border-[var(--color-line)] p-3">
+              <p className="text-xs font-extrabold">
+                本轮参考策略卡 v{run.strategyApplication.version}
+              </p>
+              <p className="mt-1 break-all text-[10px] text-[var(--color-muted)]">
+                {run.strategyApplication.id}
+              </p>
+              {!feedbackSent && candidateHooks.length > 0 && (
+                <div className="mt-3 space-y-2">
+                  <label className="block text-[11px] font-bold">
+                    这张策略对本轮结果有帮助吗？
+                    <select
+                      className="control-base mt-1 min-h-10 w-full px-3 text-xs"
+                      onChange={(event) => {
+                        const next = event.target.value as StrategyFit | "";
+                        setFeedbackFit(next);
+                        if (next !== "not_applicable") setFeedbackReason("");
+                      }}
+                      value={feedbackFit}
+                    >
+                      <option value="">请选择</option>
+                      <option value="helpful">有帮助</option>
+                      <option value="unhelpful">无帮助</option>
+                      <option value="not_applicable">不适用</option>
+                    </select>
+                  </label>
+                  {feedbackFit === "not_applicable" && (
+                    <label className="block text-[11px] font-bold">
+                      不适用原因
+                      <select
+                        className="control-base mt-1 min-h-10 w-full px-3 text-xs"
+                        onChange={(event) => setFeedbackReason(event.target.value as StrategyNotApplicableReason | "")}
+                        value={feedbackReason}
+                      >
+                        <option value="">请选择</option>
+                        <option value="platform">平台</option>
+                        <option value="content_type">内容类型</option>
+                        <option value="audience">受众</option>
+                        <option value="tone">语气</option>
+                        <option value="topic">主题</option>
+                        <option value="other">其他</option>
+                      </select>
+                    </label>
+                  )}
+                  <button
+                    className="button-secondary w-full"
+                    disabled={!feedbackFit || (feedbackFit === "not_applicable" && !feedbackReason)}
+                    onClick={() => void submitStrategyFeedback()}
+                    type="button"
+                  >
+                    提交策略反馈
+                  </button>
+                </div>
+              )}
+              {feedbackSent && (
+                <p className="mt-2 text-[11px] font-bold text-[var(--color-success)]">反馈已记录</p>
+              )}
+            </section>
+          )}
+
+          {current?.pendingConfirmation === "final" && (
+            <section className="rounded-[10px] border border-[var(--color-success)]/35 bg-[var(--color-success-soft)] p-4">
+              <p className="text-xs font-extrabold text-[var(--color-success)]">最终确认</p>
+              {selectedCandidate && (
+                <p className="mt-2 text-sm font-semibold leading-6">{selectedCandidate.text}</p>
+              )}
+              <button
+                className="button-primary mt-3 w-full"
+                disabled={coach.loading || !allowed(allowedCommands, "confirm_final")}
+                onClick={() => void coach.submitCommand({ type: "confirm_final" })}
+                type="button"
+              >
+                确认采用
+              </button>
+              {allowed(allowedCommands, "message") && (
+                <button
+                  className="button-secondary mt-2 w-full"
+                  disabled={coach.loading}
+                  onClick={() => void coach.submitCommand({ type: "message", text: "返回候选继续比较" })}
+                  type="button"
+                >
+                  返回继续比较
+                </button>
+              )}
+            </section>
+          )}
+
+          {coach.error && run && (
+            <div className="rounded-[10px] bg-[var(--color-danger-soft)] p-3 text-xs leading-5 text-[var(--color-danger)]" role="alert">
+              <p className="font-extrabold">{coach.error.title}</p>
+              <p className="mt-1">{coach.error.message}</p>
+            </div>
+          )}
+
+          {run?.status === "failed" && run.recoverable && allowed(allowedCommands, "retry") && (
+            <button
+              className="button-secondary"
+              disabled={coach.loading || !needsInput}
+              onClick={() => void coach.submitCommand({ type: "retry" })}
+              type="button"
+            >
+              <ArrowClockwise aria-hidden="true" size={15} />
+              重试上一步
+            </button>
+          )}
+
+          {coach.loading && (
+            <p className="soft-pulse text-xs font-bold text-[var(--color-accent)]">教练正在处理…</p>
+          )}
+
+          {run && isTerminal(run.status) && (
+            <section className="rounded-[10px] border border-[var(--color-line)] p-4">
+              <CheckCircle aria-hidden="true" className="text-[var(--color-success)]" size={24} weight="fill" />
+              <p className="mt-2 text-sm font-black">
+                {run.status === "completed" ? "本轮创作已完成" : "本轮任务已取消"}
+              </p>
+              {run.status === "completed" && (
+                <p className="mt-1 text-xs text-[var(--color-muted)]">最终结果已加入历史记录。</p>
+              )}
+            </section>
+          )}
+        </div>
+
+        {run && needsInput && allowed(allowedCommands, "message") && run.status === "understanding" && (
+          <form className="border-t border-[var(--color-line)] p-3" onSubmit={submitMessage}>
+            <label className="sr-only" htmlFor="coach-message">回复创作 Agent</label>
+            <textarea
+              className="control-base min-h-20 w-full resize-none px-3 py-2 text-sm"
+              id="coach-message"
+              maxLength={2000}
+              onChange={(event) => setMessage(event.target.value)}
+              placeholder="补充你已经确定的信息"
+              value={message}
+            />
+            <button className="button-primary mt-2 w-full" disabled={!message.trim() || coach.loading} type="submit">
+              发送回复
+            </button>
+          </form>
+        )}
+
+        <section className="border-t border-[var(--color-line)] p-4">
+          <div className="flex items-center justify-between">
+            <p className="text-xs font-extrabold">
+              偏好记忆{run ? ` · 本轮参考 ${run.appliedMemoryKeys?.length ?? 0} 项` : ""}
+            </p>
+            {coach.memory.length > 0 && (
+              <button className="text-[11px] font-bold text-[var(--color-danger)]" onClick={() => void coach.clearMemory()} type="button">
+                全部清除
+              </button>
+            )}
+          </div>
+          {coach.memory.length === 0 ? (
+            <p className="mt-2 text-[11px] text-[var(--color-muted)]">暂无已保存偏好</p>
+          ) : (
+            <ul className="mt-2 max-h-24 space-y-2 overflow-y-auto">
+              {coach.memory.map((entry) => (
+                <li className="flex items-center justify-between gap-2 text-[11px]" key={entry.id}>
+                  <span className="min-w-0 truncate">
+                    {MEMORY_LABELS[entry.key] ?? entry.key}：{entry.value}（{Math.round(entry.confidence * 100)}%）
+                  </span>
+                  <button
+                    aria-label={`删除偏好：${MEMORY_LABELS[entry.key] ?? entry.key}`}
+                    className="shrink-0 text-[var(--color-danger)]"
+                    onClick={() => void coach.deleteMemory(entry.id)}
+                    type="button"
+                  >
+                    <Trash aria-hidden="true" size={14} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+          {run && !isTerminal(run.status) && (
+            <button
+              className="mt-3 text-[11px] font-bold text-[var(--color-muted)] underline"
+              disabled={coach.loading}
+              onClick={() => void coach.cancelRun()}
+              type="button"
+            >
+              取消本轮任务
+            </button>
+          )}
+        </section>
+      </aside>
+    </>
+  ) : null;
+});

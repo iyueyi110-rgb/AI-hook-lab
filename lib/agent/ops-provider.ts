@@ -43,6 +43,7 @@ export function createDeepSeekOpsProvider(options: {
   fetch?: typeof globalThis.fetch;
   model?: string;
   timeoutMs?: number;
+  temperature?: number;
 }): OpsProvider {
   const apiKey = options.apiKey?.trim();
   const fetcher = options.fetch ?? globalThis.fetch;
@@ -69,7 +70,7 @@ export function createDeepSeekOpsProvider(options: {
             model,
             messages: input.messages,
             ...toolFields,
-            temperature: 0.1,
+            temperature: options.temperature ?? 0.1,
             max_tokens: 2_048,
           }),
           signal: controller.signal,

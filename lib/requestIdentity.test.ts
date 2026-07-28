@@ -27,15 +27,16 @@ test("trusted client identity hashes only the configured proxy header", () => {
 test("production identity rejects placeholders, weak secrets and invalid headers", () => {
   const request = new Request("https://example.test");
   assert.throws(
-    () => digestTrustedClientIp(request, { AGENT_IP_HASH_SECRET: "replace_me" } as NodeJS.ProcessEnv, true),
+    () => digestTrustedClientIp(request, { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "replace_me" } as NodeJS.ProcessEnv, true),
     RequestIdentityConfigError,
   );
   assert.throws(
-    () => digestTrustedClientIp(request, { AGENT_IP_HASH_SECRET: "a".repeat(32) } as NodeJS.ProcessEnv, true),
+    () => digestTrustedClientIp(request, { NODE_ENV: "production", AGENT_IP_HASH_SECRET: "a".repeat(32) } as NodeJS.ProcessEnv, true),
     RequestIdentityConfigError,
   );
   assert.throws(
     () => digestTrustedClientIp(request, {
+      NODE_ENV: "production",
       AGENT_IP_HASH_SECRET: "7f2a9c4e1b6d8f3a5c0e7b2d9a4f6c1e",
       AGENT_TRUSTED_IP_HEADER: "bad header",
     } as NodeJS.ProcessEnv, true),

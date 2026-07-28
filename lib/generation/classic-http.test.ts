@@ -51,10 +51,12 @@ function env(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
 test("classic quota environment uses safe defaults and positive overrides", () => {
   assert.deepEqual(classicGenerationQuotaFromEnv({} as NodeJS.ProcessEnv), DEFAULT_CLASSIC_GENERATION_QUOTA);
   assert.deepEqual(classicGenerationQuotaFromEnv({
+    NODE_ENV: "test",
     CLASSIC_QUOTA_WINDOW_SECONDS: "2",
     CLASSIC_QUOTA_IP_GENERATIONS: "3",
   } as NodeJS.ProcessEnv), { windowMs: 2_000, ipGenerations: 3 });
   assert.deepEqual(classicGenerationQuotaFromEnv({
+    NODE_ENV: "test",
     CLASSIC_QUOTA_WINDOW_SECONDS: "0",
     CLASSIC_QUOTA_IP_GENERATIONS: "invalid",
   } as NodeJS.ProcessEnv), DEFAULT_CLASSIC_GENERATION_QUOTA);

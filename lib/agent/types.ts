@@ -1,4 +1,5 @@
 import type { ContentType, EmotionTone, HookScores, Platform } from "../types.ts";
+import type { AppliedStrategyRef, StrategyCardRef } from "../strategy/types.ts";
 
 export type AgentRunStatus =
   | "understanding"
@@ -14,7 +15,7 @@ export type AgentRunStatus =
 
 export type AgentCommand =
   | { type: "message"; text: string }
-  | { type: "confirm_brief"; briefPatch?: Partial<CreativeBrief> }
+  | { type: "confirm_brief"; briefPatch?: Partial<CreativeBrief>; strategyRef?: StrategyCardRef | null }
   | { type: "select_candidate"; candidateId: string }
   | { type: "rewrite_candidate"; candidateId: string; instruction?: string }
   | { type: "reject_batch"; reason?: string }
@@ -120,6 +121,7 @@ export interface AgentRun {
   approvals: Approval[];
   memory: Memory;
   appliedMemoryKeys?: MemoryKey[];
+  strategyApplication?: AppliedStrategyRef;
   revisionRounds: number;
   clarificationAttempts?: number;
   requiresFormCompletion?: boolean;

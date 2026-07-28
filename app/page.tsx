@@ -28,8 +28,13 @@ import { HookGrid } from "@/components/HookGrid";
 import { HistoryDrawer } from "@/components/HistoryDrawer";
 import { FavoritesDrawer } from "@/components/FavoritesDrawer";
 import { CreatorFeedbackDialog } from "@/components/CreatorFeedbackDialog";
-import { CreativeCoachWorkspace } from "@/components/CreativeCoachWorkspace";
+import {
+  CreativeCoachWorkspace,
+  type CreativeCoachWorkspaceHandle,
+  type CreativeCoachWorkspaceState,
+} from "@/components/CreativeCoachWorkspace";
 import { isCreativeCoachEnabled } from "@/lib/creativeCoachClient";
+import { buildWorkbenchBrief, hooksToSeedCandidates } from "@/lib/creativeWorkbench";
 import {
   ArrowClockwise,
   CheckCircle,
@@ -40,7 +45,6 @@ import {
 
 export default function Home() {
   const coachEnabled = isCreativeCoachEnabled(process.env.NEXT_PUBLIC_AGENT_COACH_ENABLED);
-  const [mode, setMode] = React.useState<"classic" | "coach">("classic");
   const [topic, setTopic] = React.useState("");
   const [platform, setPlatform] = React.useState<Platform>("xiaohongshu");
   const [contentType, setContentType] = React.useState<ContentType>("video");
@@ -66,6 +70,9 @@ export default function Home() {
     promptVariant?: string;
   } | null>(null);
   const [feedbackRequest, setFeedbackRequest] = React.useState<CreatorFeedbackRequest | null>(null);
+  const [coachOpen, setCoachOpen] = React.useState(false);
+  const [coachAssisted, setCoachAssisted] = React.useState(false);
+  const [coachState, setCoachState] = React.useState<CreativeCoachWorkspaceState | null>(null);
   const [anonymousCreatorId] = React.useState(() => {
     if (typeof window === "undefined") return "";
     return getOrCreateAnonymousCreatorId(window.localStorage);
@@ -80,14 +87,65 @@ export default function Home() {
     emotionTone: false,
   });
   const sampledTaskIdsRef = React.useRef(new Set<string>());
+  const coachWorkspaceRef = React.useRef<CreativeCoachWorkspaceHandle>(null);
 
   const { history, loaded: historyLoaded, addToHistory, deleteHistory, clearAll, toggleFavorite: toggleHistoryFavorite, updateHook } = useHistory();
   const { favorites, toggleFavorite } = useFavorites();
   const { track, trackSatisfaction, hasDecisionFeedbackForTask, stats } = useAnalytics();
 
   const handleCoachFinalized = React.useCallback((response: GenerateResponse) => {
+    setCoachAssisted(true);
+    setStatus("done");
     addToHistory(response);
   }, [addToHistory]);
+
+  const workbenchBrief = React.useMemo(() => buildWorkbenchBrief({
+    topic,
+    platform,
+    contentType,
+    targetAudience,
+    emotionTone,
+    wordLimit,
+    imageDescription: imageAnalysis?.imageDescription,
+  }), [
+    contentType,
+    emotionTone,
+    imageAnalysis?.imageDescription,
+    platform,
+    targetAudience,
+    topic,
+    wordLimit,
+  ]);
+
+  const handleClarify = React.useCallback(() => {
+    if (!coachEnabled) return;
+    setCoachOpen(true);
+    setCoachAssisted(true);
+    void coachWorkspaceRef.current?.startClarification(workbenchBrief);
+  }, [coachEnabled, workbenchBrief]);
+
+  const handlePolish = React.useCallback(() => {
+    if (!coachEnabled || hooks.length === 0) return;
+    setCoachOpen(true);
+    setCoachAssisted(true);
+    void coachWorkspaceRef.current?.startPolishing(
+      workbenchBrief,
+      hooksToSeedCandidates(hooks),
+    );
+  }, [coachEnabled, hooks, workbenchBrief]);
+
+  const handleCoachCandidates = React.useCallback((nextHooks: HookResult[]) => {
+    if (nextHooks.length === 0) return;
+    setHooks(nextHooks);
+    setAnalysis(null);
+    setStatus("done");
+    setCoachAssisted(true);
+  }, []);
+
+  const handleCoachStateChange = React.useCallback(
+    (nextState: CreativeCoachWorkspaceState | null) => setCoachState(nextState),
+    [],
+  );
 
   React.useEffect(
     () => () => {
@@ -267,6 +325,9 @@ export default function Home() {
     setError(null);
     setHooks([]);
     setAnalysis(null);
+    setCoachOpen(false);
+    setCoachAssisted(false);
+    setCoachState(null);
     const startedAt = Date.now();
     track("generation_start", {
       anonymousCreatorId,
@@ -531,6 +592,49 @@ export default function Home() {
     });
   }, [contentType, currentBatchContext, currentTaskId, hooks, openFeedback, platform]);
 
+  const handleCoachRewrite = React.useCallback((candidateId: string) => {
+    setCoachOpen(true);
+    void coachWorkspaceRef.current?.rewriteCandidate(candidateId);
+  }, []);
+
+  const handleCoachSelect = React.useCallback((candidateId: string) => {
+    setCoachOpen(true);
+    void coachWorkspaceRef.current?.selectCandidate(candidateId);
+  }, []);
+
+  const canCoachReject = Boolean(
+    coachState?.needsInput && coachState.allowedCommands.includes("reject_batch"),
+  );
+
+  const coachActions = React.useMemo(() => {
+    if (
+      !coachState?.hasCandidates ||
+      coachState.status === "completed" ||
+      coachState.status === "cancelled"
+    ) {
+      return undefined;
+    }
+    return {
+      onRewrite: handleCoachRewrite,
+      onSelect: handleCoachSelect,
+      canRewrite: coachState.needsInput && coachState.allowedCommands.includes("rewrite_candidate"),
+      canSelect: coachState.needsInput && coachState.allowedCommands.includes("select_candidate"),
+      canReject: canCoachReject,
+      selectedIds: coachState.selectedCandidateId ? [coachState.selectedCandidateId] : [],
+      recommendedIds: coachState.recommendedIds,
+      comparisonExplanations: coachState.comparisonExplanations,
+    };
+  }, [canCoachReject, coachState, handleCoachRewrite, handleCoachSelect]);
+
+  const handleResultRejectBatch = React.useCallback(() => {
+    if (canCoachReject) {
+      setCoachOpen(true);
+      void coachWorkspaceRef.current?.rejectBatch();
+      return;
+    }
+    handleRejectBatch();
+  }, [canCoachReject, handleRejectBatch]);
+
   const handleFeedbackSkip = React.useCallback(() => {
     const request = feedbackRequest;
     if (!request) return;
@@ -567,18 +671,9 @@ export default function Home() {
         onOpenHistory={() => setHistoryOpen(true)}
       />
 
-      {coachEnabled && (
-        <nav aria-label="创作模式" className="mx-auto flex w-full max-w-7xl px-4 pt-5 md:px-6">
-          <div className="inline-flex rounded-[10px] border border-[var(--color-line)] bg-[var(--color-surface)] p-1">
-            <button aria-pressed={mode === "classic"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("classic")} type="button">经典生成</button>
-            <button aria-pressed={mode === "coach"} className="choice-button control-base min-h-9 border-0 px-4 text-xs font-extrabold" onClick={() => setMode("coach")} type="button">创作 Agent</button>
-          </div>
-        </nav>
-      )}
-
-      {mode === "classic" ? (
       <main className="mx-auto grid w-full max-w-7xl gap-6 px-4 py-6 pb-20 md:px-6 md:py-8 lg:grid-cols-[360px_minmax(0,1fr)] lg:items-start">
         <InputPanel
+          coachEnabled={coachEnabled}
           contentType={contentType}
           emotionTone={emotionTone}
           imageAnalysis={imageAnalysis}
@@ -586,6 +681,7 @@ export default function Home() {
           imagePreviewUrl={imagePreviewUrl}
           isAnalyzing={isAnalyzing}
           onClearImage={handleClearImage}
+          onClarify={handleClarify}
           onGenerate={handleGenerate}
           onImageSelect={handleImageSelect}
           platform={platform}
@@ -653,8 +749,12 @@ export default function Home() {
               analysis={analysis}
               favoritedIds={favorites}
               hooks={hooks}
+              coachActions={coachActions}
+              coachAssisted={coachAssisted}
+              coachEnabled={coachEnabled}
               onCopyHook={handleCopyHook}
-              onRejectBatch={handleRejectBatch}
+              onPolish={handlePolish}
+              onRejectBatch={handleResultRejectBatch}
               onSetSatisfaction={handleSetSatisfaction}
               onToggleAdopted={handleToggleAdopted}
               onToggleFavorite={handleToggleFavorite}
@@ -678,8 +778,18 @@ export default function Home() {
           )}
         </div>
       </main>
-      ) : (
-        <CreativeCoachWorkspace onFinalized={handleCoachFinalized} track={track} />
+
+      {coachEnabled && (
+        <CreativeCoachWorkspace
+          currentBrief={workbenchBrief}
+          onCandidatesChange={handleCoachCandidates}
+          onFinalized={handleCoachFinalized}
+          onOpenChange={setCoachOpen}
+          onStateChange={handleCoachStateChange}
+          open={coachOpen}
+          ref={coachWorkspaceRef}
+          track={track}
+        />
       )}
 
       <HistoryDrawer

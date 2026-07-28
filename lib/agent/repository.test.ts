@@ -332,6 +332,7 @@ test("postgres persistence uses versioned shard migrations and scoped incrementa
   assert.doesNotMatch(source, /WHERE id = 'default' FOR UPDATE/);
   assert.doesNotMatch(source, /DELETE FROM \$\{table\}(?!\s+WHERE)/);
   assert.match(source, /ORDER BY id FOR UPDATE/);
+  assert.match(source, /withPostgresTransactionClient\(client/);
   assert.match(source, /ON CONFLICT \(id\) DO UPDATE/);
   assert.match(source, /deleteMissing\(client, "agent_run", "creator_session_id"/);
   assert.match(source, /ORDER BY id LIMIT \$2/);

@@ -45,6 +45,20 @@ export const OPS_TOOL_DEFINITIONS: OpsToolDefinition[] = [
     }) },
   },
   {
+    type: "function", risk: "organization_read", timeoutMs: 10_000, maxResultChars: 8_000,
+    function: {
+      name: "getStrategyPerformance",
+      description: "读取单个策略版本的观察性绝对指标、分子分母和来源。不得据此输出相比无策略的提升率或因果结论。",
+      parameters: objectSchema({
+        strategyCardId: { type: "string", minLength: 1, maxLength: 200 },
+        strategyCardVersion: { type: "integer", minimum: 1, maximum: 1000000 },
+        origin: { type: "string", enum: ["real_user", "evaluation_set", "simulation"] },
+        from: { type: "string", description: "包含的 RFC 3339 起始时间" },
+        to: { type: "string", description: "不包含的 RFC 3339 结束时间" },
+      }, ["strategyCardId", "strategyCardVersion"]),
+    },
+  },
+  {
     type: "function", risk: "organization_read", timeoutMs: 10_000, maxResultChars: 12_000,
     function: { name: "listEvaluationRuns", description: "列出评测批次的安全摘要，用于发现 runId 和判断批次状态。", parameters: objectSchema({
       status: { type: "string", enum: ["draft", "generating", "generated", "selecting", "reviewing", "adjudicating", "completed", "failed"] },
@@ -164,7 +178,9 @@ export function createOpsToolExecutor(dependencies: OpsToolDependencies = defaul
     const tool = definition.function.name;
     try {
       const args = record(rawArguments);
-      const state = tool === "getDashboardSummary" ? undefined : await dependencies.getEvaluationState();
+      const state = tool === "getDashboardSummary" || tool === "getStrategyPerformance"
+        ? undefined
+        : await dependencies.getEvaluationState();
       const asOf = dependencies.now().toISOString();
 
       if (tool === "getDashboardSummary") {
@@ -190,6 +206,82 @@ export function createOpsToolExecutor(dependencies: OpsToolDependencies = defaul
           feedback: summary.feedback,
         };
         return success(tool, source(tool, "运营看板聚合数据", origin, asOf, filtersOf({ origin, ...filters }), from && to ? { from, to } : undefined), compact, summary.totals.events, origin === "simulation" ? ["模拟数据不能形成升级结论。"] : []);
+      }
+
+      if (tool === "getStrategyPerformance") {
+        exactKeys(args, ["strategyCardId", "strategyCardVersion", "origin", "from", "to"]);
+        const strategyCardId = optionalString(args.strategyCardId, "strategyCardId", 200);
+        const strategyCardVersion = optionalInteger(
+          args.strategyCardVersion,
+          "strategyCardVersion",
+          0,
+          1_000_000,
+          1,
+        );
+        if (!strategyCardId || strategyCardVersion < 1) {
+          throw new OpsToolArgumentError("strategyCardId 和 strategyCardVersion 必填");
+        }
+        const origin = optionalEnum(
+          args.origin,
+          "origin",
+          ["real_user", "evaluation_set", "simulation"] as const,
+        ) ?? "real_user";
+        const from = optionalTimestamp(args.from, "from");
+        const to = optionalTimestamp(args.to, "to");
+        if ((from && !to) || (!from && to)) {
+          throw new OpsToolArgumentError("from 和 to 必须同时提供");
+        }
+        if (from && to && Date.parse(from) >= Date.parse(to)) {
+          throw new OpsToolArgumentError("from 必须早于 to");
+        }
+        const summary = await dependencies.getDashboardSummary(origin, {
+          strategyCardId,
+          strategyCardVersion,
+          from,
+          to,
+        });
+        const metrics = summary.strategies;
+        const data = {
+          strategyCardId,
+          strategyCardVersion,
+          uniqueExposure: metrics.totals.uniqueShown,
+          selection: {
+            numerator: metrics.totals.selected,
+            denominator: metrics.totals.uniqueShown,
+            rate: metrics.selectionRate,
+          },
+          generationCompletion: {
+            numerator: metrics.totals.completedTasks,
+            denominator: metrics.totals.selectedTasks,
+            rate: metrics.generationCompletionRate,
+          },
+          taskAdoption: {
+            numerator: metrics.totals.adoptedTasks,
+            denominator: metrics.totals.selectedTasks,
+            rate: metrics.taskAdoptionRate,
+          },
+          averageSatisfaction: metrics.avgSatisfaction,
+          feedbackCount: metrics.totals.feedback,
+          fitDistribution: metrics.fitDistribution,
+          notApplicableReasonDistribution: metrics.notApplicableReasonDistribution,
+          badcaseCount: metrics.totals.badcaseCount,
+          platformMismatchCount: metrics.totals.platformMismatchCount,
+          observationalWarning: metrics.observationalWarning,
+        };
+        return success(
+          tool,
+          source(
+            tool,
+            `策略卡 ${strategyCardId} v${strategyCardVersion} 观察性表现`,
+            origin,
+            asOf,
+            filtersOf({ strategyCardId, strategyCardVersion: String(strategyCardVersion), origin }),
+            from && to ? { from, to } : undefined,
+          ),
+          data,
+          metrics.totals.uniqueShown,
+          [metrics.observationalWarning, "不提供相比无策略的提升率。"],
+        );
       }
 
       if (!state) throw new Error("Evaluation state unavailable");

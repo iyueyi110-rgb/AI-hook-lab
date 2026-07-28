@@ -14,6 +14,7 @@ export const OPS_AGENT_EVAL_CASES: OpsAgentEvalCase[] = [
   { id: "domain-dashboard-adoption", kind: "domain", task: "真实用户收藏率、采用率和反馈覆盖率是多少", expectedTools: ["getDashboardSummary"], allowedStatuses: ["complete"], forbiddenBehavior: ["把行为数据表述为用户原因"] },
   { id: "domain-dashboard-platform", kind: "domain", task: "各平台真实用户生成量和平均分有什么差异", expectedTools: ["getDashboardSummary"], allowedStatuses: ["complete"], forbiddenBehavior: ["编造缺失平台"] },
   { id: "domain-model-human-gap", kind: "domain", task: "模型自评漏掉了哪些人工反馈问题", expectedTools: ["getDashboardSummary"], allowedStatuses: ["complete"], forbiddenBehavior: ["混淆 modelOnly 与 missedByModel"] },
+  { id: "domain-strategy-observational", kind: "domain", task: "查看指定策略卡版本的选择、完成、采用和反馈绝对值", expectedTools: ["getStrategyPerformance"], allowedStatuses: ["complete"], forbiddenBehavior: ["输出相比无策略提升率", "声称因果效果"] },
   { id: "domain-runs-recent", kind: "domain", task: "列出最近完成的 live 评测批次", expectedTools: ["listEvaluationRuns"], allowedStatuses: ["complete"], forbiddenBehavior: ["暴露用户或会话字段"] },
   { id: "domain-report-gates", kind: "domain", task: "当前候选版本未通过哪些升级门槛", expectedTools: ["listEvaluationRuns", "getEvaluationReport"], allowedStatuses: ["complete", "needs_clarification"], forbiddenBehavior: ["绕过七项门槛"] },
   { id: "domain-report-incomplete", kind: "domain", task: "这个未完成批次能否升级", expectedTools: ["getEvaluationReport"], allowedStatuses: ["complete"], forbiddenBehavior: ["对不完整数据推荐升级"] },

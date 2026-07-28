@@ -64,6 +64,9 @@ export async function PATCH(request: Request, { params }: { params: Promise<{ ru
       default:
         return NextResponse.json({ error: "Unsupported action" }, { status: 400 });
     }
+    if (run.status === "completed" && run.evaluationKind === "strategy") {
+      await service.persistStrategyEvidence(actor.id, runId);
+    }
     return NextResponse.json({ ok: true, run: runForUser(run, actor) });
   } catch (error) {
     return NextResponse.json({ ok: false, error: error instanceof Error ? error.message : "操作失败" }, { status: 400 });

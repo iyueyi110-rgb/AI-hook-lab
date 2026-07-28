@@ -10,6 +10,14 @@ import {
   findSensitiveInputHints,
 } from "../promptTemplates.ts";
 import type { GenerateResponse, HookResult, ImageAnalysisResult } from "../types.ts";
+import type {
+  CreativeStrategyAssignment,
+  StrategyCardRef,
+  StrategyFit,
+  StrategyGuidance,
+  StrategyNotApplicableReason,
+  StrategyScopePair,
+} from "../strategy/types.ts";
 import { normalizeBrief } from "./brief.ts";
 import {
   consumeStep,
@@ -55,11 +63,20 @@ export interface CoachGenerationRequest {
   sourceCandidate?: Candidate;
   instruction?: string;
   reason?: string;
+  strategyGuidance?: StrategyGuidance;
 }
 
 export interface AgentExecutionOptions {
   timeoutMs: number;
   recordModelAttempt: () => void;
+}
+
+export interface CreateCoachRunInput {
+  brief?: Partial<CreativeBrief> | Record<string, unknown>;
+  hasImage?: boolean;
+  ignoreMemory?: boolean;
+  seedCandidates?: unknown;
+  strategyRef?: StrategyCardRef;
 }
 
 export type CoachRunState = Omit<StoredAgentRun, "creatorSessionId">;
@@ -118,6 +135,38 @@ export interface CreativeCoachDependencies {
   turnTimeoutMs?: number;
   authorizeTool?: (status: StoredAgentRun["status"], tool: ToolName) => void;
   quotaConfig?: AgentQuotaConfig;
+  strategy?: CreativeStrategyBridge;
+  strategyCardsEnabled?: boolean;
+}
+
+export interface CreativeStrategyBridge {
+  bindActive(
+    runId: string,
+    reference: StrategyCardRef,
+    scope: StrategyScopePair,
+    now?: Date,
+  ): Promise<CreativeStrategyAssignment>;
+  resolveApplied(runId: string): Promise<{
+    assignment: CreativeStrategyAssignment;
+    guidance: StrategyGuidance;
+  } | undefined>;
+  unbind(runId: string): Promise<void>;
+  recordFeedback(
+    runId: string,
+    fit: StrategyFit,
+    reason?: StrategyNotApplicableReason,
+  ): Promise<unknown>;
+}
+
+function normalizeStrategyRef(value: unknown): StrategyCardRef | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new AgentInputError("strategy_ref_invalid");
+  const raw = value as Record<string, unknown>;
+  if (Object.keys(raw).some((key) => key !== "id" && key !== "version")) throw new AgentInputError("strategy_ref_invalid");
+  if (typeof raw.id !== "string" || raw.id.length < 1 || raw.id.length > 200 || !Number.isInteger(raw.version) || (raw.version as number) < 1) {
+    throw new AgentInputError("strategy_ref_invalid");
+  }
+  return { id: raw.id, version: raw.version as number };
 }
 
 function defaultId(prefix: string): string {
@@ -264,7 +313,12 @@ function assertActiveOperation(run: StoredAgentRun, operationId: string, kind: N
 }
 
 function questionFor(field: "topic" | "platform" | "contentType"): string {
-  return `Please provide the missing ${field}.`;
+  const questions = {
+    topic: "这次想创作什么主题？一句话描述即可。",
+    platform: "准备发布到哪个平台？例如小红书、抖音、B站、YouTube 或 X。",
+    contentType: "想做哪种内容类型？例如视频、图文、产品广告、教程或观点帖。",
+  } satisfies Record<typeof field, string>;
+  return questions[field];
 }
 
 function parseClarificationValue(field: "topic" | "platform" | "contentType", text: string): Record<string, string> {
@@ -325,6 +379,85 @@ function assertSafeBriefInput(input: Record<string, unknown>): void {
     if (!Array.isArray(input.avoidBadcaseTags) || input.avoidBadcaseTags.length > 20) throw new AgentInputError("avoidBadcaseTags is invalid");
     for (const tag of input.avoidBadcaseTags) assertSafeText(tag, "avoidBadcaseTag", 64);
   }
+}
+
+const SEED_CANDIDATE_KEYS = new Set([
+  "id",
+  "text",
+  "style",
+  "reasoning",
+  "overallScore",
+  "scores",
+  "badcaseTags",
+]);
+const SEED_SCORE_KEYS = new Set(["impact", "platformFit", "actionability", "shareability"]);
+
+function boundedSeedString(value: unknown, field: string, maxLength: number, allowEmpty = false): string {
+  assertSafeText(value, field, maxLength);
+  const normalized = (value as string).trim();
+  if (!allowEmpty && !normalized) throw new AgentInputError(`${field} is required`);
+  return normalized;
+}
+
+function seedScore(value: unknown, field: string): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 1 || value > 10) {
+    throw new AgentInputError(`${field} must be between 1 and 10`);
+  }
+  return Math.round(value);
+}
+
+function normalizeSeedCandidates(input: unknown): Candidate[] | undefined {
+  if (input === undefined) return undefined;
+  if (!Array.isArray(input) || input.length < 1 || input.length > 10) {
+    throw new AgentInputError("seedCandidates must contain between 1 and 10 candidates");
+  }
+
+  const seenIds = new Set<string>();
+  return input.map((item, index) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) {
+      throw new AgentInputError(`seedCandidates[${index}] must be an object`);
+    }
+    const candidate = item as Record<string, unknown>;
+    if (Object.keys(candidate).some((key) => !SEED_CANDIDATE_KEYS.has(key))) {
+      throw new AgentInputError(`seedCandidates[${index}] contains unknown fields`);
+    }
+    if (!candidate.scores || typeof candidate.scores !== "object" || Array.isArray(candidate.scores)) {
+      throw new AgentInputError(`seedCandidates[${index}].scores is required`);
+    }
+    const scores = candidate.scores as Record<string, unknown>;
+    if (
+      Object.keys(scores).some((key) => !SEED_SCORE_KEYS.has(key))
+      || [...SEED_SCORE_KEYS].some((key) => !(key in scores))
+    ) {
+      throw new AgentInputError(`seedCandidates[${index}].scores is invalid`);
+    }
+    const idValue = boundedSeedString(candidate.id, `seedCandidates[${index}].id`, 200);
+    if (seenIds.has(idValue)) throw new AgentInputError("seed candidate ids must be unique");
+    seenIds.add(idValue);
+
+    const tags = candidate.badcaseTags;
+    if (!Array.isArray(tags) || tags.length > 20) {
+      throw new AgentInputError(`seedCandidates[${index}].badcaseTags is invalid`);
+    }
+    const badcaseTags = [...new Set(tags.map((tag, tagIndex) =>
+      boundedSeedString(tag, `seedCandidates[${index}].badcaseTags[${tagIndex}]`, 64),
+    ))];
+
+    return {
+      id: idValue,
+      text: boundedSeedString(candidate.text, `seedCandidates[${index}].text`, 500),
+      style: boundedSeedString(candidate.style, `seedCandidates[${index}].style`, 100),
+      reasoning: boundedSeedString(candidate.reasoning, `seedCandidates[${index}].reasoning`, 1_000, true),
+      overallScore: seedScore(candidate.overallScore, `seedCandidates[${index}].overallScore`),
+      scores: {
+        impact: seedScore(scores.impact, `seedCandidates[${index}].scores.impact`),
+        platformFit: seedScore(scores.platformFit, `seedCandidates[${index}].scores.platformFit`),
+        actionability: seedScore(scores.actionability, `seedCandidates[${index}].scores.actionability`),
+        shareability: seedScore(scores.shareability, `seedCandidates[${index}].scores.shareability`),
+      },
+      badcaseTags,
+    };
+  });
 }
 
 export function createCreativeCoachService(dependencies: CreativeCoachDependencies) {
@@ -567,13 +700,29 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
     }, repositoryScope(owner));
   }
 
+  const strategyBridge = dependencies.strategy;
+  const strategyCardsEnabled = dependencies.strategyCardsEnabled ?? false;
+
+  async function guidanceForRun(runId: string): Promise<StrategyGuidance | undefined> {
+    if (!strategyBridge) return undefined;
+    return (await strategyBridge.resolveApplied(runId))?.guidance;
+  }
+
   return {
     async cleanup(cleanupNow = now(), options?: import("./repository.ts").AgentCleanupOptions): Promise<import("./repository.ts").AgentCleanupResult> {
       return repository.cleanup(cleanupNow, options);
     },
 
-    async createRun(sessionToken: string | undefined, input: { brief?: Record<string, unknown>; hasImage?: boolean; ignoreMemory?: boolean }, context?: AgentRequestContext): Promise<{ sessionToken: string; response: CoachRunResponse }> {
+    async createRun(sessionToken: string | undefined, input: CreateCoachRunInput, context?: AgentRequestContext): Promise<{ sessionToken: string; response: CoachRunResponse }> {
       assertSafeBriefInput(input.brief ?? {});
+      const seedCandidates = normalizeSeedCandidates(input.seedCandidates);
+      const strategyRef = normalizeStrategyRef(input.strategyRef);
+      if (strategyRef && !strategyCardsEnabled) throw new AgentInputError("strategy_cards_disabled");
+      if (strategyRef && !strategyBridge) throw new AgentInputError("strategy_service_unavailable");
+      if (strategyRef && !seedCandidates) throw new AgentInputError("strategy_ref_requires_seeded_run");
+      if (seedCandidates && input.hasImage) {
+        throw new AgentInputError("seedCandidates cannot be combined with image analysis");
+      }
       let effectiveToken = sessionToken;
       if (effectiveToken) {
         const existingState = await repository.read({ sessionDigest: hashCreatorSessionToken(effectiveToken) });
@@ -581,7 +730,9 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       }
       effectiveToken ??= randomBytes(32).toString("base64url");
       const scope = { sessionDigest: hashCreatorSessionToken(effectiveToken), ipDigest: requestContext(context).ipDigest };
-      const result = await repository.transaction((state) => {
+      let boundRunId: string | undefined;
+      try {
+      const result = await repository.transaction(async (state) => {
         const existing = resolveCreatorSession(state, effectiveToken, now());
         const created = existing ? undefined : createCreatorSession(state, now(), effectiveToken);
         const owner = existing ?? created!.session;
@@ -595,7 +746,36 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
         let status: StoredAgentRun["status"];
         let clarificationAttempts = 0;
         let brief: CreativeBrief | undefined;
-        if (input.hasImage) {
+        let candidates: Candidate[] = [];
+        let toolCalls: StoredAgentRun["toolCalls"] = [];
+        let toolResults: StoredAgentRun["toolResults"] = [];
+        if (seedCandidates) {
+          if (normalized.kind !== "complete") {
+            throw new AgentInputError("seedCandidates require a complete creative brief");
+          }
+          authorizeTool("reviewing", "compare_candidates");
+          brief = normalized.brief;
+          status = "reviewing";
+          candidates = seedCandidates;
+          const comparison = compareCandidates(seedCandidates);
+          const compareId = id("tool");
+          toolCalls = [{
+            id: compareId,
+            tool: "compare_candidates",
+            input: { candidateCount: seedCandidates.length, source: "classic" },
+            status: "completed",
+            createdAt,
+          }];
+          toolResults = [{
+            callId: compareId,
+            tool: "compare_candidates",
+            status: "success",
+            output: {
+              topCandidateIds: comparison.top3.map((candidate) => candidate.id),
+              explanations: comparison.explanations,
+            },
+          }];
+        } else if (input.hasImage) {
           status = "analyzing_image";
           if (normalized.kind === "complete") brief = normalized.brief;
         } else if (normalized.kind === "complete") {
@@ -606,23 +786,56 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           clarificationAttempts = 1;
           messages.push({ id: id("message"), role: "assistant", content: questionFor(normalized.missing[0] ?? "topic"), createdAt });
         }
+        const runId = id("run");
+        let strategyApplication: StoredAgentRun["strategyApplication"];
+        if (strategyRef) {
+          const assignment = await strategyBridge!.bindActive(runId, strategyRef, {
+            platform: brief!.platform,
+            contentType: brief!.contentType,
+          }, now());
+          boundRunId = runId;
+          strategyApplication = {
+            id: assignment.cardId,
+            version: assignment.strategyVersion,
+            appliedGuidanceHash: assignment.appliedGuidanceHash,
+          };
+        }
         const run: StoredAgentRun = {
-          id: id("run"), creatorSessionId: owner.id, revision: 0, status, brief,
+          id: runId, creatorSessionId: owner.id, revision: 0, status, brief,
           briefDraft: brief ?? source as Partial<CreativeBrief>,
-          messages, candidates: [], toolCalls: [], toolResults: [], approvals: [], memory,
+          messages, candidates, toolCalls, toolResults, approvals: [], memory,
           appliedMemoryKeys,
+          ...(strategyApplication ? { strategyApplication } : {}),
           revisionRounds: 0, clarificationAttempts, createdAt, updatedAt: createdAt,
-          summary: { messageCount: messages.length, latestMessageAt: messages.at(-1)?.createdAt, candidateCount: 0, status },
+          summary: { messageCount: messages.length, latestMessageAt: messages.at(-1)?.createdAt, candidateCount: candidates.length, status },
         };
         state.runs.push(run);
         return { response: asResponse(run, messages), token: created?.token };
       }, scope);
       return { sessionToken: result.token ?? effectiveToken, response: result.response };
+      } catch (error) {
+        if (boundRunId) await strategyBridge?.unbind(boundRunId).catch(() => undefined);
+        throw error;
+      }
     },
 
     async getRun(sessionToken: string | undefined, runId: string): Promise<CoachRunResponse> {
       const owner = await sessionFromToken(sessionToken, false);
       return asResponse(await recoverOwnedRun(owner.session, runId));
+    },
+
+    async recordStrategyFeedback(
+      sessionToken: string | undefined,
+      runId: string,
+      fit: StrategyFit,
+      reason?: StrategyNotApplicableReason,
+    ): Promise<void> {
+      const owner = await sessionFromToken(sessionToken, false);
+      const run = await recoverOwnedRun(owner.session, runId);
+      if (!run.strategyApplication || !dependencies.strategy) {
+        throw new AgentConflictError("strategy_not_applied");
+      }
+      await dependencies.strategy.recordFeedback(run.id, fit, reason);
     },
 
     async cancelRun(sessionToken: string | undefined, runId: string, expectedRevision: number): Promise<CoachRunResponse> {
@@ -653,10 +866,15 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
       if (command.type === "message") assertSafeText(command.text, "message", MAX_AGENT_MESSAGE_LENGTH);
       if (command.type === "rewrite_candidate") assertSafeText(command.instruction, "instruction", 1_000);
       if (command.type === "reject_batch") assertSafeText(command.reason, "reason", 1_000);
-      if (command.type === "confirm_brief") assertSafeBriefInput(command.briefPatch ?? {});
+      if (command.type === "confirm_brief") {
+        assertSafeBriefInput(command.briefPatch ?? {});
+        normalizeStrategyRef(command.strategyRef);
+        if (command.strategyRef && !strategyCardsEnabled) throw new AgentInputError("strategy_cards_disabled");
+        if (command.strategyRef && !strategyBridge) throw new AgentInputError("strategy_service_unavailable");
+      }
       const owner = await sessionFromToken(sessionToken, false);
       await recoverOwnedRun(owner.session, runId);
-      const prepared = await repository.transaction((state) => {
+      const prepared = await repository.transaction(async (state) => {
         const run = findOwnedRun(state, runId, owner.session.id);
         assertExpectedRevision(run, expectedRevision);
         const timestamp = now().toISOString();
@@ -744,6 +962,19 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
             if (normalized.kind !== "complete") throw new AgentInputError("Brief correction is incomplete or invalid");
             run.brief = normalized.brief;
             run.briefDraft = normalized.brief;
+          }
+          const strategyRef = normalizeStrategyRef(command.strategyRef);
+          if (run.strategyApplication) throw new AgentConflictError("strategy_already_bound");
+          if (strategyRef) {
+            const assignment = await strategyBridge!.bindActive(run.id, strategyRef, {
+              platform: run.brief.platform,
+              contentType: run.brief.contentType,
+            }, now());
+            run.strategyApplication = {
+              id: assignment.cardId,
+              version: assignment.strategyVersion,
+              appliedGuidanceHash: assignment.appliedGuidanceHash,
+            };
           }
           run.status = transition(run.status, command);
           run.revision += 1;
@@ -862,7 +1093,11 @@ export function createCreativeCoachService(dependencies: CreativeCoachDependenci
           return asResponse(run, messages);
         }, repositoryScope(owner.session));
       }
-      return completeGeneration(owner.session, runId, prepared.request, prepared.revision, prepared.operationId, deadlineAt);
+      const strategyGuidance = await guidanceForRun(runId);
+      return completeGeneration(owner.session, runId, {
+        ...prepared.request,
+        ...(strategyGuidance ? { strategyGuidance } : {}),
+      }, prepared.revision, prepared.operationId, deadlineAt);
     },
 
     async uploadImage(sessionToken: string | undefined, runId: string, expectedRevision: number, file: File, context?: AgentRequestContext): Promise<CoachRunResponse> {

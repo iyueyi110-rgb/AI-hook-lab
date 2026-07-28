@@ -1,4 +1,4 @@
-# Public Dashboard Implementation Plan
+# 公开看板实施计划
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,33 +8,33 @@
 
 **Tech Stack:** Next.js 16 App Router, React 19, TypeScript, Node.js built-in test runner, Vercel
 
-## Global Constraints
+## 全局约束
 
-- The feature is enabled only when `PUBLIC_DASHBOARD_ENABLED` is exactly `true`.
-- The default and every other value preserve existing administrator authentication.
-- Only `/admin/dashboard` and `GET /api/dashboard/summary` become public.
-- `/evaluation`, `/admin/dashboard/agent`, account APIs, and `POST /api/dashboard/events` retain existing protection and behavior.
-- Public mode exposes only the aggregate dashboard data already rendered by the page.
-- No new runtime dependencies.
+- 仅当 `PUBLIC_DASHBOARD_ENABLED` 严格等于 `true` 时启用该功能。
+- 默认值及其他所有值都保留现有管理员身份验证。
+- 仅公开 `/admin/dashboard` 和 `GET /api/dashboard/summary`。
+- `/evaluation`、`/admin/dashboard/agent`、账户 API 与 `POST /api/dashboard/events` 保持现有保护和行为。
+- 公开模式只暴露页面已经呈现的聚合看板数据。
+- 不新增运行时依赖。
 
 ---
 
-### Task 1: Shared Public Dashboard Policy and Read Path
+### 任务 1：共享公开看板策略与读取路径
 
 **Files:**
-- Modify: `lib/adminAccess.ts:1-10`
-- Modify: `lib/adminAccess.test.ts:1-11`
-- Modify: `lib/adminDashboardContract.test.ts:7-34`
-- Modify: `app/admin/dashboard/page.tsx:5-24`
-- Modify: `app/api/dashboard/summary/route.ts:1-24`
+- 修改：`lib/adminAccess.ts:1-10`
+- 修改：`lib/adminAccess.test.ts:1-11`
+- 修改：`lib/adminDashboardContract.test.ts:7-34`
+- 修改：`app/admin/dashboard/page.tsx:5-24`
+- 修改：`app/api/dashboard/summary/route.ts:1-24`
 
 **Interfaces:**
-- Produces: `isPublicDashboardEnabled(value?: string): boolean`
-- Consumes: `process.env.PUBLIC_DASHBOARD_ENABLED`, existing `classifyAdminAccess`, existing session lookup
+- 产出：`isPublicDashboardEnabled(value?: string): boolean`
+- 使用：`process.env.PUBLIC_DASHBOARD_ENABLED`、现有 `classifyAdminAccess` 与现有会话查询
 
 - [ ] **Step 1: Write failing behavior and contract tests**
 
-Add a dynamic export check to `lib/adminAccess.test.ts` so the missing function produces an assertion failure instead of a module-load error:
+在 `lib/adminAccess.test.ts` 中增加动态导出检查，使函数缺失时产生断言失败，而不是模块加载错误：
 
 ```ts
 test("public dashboard requires the exact true environment value", async () => {
@@ -49,7 +49,7 @@ test("public dashboard requires the exact true environment value", async () => {
 });
 ```
 
-Extend `lib/adminDashboardContract.test.ts`:
+扩展 `lib/adminDashboardContract.test.ts`：
 
 ```ts
 test("dashboard page and read API share the public dashboard policy", async () => {
@@ -64,17 +64,17 @@ test("dashboard page and read API share the public dashboard policy", async () =
 
 - [ ] **Step 2: Run the focused tests and verify RED**
 
-Run:
+运行：
 
 ```powershell
 node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/adminAccess.test.ts lib/adminDashboardContract.test.ts
 ```
 
-Expected: FAIL because `isPublicDashboardEnabled` is not exported and neither read path contains `publicDashboard`.
+预期：失败，因为尚未导出 `isPublicDashboardEnabled`，且两个读取路径都不包含 `publicDashboard`。
 
 - [ ] **Step 3: Implement the minimal shared policy**
 
-Add to `lib/adminAccess.ts`:
+在 `lib/adminAccess.ts` 中添加：
 
 ```ts
 export function isPublicDashboardEnabled(
@@ -84,7 +84,7 @@ export function isPublicDashboardEnabled(
 }
 ```
 
-In `app/admin/dashboard/page.tsx`, import the function and change the access block to:
+在 `app/admin/dashboard/page.tsx` 中导入该函数，并将访问控制块改为：
 
 ```ts
 const publicDashboard = isPublicDashboardEnabled();
@@ -95,7 +95,7 @@ if (!publicDashboard) {
 }
 ```
 
-In `app/api/dashboard/summary/route.ts`, import the function and wrap only the existing session/role block:
+在 `app/api/dashboard/summary/route.ts` 中导入该函数，并只包裹现有会话与角色检查块：
 
 ```ts
 const publicDashboard = isPublicDashboardEnabled();
@@ -112,13 +112,13 @@ if (!publicDashboard) {
 
 - [ ] **Step 4: Run focused tests and verify GREEN**
 
-Run:
+运行：
 
 ```powershell
 node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/adminAccess.test.ts lib/adminDashboardContract.test.ts
 ```
 
-Expected: all focused tests PASS.
+预期：所有聚焦测试通过。
 
 - [ ] **Step 5: Commit the read-path change**
 
@@ -127,22 +127,22 @@ git add -- lib/adminAccess.ts lib/adminAccess.test.ts lib/adminDashboardContract
 git commit -m "feat: allow opt-in public dashboard reads"
 ```
 
-### Task 2: Public-Mode Navigation and Configuration Documentation
+### 任务 2：公开模式导航与配置文档
 
 **Files:**
-- Modify: `lib/adminDashboardContract.test.ts:7-90`
-- Modify: `app/admin/dashboard/page.tsx:19-24`
-- Modify: `app/admin/dashboard/DashboardClient.tsx:208-360`
-- Modify: `.env.local.example:1-10`
-- Modify: `README.md:176-185`
+- 修改：`lib/adminDashboardContract.test.ts:7-90`
+- 修改：`app/admin/dashboard/page.tsx:19-24`
+- 修改：`app/admin/dashboard/DashboardClient.tsx:208-360`
+- 修改：`.env.local.example:1-10`
+- 修改：`README.md:176-185`
 
 **Interfaces:**
-- Produces: `DashboardClient` prop `publicAccess?: boolean`
-- Consumes: `publicDashboard` computed by the page in Task 1
+- 产出：`DashboardClient` 属性 `publicAccess?: boolean`
+- 使用：任务 1 中页面计算得到的 `publicDashboard`
 
 - [ ] **Step 1: Write failing public-navigation and configuration tests**
 
-Add to `lib/adminDashboardContract.test.ts`:
+在 `lib/adminDashboardContract.test.ts` 中添加：
 
 ```ts
 test("public dashboard hides links to protected internal tools", async () => {
@@ -165,17 +165,17 @@ test("public dashboard switch is documented in environment templates", async () 
 
 - [ ] **Step 2: Run the focused test and verify RED**
 
-Run:
+运行：
 
 ```powershell
 node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/adminDashboardContract.test.ts
 ```
 
-Expected: FAIL because the prop, conditional links, and environment documentation do not yet exist.
+预期：失败，因为属性、条件链接和环境变量文档尚不存在。
 
 - [ ] **Step 3: Pass public mode into the client**
 
-Update the page render:
+更新页面渲染：
 
 ```tsx
 return (
@@ -187,7 +187,7 @@ return (
 );
 ```
 
-Update the client signature:
+更新客户端签名：
 
 ```tsx
 export function DashboardClient({
@@ -201,7 +201,7 @@ export function DashboardClient({
 }) {
 ```
 
-Wrap the protected links:
+包裹受保护链接：
 
 ```tsx
 {!publicAccess && opsAgentEnabled && (
@@ -220,13 +220,13 @@ Wrap the protected links:
 
 - [ ] **Step 4: Document the reversible deployment switch**
 
-Add to `.env.local.example`:
+在 `.env.local.example` 中添加：
 
 ```dotenv
 PUBLIC_DASHBOARD_ENABLED=false
 ```
 
-Add to the README environment-variable table:
+在 README 环境变量表中添加：
 
 ```md
 | `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时仅公开只读数据看板；其他后台、Agent 和写入接口仍需原权限 |
@@ -234,13 +234,13 @@ Add to the README environment-variable table:
 
 - [ ] **Step 5: Run focused tests and verify GREEN**
 
-Run:
+运行：
 
 ```powershell
 node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/adminDashboardContract.test.ts
 ```
 
-Expected: all focused tests PASS.
+预期：所有聚焦测试通过。
 
 - [ ] **Step 6: Commit the UI and documentation change**
 
@@ -249,118 +249,118 @@ git add -- app/admin/dashboard/page.tsx app/admin/dashboard/DashboardClient.tsx 
 git commit -m "docs: expose reversible public dashboard mode"
 ```
 
-### Task 3: Full Verification and Production Deployment
+### 任务 3：完整验证与生产部署
 
 **Files:**
-- Verify only: all tracked source and tests
-- Deployment configuration: existing Vercel project `hookovo`
+- 仅验证：所有已跟踪源码与测试
+- 部署配置：现有 Vercel 项目 `hookovo`
 
 **Interfaces:**
-- Consumes: production build output and Vercel environment variable
-- Produces: live public dashboard at `https://hookovo.icu/admin/dashboard`
+- 使用：生产构建产物与 Vercel 环境变量
+- 产出：位于 `https://hookovo.icu/admin/dashboard` 的线上公开看板
 
 - [ ] **Step 1: Run the full automated test suite**
 
-Run:
+运行：
 
 ```powershell
 npm test
 ```
 
-Expected: exit code `0`, all tests PASS.
+预期：退出码为 `0`，所有测试通过。
 
 - [ ] **Step 2: Run static checks**
 
-Run:
+运行：
 
 ```powershell
 npm run lint
 ```
 
-Expected: exit code `0` with no ESLint errors.
+预期：退出码为 `0`，且没有 ESLint 错误。
 
 - [ ] **Step 3: Build the production application**
 
-Run:
+运行：
 
 ```powershell
 npm run build
 ```
 
-Expected: exit code `0`, Next.js production build completes.
+预期：退出码为 `0`，Next.js 生产构建完成。
 
 - [ ] **Step 4: Link the existing Vercel project without creating a new project**
 
-Copy the existing project metadata from the validated deployment snapshot into `.vercel/project.json`, preserving:
+将已验证部署快照中的现有项目元数据复制到 `.vercel/project.json`，并保留：
 
 ```json
 {"projectId":"prj_dZO4gjy1HzBzgZjizSfIXCynWDo4","orgId":"team_KnCdratGwK8oOQAZW5ZUifjw","projectName":"hookovo"}
 ```
 
-Confirm with:
+使用以下命令确认：
 
 ```powershell
 npx vercel project inspect hookovo
 ```
 
-Expected: project `hookovo` under the configured team.
+预期：在已配置团队下显示项目 `hookovo`。
 
 - [ ] **Step 5: Set the production-only environment switch**
 
-Run:
+运行：
 
 ```powershell
 "true" | npx vercel env add PUBLIC_DASHBOARD_ENABLED production
 ```
 
-If the variable already exists, remove only that exact production variable and add it again:
+如果变量已存在，只删除该生产环境变量并重新添加：
 
 ```powershell
 npx vercel env rm PUBLIC_DASHBOARD_ENABLED production --yes
 "true" | npx vercel env add PUBLIC_DASHBOARD_ENABLED production
 ```
 
-Expected: Vercel confirms the production variable was added.
+预期：Vercel 确认已添加生产环境变量。
 
 - [ ] **Step 6: Deploy the verified source to production**
 
-Run:
+运行：
 
 ```powershell
 npx vercel deploy --prod --yes
 ```
 
-Expected: deployment completes and aliases to `hookovo.icu`.
+预期：部署完成并绑定别名 `hookovo.icu`。
 
 - [ ] **Step 7: Verify the anonymous production read paths**
 
-Run:
+运行：
 
 ```powershell
 curl.exe -I --max-time 25 "https://hookovo.icu/admin/dashboard"
 curl.exe -I --max-time 25 "https://hookovo.icu/api/dashboard/summary?origin=real_user"
 ```
 
-Expected: dashboard does not return a `307` login redirect; summary returns `200`.
+预期：看板不返回 `307` 登录重定向，摘要接口返回 `200`。
 
 - [ ] **Step 8: Verify protected routes remain protected**
 
-Run:
+运行：
 
 ```powershell
 curl.exe -I --max-time 25 "https://hookovo.icu/evaluation"
 curl.exe -I --max-time 25 "https://hookovo.icu/admin/dashboard/agent"
 ```
 
-Expected: anonymous access redirects to `/evaluation/login` or otherwise returns the existing unauthenticated response.
+预期：匿名访问重定向到 `/evaluation/login`，或返回现有的未认证响应。
 
 - [ ] **Step 9: Record the final source state**
 
-Run:
+运行：
 
 ```powershell
 git status --short
 git log -4 --oneline --decorate
 ```
 
-Expected: working tree is clean and the design, implementation, and documentation commits are present.
+预期：工作树干净，并且设计、实现与文档提交均已存在。

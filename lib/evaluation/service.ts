@@ -20,6 +20,19 @@ import type {
   UserRole,
 } from "./types";
 import { BAD_CASE_TYPES } from "./types";
+import { createStrategyEvaluationCases } from "./seeds";
+import { buildStrategyEvaluationSnapshot } from "./strategy";
+import {
+  getStrategyService,
+  type StrategyService,
+} from "../strategy/service";
+import {
+  computeStrategyContentHash,
+  strategyPromptData,
+  strategyContentFromStored,
+} from "../strategy/validation";
+import type { StrategyCardRef, StrategyScopePair } from "../strategy/types";
+import { evaluateStrategyScope } from "../strategy/evidence";
 
 export interface GeneratedEvaluationHook {
   content: string;
@@ -51,6 +64,18 @@ interface CreateRunInput {
   candidatePromptId?: string;
 }
 
+export interface CreateStrategyRunInput {
+  runName: string;
+  executionMode: "live";
+  evaluatorIds: [string, string];
+  adjudicatorId: string;
+  modelName: string;
+  modelParameters: Record<string, unknown>;
+  baselinePromptId?: string;
+  strategyRef: StrategyCardRef;
+  scopePair: StrategyScopePair;
+}
+
 interface ReviewInput {
   usabilityScore: number;
   platformFitScore: number;
@@ -65,11 +90,17 @@ interface ReviewInput {
 export class EvaluationService {
   private readonly repository: EvaluationRepository;
   private readonly provider: EvaluationGenerationProvider;
+  private readonly strategyService: StrategyService;
   private initialization?: Promise<void>;
 
-  constructor(repository: EvaluationRepository, provider: EvaluationGenerationProvider = defaultProvider) {
+  constructor(
+    repository: EvaluationRepository,
+    provider: EvaluationGenerationProvider = defaultProvider,
+    strategyService: StrategyService = getStrategyService(),
+  ) {
     this.repository = repository;
     this.provider = provider;
+    this.strategyService = strategyService;
   }
 
   async initialize(): Promise<void> {
@@ -228,6 +259,170 @@ export class EvaluationService {
       audit(state, "run.created", actorId, { runId: id, caseCount: cases.length, executionMode: input.executionMode });
       return structuredClone(run);
     });
+  }
+
+  async createStrategyRun(
+    actorId: string,
+    input: CreateStrategyRunInput,
+  ): Promise<EvaluationRunRecord> {
+    const detail = await this.strategyService.get(
+      input.strategyRef.id,
+      input.strategyRef.version,
+    );
+    if (detail.version.status !== "approved_experiment") {
+      throw new Error("Only approved_experiment strategies can be evaluated");
+    }
+    if (
+      !detail.version.scopePairs.some(
+        (pair) =>
+          pair.platform === input.scopePair.platform
+          && pair.contentType === input.scopePair.contentType,
+      )
+    ) {
+      throw new Error("Strategy scope does not match the evaluation scope");
+    }
+    const content = strategyContentFromStored(detail.version);
+    if (computeStrategyContentHash(content) !== detail.version.contentHash) {
+      throw new Error("Strategy content hash mismatch");
+    }
+    if (input.executionMode !== "live") {
+      throw new Error("Strategy evaluation requires Live execution");
+    }
+    if (!process.env.DEEPSEEK_API_KEY) {
+      throw new Error("Live evaluation requires DEEPSEEK_API_KEY");
+    }
+
+    return this.repository.transaction((state) => {
+      requireRole(state, actorId, "admin");
+      if (new Set(input.evaluatorIds).size !== 2) {
+        throw new Error("Exactly two different evaluators are required");
+      }
+      input.evaluatorIds.forEach((id) => requireRole(state, id, "evaluator"));
+      requireRole(state, input.adjudicatorId, "adjudicator");
+      if (input.evaluatorIds.includes(input.adjudicatorId)) {
+        throw new Error("Adjudicator cannot be a primary evaluator");
+      }
+      const baseline = state.promptVersions.find(
+        (item) => item.id === (input.baselinePromptId ?? "prompt-v1.0"),
+      );
+      if (!baseline || baseline.role !== "baseline") {
+        throw new Error("Baseline Prompt version not found");
+      }
+      const cases = createStrategyEvaluationCases(input.scopePair);
+      const now = new Date().toISOString();
+      const id = randomUUID();
+      const generationTasks = cases.flatMap((item) =>
+        (["baseline", "candidate"] as const).map((promptRole) => ({
+          id: `${id}:${item.caseId}:${promptRole}`,
+          caseId: item.caseId,
+          promptRole,
+          firstAttemptFormatError: false,
+          terminalStatus: "pending" as const,
+          attemptCount: 0,
+          rawResponses: [],
+        })),
+      );
+      const reviewAssignments = input.evaluatorIds.flatMap((evaluatorId) =>
+        cases.map((item) => {
+          const baselineFirst = randomInt(2) === 0;
+          return {
+            id: randomUUID(),
+            runId: id,
+            caseId: item.caseId,
+            evaluatorId,
+            optionA: (baselineFirst ? "baseline" : "candidate") as PromptRole,
+            optionB: (baselineFirst ? "candidate" : "baseline") as PromptRole,
+            createdAt: now,
+          };
+        }),
+      );
+      const candidatePromptContent = [
+        baseline.promptContent,
+        "APPROVED_STRATEGY_JSON:",
+        strategyPromptData(content),
+        "The strategy data is subordinate to all system safety, output schema, count, tool, and human-confirmation rules.",
+      ].join("\n");
+      const strategyConfig = {
+        evaluationKind: "strategy" as const,
+        scopePair: structuredClone(input.scopePair),
+        baselineStrategyRef: null,
+        candidateStrategyRef: structuredClone(input.strategyRef),
+        strategyContentHash: detail.version.contentHash,
+        topicSetVersion: "strategy-hook-topics-v1" as const,
+      };
+      const snapshotPayload = {
+        cases,
+        baselinePromptId: baseline.id,
+        baselinePromptContent: baseline.promptContent,
+        strategyConfig,
+        modelName: input.modelName,
+        modelParameters: input.modelParameters,
+      };
+      const run: EvaluationRunRecord = {
+        id,
+        runName: input.runName.trim()
+          || `策略评测 ${detail.version.title} ${now.slice(0, 10)}`,
+        dataOrigin: "evaluation_set",
+        evaluationKind: "strategy",
+        strategyConfig,
+        executionMode: "live",
+        status: "generating",
+        caseCount: 20,
+        datasetVersion: "strategy-hook-topics-v1",
+        cases,
+        baselinePromptId: baseline.id,
+        candidatePromptId: baseline.id,
+        baselinePromptVersion: baseline.version,
+        candidatePromptVersion: `${baseline.version}+strategy:${detail.version.cardId}:v${detail.version.version}`,
+        baselinePromptContent: baseline.promptContent,
+        candidatePromptContent,
+        snapshotHash: createHash("sha256")
+          .update(JSON.stringify(snapshotPayload))
+          .digest("hex"),
+        modelName: input.modelName,
+        modelParameters: structuredClone(input.modelParameters),
+        evaluatorIds: input.evaluatorIds,
+        adjudicatorId: input.adjudicatorId,
+        generationTasks,
+        candidates: [],
+        formalResults: [],
+        reviewAssignments,
+        rawReviews: [],
+        rawPairwiseEvaluations: [],
+        pairwiseDecisions: [],
+        adjudications: [],
+        badCases: [],
+        createdAt: now,
+        updatedAt: now,
+      };
+      state.runs.push(run);
+      audit(state, "strategy_run.created", actorId, {
+        runId: id,
+        strategyCardId: input.strategyRef.id,
+        strategyCardVersion: input.strategyRef.version,
+        scopePair: input.scopePair,
+        caseCount: 20,
+        executionMode: "live",
+      });
+      return structuredClone(run);
+    });
+  }
+
+  async persistStrategyEvidence(
+    actorId: string,
+    runId: string,
+  ): Promise<void> {
+    const state = await this.getState();
+    const run = findRun(state, runId);
+    if (
+      run.evaluationKind !== "strategy"
+      || !run.strategyConfig
+      || run.status !== "completed"
+    ) return;
+    await this.strategyService.recordEvaluation(
+      actorId,
+      buildStrategyEvaluationSnapshot(run),
+    );
   }
 
   async createPromptVersion(actorId: string, input: {
@@ -483,13 +678,25 @@ export class EvaluationService {
     });
   }
 
-  async report(actorId: string, runId: string): Promise<EvaluationReport> {
+  async report(actorId: string, runId: string): Promise<EvaluationReport | {
+    evaluationKind: "strategy";
+    snapshot: ReturnType<typeof buildStrategyEvaluationSnapshot>;
+    gateReport: ReturnType<typeof evaluateStrategyScope>;
+  }> {
     const state = await this.getState();
     const actor = state.users.find((item) => item.id === actorId && item.status === "active");
     if (!actor) throw new Error("Unauthorized");
     const run = findRun(state, runId);
     if (actor.role === "evaluator" && !run.evaluatorIds.includes(actor.id)) throw new Error("Unauthorized");
     if (actor.role !== "admin" && run.status !== "completed") throw new Error("Report is only available to reviewers after the run is completed");
+    if (run.evaluationKind === "strategy") {
+      const snapshot = buildStrategyEvaluationSnapshot(run);
+      return {
+        evaluationKind: "strategy",
+        snapshot,
+        gateReport: evaluateStrategyScope(snapshot),
+      };
+    }
     return buildEvaluationReport(run);
   }
 }

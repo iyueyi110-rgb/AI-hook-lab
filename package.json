@@ -11,7 +11,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/generation/*.test.ts lib/evaluation/*.test.ts lib/agent/*.test.ts scripts/*.test.ts",
+    "test": "node --test --experimental-strip-types --import ./test/register-ts-extension-loader.mjs lib/*.test.ts lib/generation/*.test.ts lib/evaluation/*.test.ts lib/agent/*.test.ts lib/strategy/*.test.ts scripts/*.test.ts",
     "docs:check": "node scripts/check-docs-language.mjs",
     "eval:run": "node eval/run-eval.mjs",
     "eval:summarize": "node eval/summarize-results.mjs",

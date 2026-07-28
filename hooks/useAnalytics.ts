@@ -21,7 +21,8 @@ export type AnalyticsEventType =
   | "agent_revision"
   | "agent_final_confirmed"
   | "agent_memory_applied"
-  | "agent_memory_deleted";
+  | "agent_memory_deleted"
+  | "agent_strategy_event";
 
 interface AnalyticsEvent {
   type: AnalyticsEventType;
