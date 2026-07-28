@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 test("admin hub exposes four stable entries and disables governed tools by flag", async () => {
-  const module = await import("./adminHub.ts").catch(() => undefined);
-  assert.ok(module);
+  const adminHubModule = await import("./adminHub.ts").catch(() => undefined);
+  assert.ok(adminHubModule);
 
-  const items = module.getAdminHubItems({
+  const items = adminHubModule.getAdminHubItems({
     opsAgentEnabled: false,
     strategyCardsEnabled: false,
   });
