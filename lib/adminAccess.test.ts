@@ -22,7 +22,12 @@ test("public dashboard requires the exact true environment value", async () => {
 });
 
 test("return paths only allow internal backend destinations", () => {
+  assert.equal(sanitizeInternalReturnPath("/admin"), "/admin");
   assert.equal(sanitizeInternalReturnPath("/admin/dashboard"), "/admin/dashboard");
+  assert.equal(
+    sanitizeInternalReturnPath("/admin/dashboard/strategies"),
+    "/admin/dashboard/strategies",
+  );
   assert.equal(sanitizeInternalReturnPath("/admin/dashboard/agent"), "/admin/dashboard/agent");
   assert.equal(sanitizeInternalReturnPath("/evaluation/runs/abc?tab=report"), "/evaluation/runs/abc?tab=report");
   assert.equal(sanitizeInternalReturnPath("https://evil.example/steal"), "/evaluation");
