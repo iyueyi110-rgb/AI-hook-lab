@@ -3,9 +3,12 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, type FormEvent } from "react";
-import { ArrowRight, ChartBar, Database, Flask, Plus, ShieldCheck, SignOut, UsersThree } from "@phosphor-icons/react";
+import { ArrowRight, Database, Flask, Plus, ShieldCheck, SignOut, UsersThree } from "@phosphor-icons/react";
 
 import { AppHeader } from "@/components/AppHeader";
+import { AdminBackLink } from "@/components/AdminBackLink";
+import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
+import type { AdminNavigationFlags } from "@/lib/adminNavigation";
 import type { EvaluationCase, PromptVersion, UserRole } from "@/lib/evaluation/types";
 
 interface PublicUser { id: string; username: string; displayName: string; role: UserRole; status: string; }
@@ -21,9 +24,11 @@ interface StrategyTarget {
 export function EvaluationClient({
   initial,
   strategyTarget,
+  adminNavigation,
 }: {
   initial: InitialState;
   strategyTarget?: StrategyTarget;
+  adminNavigation?: AdminNavigationFlags;
 }) {
   const router = useRouter();
   const [error, setError] = useState("");
@@ -102,11 +107,12 @@ export function EvaluationClient({
 
   return (
     <div className="min-h-screen">
-      <AppHeader />
+      {adminNavigation ? <AdminWorkspaceHeader {...adminNavigation} /> : <AppHeader />}
       <main className="mx-auto w-full max-w-7xl px-4 py-7 pb-20 md:px-6">
-        <header className="flex flex-col gap-5 border-b border-[var(--color-line-strong)] pb-6 md:flex-row md:items-end md:justify-between">
+        {adminNavigation && <AdminBackLink href="/admin" label="返回数据看板" />}
+        <header className={`${adminNavigation ? "mt-5 " : ""}flex flex-col gap-5 border-b border-[var(--color-line-strong)] pb-6 md:flex-row md:items-end md:justify-between`}>
           <div><p className="flex items-center gap-2 text-xs font-black text-[var(--color-accent)]"><Flask size={16} weight="bold" />离线人工评测 · evaluation_set</p><h1 className="mt-3 text-3xl font-black tracking-[-0.04em] sm:text-4xl">Prompt 升级证据台</h1><p className="mt-3 max-w-2xl text-sm leading-6 text-[var(--color-graphite)]">固定输入、同模型参数、双人独立评分和持久化盲评，共同决定 candidate 是否值得升级。</p></div>
-          <div className="flex items-center gap-2"><span className="control-base inline-flex min-h-10 items-center gap-2 px-3 text-xs font-bold"><Database size={15} />{initial.storageMode === "postgres" ? "PostgreSQL 正式存储" : "本地 JSON 存储"}</span>{initial.user.role === "admin" && (<Link className="button-secondary" href="/admin/dashboard"><ChartBar size={16} />数据看板</Link>)}<button className="button-secondary" onClick={logout} type="button"><SignOut size={16} />退出</button></div>
+          <div className="flex items-center gap-2"><span className="control-base inline-flex min-h-10 items-center gap-2 px-3 text-xs font-bold"><Database size={15} />{initial.storageMode === "postgres" ? "PostgreSQL 正式存储" : "本地 JSON 存储"}</span><button className="button-secondary" onClick={logout} type="button"><SignOut size={16} />退出</button></div>
         </header>
 
         <section className="mt-6 grid overflow-hidden rounded-[14px] border border-[var(--color-ink)] bg-[var(--color-ink)] text-white sm:grid-cols-4">

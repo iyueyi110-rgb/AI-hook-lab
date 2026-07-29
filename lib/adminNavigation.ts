@@ -14,24 +14,24 @@ export function getAdminNavigationItems(
   flags: AdminNavigationFlags,
 ): AdminNavigationItem[] {
   return [
-    { title: "数据看板", href: "/admin", enabled: true, match: "exact" },
+    { title: "数据看板", href: "/admin", enabled: true, match: "exact" as const },
     {
       title: "策略治理",
       href: "/admin/dashboard/strategies",
       enabled: flags.strategyCardsEnabled,
-      match: "prefix",
+      match: "prefix" as const,
     },
     {
       title: "运营 Agent",
       href: "/admin/dashboard/agent",
       enabled: flags.opsAgentEnabled,
-      match: "prefix",
+      match: "prefix" as const,
     },
     {
       title: "评测工作台",
       href: "/evaluation",
       enabled: true,
-      match: "prefix",
+      match: "prefix" as const,
     },
   ].filter((item) => item.enabled);
 }

@@ -37,3 +37,20 @@ test("governed admin pages share navigation and return to dashboard", async () =
     assert.doesNotMatch(source, /<AppHeader/);
   }
 });
+
+test("evaluation shows admin navigation only when server supplies admin flags", async () => {
+  const page = await read("app/evaluation/page.tsx");
+  const client = await read("app/evaluation/EvaluationClient.tsx");
+  const runPage = await read("app/evaluation/runs/[runId]/page.tsx");
+  const runClient = await read("app/evaluation/runs/[runId]/RunDetailClient.tsx");
+
+  assert.match(page, /user\.role === "admin"/);
+  assert.match(page, /adminNavigation/);
+  assert.match(client, /adminNavigation \?/);
+  assert.match(client, /AdminWorkspaceHeader/);
+  assert.match(client, /返回数据看板/);
+  assert.match(runPage, /user\.role === "admin"/);
+  assert.match(runClient, /adminNavigation \?/);
+  assert.match(runClient, /href="\/evaluation"/);
+  assert.match(runClient, /返回评测概览/);
+});

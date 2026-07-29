@@ -1,6 +1,8 @@
 import { notFound, redirect } from "next/navigation";
 
 import { getCurrentEvaluationUser, getEvaluationService, publicUser, runForUser } from "@/lib/evaluation/server";
+import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
+import { isStrategyCardsEnabled } from "@/lib/strategy/http";
 import type { EvaluationRunRecord } from "@/lib/evaluation/types";
 import { RunDetailClient } from "./RunDetailClient";
 
@@ -13,5 +15,8 @@ export default async function EvaluationRunPage({ params }: { params: Promise<{ 
   const state = await getEvaluationService().getState();
   const run = state.runs.find((item) => item.id === runId);
   if (!run) notFound();
-  return <RunDetailClient initialRun={runForUser(run, user) as EvaluationRunRecord} user={publicUser(user)} />;
+  return <RunDetailClient initialRun={runForUser(run, user) as EvaluationRunRecord} user={publicUser(user)} adminNavigation={user.role === "admin" ? {
+    opsAgentEnabled: isOpsAgentEnabled(),
+    strategyCardsEnabled: isStrategyCardsEnabled(),
+  } : undefined} />;
 }
