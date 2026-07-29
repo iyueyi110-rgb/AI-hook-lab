@@ -9,6 +9,10 @@ test("admin dashboard checks a database session and role at the page", async () 
   const page = await source("app/admin/page.tsx");
   assert.match(page, /getCurrentEvaluationUser/);
   assert.match(page, /classifyAdminAccess/);
+  assert.match(
+    page,
+    /const access = classifyAdminAccess\(await getCurrentEvaluationUser\(\)\);/,
+  );
   assert.match(page, /redirect\("\/evaluation\/login\?next=%2Fadmin"\)/);
   assert.match(page, /forbidden\(\)/);
 });
@@ -30,7 +34,7 @@ test("dashboard client gives public and administrator dashboards the appropriate
   assert.match(client, /strategyCardsEnabled/);
   assert.match(
     client,
-    /publicAccess\s*\?\s*\(?\s*<AppHeader\s*\/?>\s*\)?\s*:\s*\(?\s*<AdminWorkspaceHeader/s,
+    /adminNavigation\s*\?\s*\(?\s*<AdminWorkspaceHeader[\s\S]*:\s*\(?\s*<AppHeader\s*\/?>/,
   );
   assert.match(client, /AdminBackLink/);
   assert.match(client, /href="\/"/);
@@ -61,10 +65,10 @@ test("dashboard page and read API share the public dashboard policy", async () =
 test("public dashboard hides links to protected internal tools", async () => {
   const page = await source("app/admin/page.tsx");
   const client = await source("app/admin/dashboard/DashboardClient.tsx");
-  assert.match(page, /publicAccess=\{publicDashboard\}/);
-  assert.match(client, /publicAccess = false/);
-  assert.match(client, /!publicAccess && opsAgentEnabled/);
-  assert.match(client, /!publicAccess && \(\s*<Link[^>]+href="\/evaluation"/s);
+  assert.match(page, /adminNavigation=\{access === "authorized"\}/);
+  assert.match(client, /adminNavigation = false/);
+  assert.match(client, /adminNavigation && opsAgentEnabled/);
+  assert.match(client, /adminNavigation && \(\s*<Link[^>]+href="\/evaluation"/s);
 });
 
 test("public dashboard switch is documented in environment templates", async () => {

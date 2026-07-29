@@ -229,14 +229,14 @@ function Distribution({ title, description, items, formatKey }: {
 }
 
 export function DashboardClient({
+  adminNavigation = false,
   initialSummary,
   opsAgentEnabled = false,
-  publicAccess = false,
   strategyCardsEnabled = false,
 }: {
+  adminNavigation?: boolean;
   initialSummary?: DashboardSummary;
   opsAgentEnabled?: boolean;
-  publicAccess?: boolean;
   strategyCardsEnabled?: boolean;
 }) {
   const [summary, setSummary] = useState<DashboardSummary>(initialSummary ?? emptySummary);
@@ -355,13 +355,13 @@ export function DashboardClient({
 
   return (
     <div className="min-h-screen">
-      {publicAccess ? (
-        <AppHeader />
-      ) : (
+      {adminNavigation ? (
         <AdminWorkspaceHeader
           opsAgentEnabled={opsAgentEnabled}
           strategyCardsEnabled={strategyCardsEnabled}
         />
+      ) : (
+        <AppHeader />
       )}
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-20 md:px-6 md:py-8">
         <AdminBackLink href="/" label="返回创作台" />
@@ -386,13 +386,13 @@ export function DashboardClient({
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
-            {!publicAccess && opsAgentEnabled && (
+            {adminNavigation && opsAgentEnabled && (
               <Link className="button-primary" href="/admin/dashboard/agent">
                 <Brain aria-hidden="true" size={16} weight="bold" />
                 运营分析 Agent
               </Link>
             )}
-            {!publicAccess && (
+            {adminNavigation && (
               <Link className="button-secondary" href="/evaluation">
                 <Flask aria-hidden="true" size={16} weight="bold" />
                 离线评测

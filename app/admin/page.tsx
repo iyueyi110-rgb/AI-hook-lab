@@ -26,8 +26,8 @@ export default async function AdminPage() {
   }
 
   const publicDashboard = isPublicDashboardEnabled();
+  const access = classifyAdminAccess(await getCurrentEvaluationUser());
   if (!publicDashboard) {
-    const access = classifyAdminAccess(await getCurrentEvaluationUser());
     if (access === "unauthenticated") {
       redirect("/evaluation/login?next=%2Fadmin");
     }
@@ -36,9 +36,9 @@ export default async function AdminPage() {
 
   return (
     <DashboardClient
+      adminNavigation={access === "authorized"}
       initialSummary={await getDashboardSummary()}
       opsAgentEnabled={isOpsAgentEnabled()}
-      publicAccess={publicDashboard}
       strategyCardsEnabled={isStrategyCardsEnabled()}
     />
   );
