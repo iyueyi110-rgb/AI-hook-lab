@@ -23,10 +23,15 @@ test("admin is the canonical dashboard and the legacy route redirects", async ()
   assert.doesNotMatch(legacyPage, /getDashboardSummary|DashboardClient/);
 });
 
-test("dashboard client uses admin navigation and returns to the creative workspace", async () => {
+test("dashboard client gives public and administrator dashboards the appropriate header", async () => {
   const client = await source("app/admin/dashboard/DashboardClient.tsx");
+  assert.match(client, /import \{ AppHeader \} from "@\/components\/AppHeader"/);
   assert.match(client, /AdminWorkspaceHeader/);
   assert.match(client, /strategyCardsEnabled/);
+  assert.match(
+    client,
+    /publicAccess\s*\?\s*\(?\s*<AppHeader\s*\/?>\s*\)?\s*:\s*\(?\s*<AdminWorkspaceHeader/s,
+  );
   assert.match(client, /AdminBackLink/);
   assert.match(client, /href="\/"/);
   assert.match(client, /返回创作台/);
