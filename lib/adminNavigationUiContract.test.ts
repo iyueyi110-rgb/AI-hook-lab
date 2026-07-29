@@ -23,3 +23,17 @@ test("admin back link uses an explicit destination instead of browser history", 
   assert.match(source, /ArrowLeft/);
   assert.doesNotMatch(source, /router\.back|history\.back/);
 });
+
+test("governed admin pages share navigation and return to dashboard", async () => {
+  for (const path of [
+    "app/admin/dashboard/strategies/page.tsx",
+    "app/admin/dashboard/agent/page.tsx",
+  ]) {
+    const source = await read(path);
+    assert.match(source, /AdminWorkspaceHeader/);
+    assert.match(source, /AdminBackLink/);
+    assert.match(source, /href="\/admin"/);
+    assert.match(source, /返回数据看板/);
+    assert.doesNotMatch(source, /<AppHeader/);
+  }
+});
