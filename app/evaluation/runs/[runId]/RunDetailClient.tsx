@@ -5,12 +5,14 @@ import { useMemo, useState, type FormEvent } from "react";
 import { ArrowLeft, Check, Flask, Play, WarningCircle } from "@phosphor-icons/react";
 
 import { AppHeader } from "@/components/AppHeader";
+import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
+import type { AdminNavigationFlags } from "@/lib/adminNavigation";
 import type { EvaluationRunRecord, UserRole } from "@/lib/evaluation/types";
 
 interface PublicUser { id: string; username: string; displayName: string; role: UserRole; status: string; }
 interface BlindFormalResult { id: string; caseId: string; platform: string; blindLabel: "A" | "B"; content?: string; styleTag?: string; recommendReason?: string; overLength?: boolean; myReview?: { id: string }; reviews?: Array<{ favoriteIntent: boolean; adoptionIntent: boolean }>; adjudicatedFavoriteIntent?: boolean; adjudicatedAdoptionIntent?: boolean; }
 
-export function RunDetailClient({ initialRun, user }: { initialRun: EvaluationRunRecord; user: PublicUser }) {
+export function RunDetailClient({ initialRun, user, adminNavigation }: { initialRun: EvaluationRunRecord; user: PublicUser; adminNavigation?: AdminNavigationFlags }) {
   const [run, setRun] = useState(initialRun);
   const [report, setReport] = useState<Record<string, unknown> | null>(null);
   const [busy, setBusy] = useState(false);
@@ -106,7 +108,7 @@ export function RunDetailClient({ initialRun, user }: { initialRun: EvaluationRu
   const totalTasks = run.generationTasks?.length ?? Number((run as unknown as { totalGenerationTasks?: number }).totalGenerationTasks ?? run.caseCount * 2);
 
   return (
-    <div className="min-h-screen"><AppHeader /><main className="mx-auto w-full max-w-7xl px-4 py-7 pb-20 md:px-6">
+    <div className="min-h-screen">{adminNavigation ? <AdminWorkspaceHeader {...adminNavigation} /> : <AppHeader />}<main className="mx-auto w-full max-w-7xl px-4 py-7 pb-20 md:px-6">
       <Link className="inline-flex items-center gap-2 text-xs font-bold text-[var(--color-muted)] hover:text-[var(--color-ink)]" href="/evaluation"><ArrowLeft size={15} />返回评测概览</Link>
       <header className="mt-5 flex flex-col gap-4 border-b border-[var(--color-line-strong)] pb-6 md:flex-row md:items-end md:justify-between"><div><p className="flex items-center gap-2 text-xs font-black text-[var(--color-accent)]"><Flask size={15} weight="bold" />{run.dataOrigin} · {run.executionMode === 'mock' ? '模拟生成' : 'Live 模型'}</p><h1 className="mt-3 text-3xl font-black tracking-[-0.04em]">{run.runName}</h1><p className="mt-2 text-xs text-[var(--color-muted)]">状态 {run.status} · {run.caseCount} 个固定案例 · 当前身份 {user.displayName}（{user.role}）</p></div>{user.role === 'admin' && <button className="button-secondary" onClick={loadReport} type="button">查看升级报告</button>}</header>
 

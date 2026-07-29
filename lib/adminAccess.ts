@@ -26,7 +26,9 @@ export function sanitizeInternalReturnPath(
     decodeURIComponent(candidate);
     const parsed = new URL(candidate, "https://hookovo.invalid");
     const allowed =
+      parsed.pathname === "/admin" ||
       parsed.pathname === "/admin/dashboard" ||
+      parsed.pathname === "/admin/dashboard/strategies" ||
       parsed.pathname === "/admin/dashboard/agent" ||
       parsed.pathname === "/evaluation" ||
       parsed.pathname.startsWith("/evaluation/");

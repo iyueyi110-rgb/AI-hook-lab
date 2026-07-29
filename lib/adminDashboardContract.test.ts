@@ -6,11 +6,39 @@ const root = new URL("../", import.meta.url);
 const source = (path: string) => readFile(new URL(path, root), "utf8");
 
 test("admin dashboard checks a database session and role at the page", async () => {
-  const page = await source("app/admin/dashboard/page.tsx");
+  const page = await source("app/admin/page.tsx");
   assert.match(page, /getCurrentEvaluationUser/);
   assert.match(page, /classifyAdminAccess/);
-  assert.match(page, /redirect\("\/evaluation\/login\?next=%2Fadmin%2Fdashboard"\)/);
+  assert.match(
+    page,
+    /const access = classifyAdminAccess\(await getCurrentEvaluationUser\(\)\);/,
+  );
+  assert.match(page, /redirect\("\/evaluation\/login\?next=%2Fadmin"\)/);
   assert.match(page, /forbidden\(\)/);
+});
+
+test("admin is the canonical dashboard and the legacy route redirects", async () => {
+  const adminPage = await source("app/admin/page.tsx");
+  const legacyPage = await source("app/admin/dashboard/page.tsx");
+  assert.match(adminPage, /getDashboardSummary/);
+  assert.match(adminPage, /DashboardClient/);
+  assert.match(adminPage, /evaluation\/login\?next=%2Fadmin/);
+  assert.match(legacyPage, /permanentRedirect\("\/admin"\)/);
+  assert.doesNotMatch(legacyPage, /getDashboardSummary|DashboardClient/);
+});
+
+test("dashboard client gives public and administrator dashboards the appropriate header", async () => {
+  const client = await source("app/admin/dashboard/DashboardClient.tsx");
+  assert.match(client, /import \{ AppHeader \} from "@\/components\/AppHeader"/);
+  assert.match(client, /AdminWorkspaceHeader/);
+  assert.match(client, /strategyCardsEnabled/);
+  assert.match(
+    client,
+    /adminNavigation\s*\?\s*\(?\s*<AdminWorkspaceHeader[\s\S]*:\s*\(?\s*<AppHeader\s*\/?>/,
+  );
+  assert.match(client, /AdminBackLink/);
+  assert.match(client, /href="\/"/);
+  assert.match(client, /返回创作台/);
 });
 
 test("dashboard summary API independently returns 401 and 403", async () => {
@@ -26,7 +54,7 @@ test("dashboard summary API independently returns 401 and 403", async () => {
 });
 
 test("dashboard page and read API share the public dashboard policy", async () => {
-  const page = await source("app/admin/dashboard/page.tsx");
+  const page = await source("app/admin/page.tsx");
   const route = await source("app/api/dashboard/summary/route.ts");
   for (const entry of [page, route]) {
     assert.match(entry, /isPublicDashboardEnabled/);
@@ -35,12 +63,12 @@ test("dashboard page and read API share the public dashboard policy", async () =
 });
 
 test("public dashboard hides links to protected internal tools", async () => {
-  const page = await source("app/admin/dashboard/page.tsx");
+  const page = await source("app/admin/page.tsx");
   const client = await source("app/admin/dashboard/DashboardClient.tsx");
-  assert.match(page, /publicAccess=\{publicDashboard\}/);
-  assert.match(client, /publicAccess = false/);
-  assert.match(client, /!publicAccess && opsAgentEnabled/);
-  assert.match(client, /!publicAccess && \(\s*<Link[^>]+href="\/evaluation"/s);
+  assert.match(page, /adminNavigation=\{access === "authorized"\}/);
+  assert.match(client, /adminNavigation = false/);
+  assert.match(client, /adminNavigation && opsAgentEnabled/);
+  assert.match(client, /adminNavigation && \(\s*<Link[^>]+href="\/evaluation"/s);
 });
 
 test("public dashboard switch is documented in environment templates", async () => {
@@ -63,7 +91,7 @@ test("dashboard APIs return 503 when production persistence is unavailable", asy
 
 test("internal pages explain unavailable production persistence before session access", async () => {
   const loginPage = await source("app/evaluation/login/page.tsx");
-  const dashboardPage = await source("app/admin/dashboard/page.tsx");
+  const dashboardPage = await source("app/admin/page.tsx");
   for (const page of [loginPage, dashboardPage]) {
     assert.match(page, /DatabaseUnavailablePanel/);
     assert.match(page, /getPersistenceMode\(\) === "unavailable"/);
@@ -87,7 +115,7 @@ test("generation start analytics omit the raw topic", async () => {
 
 test("legacy dashboard redirects and no longer renders data", async () => {
   const page = await source("app/dashboard/page.tsx");
-  assert.match(page, /redirect\("\/admin\/dashboard"\)/);
+  assert.match(page, /redirect\("\/admin"\)/);
   assert.doesNotMatch(page, /getDashboardSummary/);
 });
 

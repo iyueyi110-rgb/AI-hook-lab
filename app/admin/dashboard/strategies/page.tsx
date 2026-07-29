@@ -1,10 +1,12 @@
 import type { Metadata } from "next";
 import { forbidden, notFound, redirect } from "next/navigation";
 
-import { AppHeader } from "@/components/AppHeader";
+import { AdminBackLink } from "@/components/AdminBackLink";
+import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
 import { DatabaseUnavailablePanel } from "@/components/DatabaseUnavailablePanel";
 import { StrategyAdminClient } from "@/components/StrategyAdminClient";
 import { classifyAdminAccess } from "@/lib/adminAccess";
+import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
 import { getCurrentEvaluationUser } from "@/lib/evaluation/server";
 import { getPersistenceMode } from "@/lib/persistence";
 import { isStrategyCardsEnabled } from "@/lib/strategy/http";
@@ -24,9 +26,13 @@ export default async function StrategyAdminPage() {
   if (access === "forbidden") forbidden();
   return (
     <div className="min-h-screen">
-      <AppHeader />
+      <AdminWorkspaceHeader
+        opsAgentEnabled={isOpsAgentEnabled()}
+        strategyCardsEnabled
+      />
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-20 md:px-6 md:py-8">
-        <header className="mb-6 border-b border-[var(--color-line-strong)] pb-6">
+        <AdminBackLink href="/admin" label="返回数据看板" />
+        <header className="mb-6 mt-5 border-b border-[var(--color-line-strong)] pb-6">
           <p className="text-xs font-extrabold text-[var(--color-accent)]">仅管理员可见 · 人工批准</p>
           <h1 className="mt-3 text-3xl font-black tracking-[-0.04em] sm:text-4xl">策略治理</h1>
           <p className="mt-3 max-w-[76ch] text-sm leading-6 text-[var(--color-graphite)]">

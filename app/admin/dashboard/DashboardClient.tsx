@@ -14,7 +14,9 @@ import {
   Timer,
   WarningCircle,
 } from "@phosphor-icons/react";
+import { AdminBackLink } from "@/components/AdminBackLink";
 import { AppHeader } from "@/components/AppHeader";
+import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
 import type { DashboardSummary } from "@/lib/dashboardStore";
 import type { DataOrigin } from "@/lib/evaluation/types";
 import { PLATFORM_CONFIG } from "@/lib/constants";
@@ -227,13 +229,15 @@ function Distribution({ title, description, items, formatKey }: {
 }
 
 export function DashboardClient({
+  adminNavigation = false,
   initialSummary,
   opsAgentEnabled = false,
-  publicAccess = false,
+  strategyCardsEnabled = false,
 }: {
+  adminNavigation?: boolean;
   initialSummary?: DashboardSummary;
   opsAgentEnabled?: boolean;
-  publicAccess?: boolean;
+  strategyCardsEnabled?: boolean;
 }) {
   const [summary, setSummary] = useState<DashboardSummary>(initialSummary ?? emptySummary);
   const [origin, setOrigin] = useState<DataOrigin>("real_user");
@@ -351,8 +355,16 @@ export function DashboardClient({
 
   return (
     <div className="min-h-screen">
-      <AppHeader />
+      {adminNavigation ? (
+        <AdminWorkspaceHeader
+          opsAgentEnabled={opsAgentEnabled}
+          strategyCardsEnabled={strategyCardsEnabled}
+        />
+      ) : (
+        <AppHeader />
+      )}
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-20 md:px-6 md:py-8">
+        <AdminBackLink href="/" label="返回创作台" />
         <header className="flex flex-col gap-5 border-b border-[var(--color-line-strong)] pb-6 md:flex-row md:items-end md:justify-between">
           <div>
             <p className="flex items-center gap-2 text-xs font-extrabold text-[var(--color-accent)]">
@@ -374,13 +386,13 @@ export function DashboardClient({
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
-            {!publicAccess && opsAgentEnabled && (
+            {adminNavigation && opsAgentEnabled && (
               <Link className="button-primary" href="/admin/dashboard/agent">
                 <Brain aria-hidden="true" size={16} weight="bold" />
                 运营分析 Agent
               </Link>
             )}
-            {!publicAccess && (
+            {adminNavigation && (
               <Link className="button-secondary" href="/evaluation">
                 <Flask aria-hidden="true" size={16} weight="bold" />
                 离线评测
