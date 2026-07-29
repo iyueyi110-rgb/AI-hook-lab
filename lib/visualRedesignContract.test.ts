@@ -25,10 +25,10 @@ test("editorial workbench exposes shared tokens and navigation", async () => {
   assert.doesNotMatch(header, /href="\/evaluation"/);
   assert.match(header, /aria-current/);
   assert.match(home, /<AppHeader/);
-  assert.match(
-    evaluation,
-    /initial\.user\.role === "admin"\s*&&\s*\(\s*<Link[^>]*href="\/admin\/dashboard"/s,
-  );
+  assert.match(evaluation, /AdminWorkspaceHeader/);
+  assert.match(evaluation, /adminNavigation/);
+  assert.match(evaluation, /adminNavigation \?/);
+  assert.doesNotMatch(evaluation, /href="\/admin\/dashboard"/);
   assert.match(dashboard, /<AppHeader/);
   assert.match(dashboard, /href="\/evaluation"/);
 });
