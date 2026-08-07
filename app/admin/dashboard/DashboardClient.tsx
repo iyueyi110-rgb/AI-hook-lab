@@ -18,6 +18,10 @@ import { AdminBackLink } from "@/components/AdminBackLink";
 import { AppHeader } from "@/components/AppHeader";
 import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
 import type { DashboardSummary } from "@/lib/dashboardStore";
+import {
+  formatDataOrigin,
+  formatGenerationErrorCategory,
+} from "@/lib/evaluation/presentation";
 import type { DataOrigin } from "@/lib/evaluation/types";
 import { PLATFORM_CONFIG } from "@/lib/constants";
 
@@ -140,14 +144,6 @@ function formatFeedbackKey(key: string): string {
   return feedbackLabels[key] ?? key;
 }
 
-function formatOrigin(origin: string): string {
-  return {
-    real_user: "真实用户",
-    evaluation_set: "离线评测",
-    simulation: "模拟事件",
-  }[origin] ?? origin;
-}
-
 function formatDate(value: string): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
@@ -157,6 +153,13 @@ function formatDate(value: string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function formatEventResult(event: DashboardSummary["recentEvents"][number]): string {
+  if (event.type === "generation_error") {
+    return formatGenerationErrorCategory(event.payload?.error);
+  }
+  return String(event.payload?.hookCount ?? event.payload?.rating ?? event.payload?.avgScore ?? "-");
 }
 
 interface Metric {
@@ -309,24 +312,24 @@ export function DashboardClient({
       },
       {
         title: "内容价值",
-        description: "观察候选是否进入真实创作流程。",
+        description: "记录界面操作事件；事件不等同于最终发布或传播效果。",
         metrics: [
           {
-            label: origin === "real_user" ? "真实收藏率" : origin === "evaluation_set" ? "评测收藏事件率" : "模拟收藏事件率",
+            label: origin === "real_user" ? "用户收藏事件率" : origin === "evaluation_set" ? "评测收藏事件率" : "模拟收藏事件率",
             value: `${summary.rates.favoriteRate}%`,
-            hint: `${summary.totals.hooksFavorited} 个收藏`,
+            hint: `${summary.totals.hooksFavorited} 次收藏事件`,
             icon: <Heart aria-hidden="true" size={17} weight="bold" />,
           },
           {
-            label: origin === "real_user" ? "真实采用率" : origin === "evaluation_set" ? "评测采用事件率" : "模拟采用事件率",
+            label: origin === "real_user" ? "用户采用标记率" : origin === "evaluation_set" ? "评测采用标记率" : "模拟采用标记率",
             value: `${summary.rates.adoptionRate}%`,
-            hint: `${summary.totals.hooksAdopted} 个采用`,
+            hint: `${summary.totals.hooksAdopted} 次采用标记`,
             icon: <CheckCircle aria-hidden="true" size={17} weight="bold" />,
           },
           {
-            label: "复制率",
+            label: "复制事件率",
             value: `${summary.rates.copyRate}%`,
-            hint: `${summary.totals.hooksCopied} 次复制`,
+            hint: `${summary.totals.hooksCopied} 次复制事件`,
             icon: <CursorClick aria-hidden="true" size={17} weight="bold" />,
           },
         ],
@@ -372,7 +375,7 @@ export function DashboardClient({
             </p>
             <h1 className="mt-3 text-3xl font-black tracking-[-0.035em] sm:text-4xl">数据看板</h1>
             <p className="mt-3 max-w-[72ch] text-sm leading-6 text-[var(--color-graphite)]">
-              区分真实操作、评测集和模拟事件；模型自评分与人工反馈分别解释，不混算成效果结论。
+              区分用户操作事件、评测集和模拟事件；模型自评分与人工反馈分别解释，不混算成效果结论。
             </p>
           </div>
           <div className="flex items-center gap-2 self-start md:self-auto">
@@ -382,7 +385,7 @@ export function DashboardClient({
               setOrigin(next);
               void loadSummary({ origin: next });
             }} value={origin}>
-              <option value="real_user">真实用户数据</option>
+              <option value="real_user">用户操作事件</option>
               <option value="evaluation_set">离线评测数据</option>
               <option value="simulation">模拟事件</option>
             </select>
@@ -419,7 +422,7 @@ export function DashboardClient({
         <div className="mt-6 grid gap-4 lg:grid-cols-2">
           <Distribution description="不同发布平台的生成事件分布。" items={summary.platformDistribution} title="平台分布" />
           <Distribution description="用于定位 Prompt 与内容质量问题。" items={summary.badcaseDistribution} title="Bad Case 分布" />
-          <Distribution description="真实操作、评测集和模拟事件严格隔离。" formatKey={formatOrigin} items={summary.dataOriginDistribution} title="数据来源" />
+          <Distribution description="用户操作、评测集和模拟事件严格隔离。" formatKey={formatDataOrigin} items={summary.dataOriginDistribution} title="数据来源" />
           <Distribution description="比较 baseline 与 candidate 的运行覆盖。" items={summary.promptVersionDistribution} title="Prompt 版本" />
         </div>
 
@@ -435,7 +438,7 @@ export function DashboardClient({
               { label: "唯一曝光", value: summary.strategies.totals.uniqueShown, hint: "按展示批次与策略版本去重" },
               { label: "选择率", value: `${summary.strategies.selectionRate}%`, hint: `${summary.strategies.totals.selected}/${summary.strategies.totals.uniqueShown} 次选择/曝光` },
               { label: "生成完成率", value: `${summary.strategies.generationCompletionRate}%`, hint: `${summary.strategies.totals.completedTasks}/${summary.strategies.totals.selectedTasks} 个已选策略任务` },
-              { label: "任务级采用率", value: `${summary.strategies.taskAdoptionRate}%`, hint: `${summary.strategies.totals.adoptedTasks}/${summary.strategies.totals.selectedTasks} 个已选策略任务` },
+              { label: "任务级采用标记率", value: `${summary.strategies.taskAdoptionRate}%`, hint: `${summary.strategies.totals.adoptedTasks}/${summary.strategies.totals.selectedTasks} 个已选策略任务` },
             ].map((metric) => (
               <div className="p-4 sm:p-5" key={metric.label}>
                 <p className="text-[11px] font-bold text-[var(--color-muted)]">{metric.label}</p>
@@ -454,7 +457,7 @@ export function DashboardClient({
           <div className="editorial-panel overflow-hidden">
             <div className="flex flex-col gap-4 border-b border-[var(--color-line)] p-4 sm:p-5 lg:flex-row lg:items-end lg:justify-between">
               <div>
-                <h2 className="text-base font-black" id="creator-feedback-heading">创作者真实反馈</h2>
+                <h2 className="text-base font-black" id="creator-feedback-heading">创作者明确反馈</h2>
                 <p className="mt-1 max-w-[72ch] text-[11px] leading-5 text-[var(--color-muted)]">
                   用户主动填写的修改、拒绝和低分原因是事实反馈；收藏、复制等行为只作为旁证。
                 </p>
@@ -505,7 +508,7 @@ export function DashboardClient({
               {[
                 { label: "反馈响应率", value: `${summary.feedback.responseRate}%`, hint: `${summary.feedback.totals.submitted}/${summary.feedback.totals.promptsShown} 次提交` },
                 { label: "任务关联覆盖", value: `${summary.feedback.taskCoverageRate}%`, hint: `${summary.feedback.totals.linkedCompletedTasks}/${summary.feedback.totals.totalCompletedTasks} 个完成任务` },
-                { label: "任务级真实采用", value: `${summary.feedback.taskAdoptionRate}%`, hint: `${summary.feedback.totals.tasksWithConfirmedUsage} 个任务进入真实使用` },
+                { label: "任务级确认采用率", value: `${summary.feedback.taskAdoptionRate}%`, hint: `${summary.feedback.totals.tasksWithConfirmedUsage} 个任务由用户确认使用` },
                 { label: "跳过反馈", value: String(summary.feedback.totals.skipped), hint: "跳过不阻断创作流程" },
               ].map((metric) => (
                 <div className="p-4 sm:p-5" key={metric.label}>
@@ -524,7 +527,7 @@ export function DashboardClient({
           )}
 
           <div className="mt-4 grid gap-4 lg:grid-cols-3">
-            <Distribution description="区分真正直接使用、修改后使用与仅作参考。" formatKey={formatFeedbackKey} items={summary.feedback.usageOutcomeDistribution} title="真实使用方式" />
+            <Distribution description="区分用户确认的直接使用、修改后使用与仅作参考。" formatKey={formatFeedbackKey} items={summary.feedback.usageOutcomeDistribution} title="用户确认的使用方式" />
             <Distribution description="人工明确选择的修改、拒绝或低分原因。" formatKey={formatFeedbackKey} items={summary.feedback.reasonDistribution} title="人工原因分布" />
             <Distribution description="不同反馈触发时刻的有效提交量。" formatKey={formatFeedbackKey} items={summary.feedback.triggerDistribution} title="反馈场景分布" />
           </div>
@@ -562,7 +565,7 @@ export function DashboardClient({
         <section className="editorial-panel mt-6 overflow-hidden">
           <div className="border-b border-[var(--color-line)] px-4 py-4 sm:px-5">
             <h2 className="text-sm font-black">最近事件</h2>
-            <p className="mt-1 text-[11px] text-[var(--color-muted)]">按时间查看真实操作与评测行为。</p>
+            <p className="mt-1 text-[11px] text-[var(--color-muted)]">按时间查看用户操作事件与评测行为。</p>
           </div>
           <div className="overflow-x-auto">
             <table className="w-full min-w-[760px] border-collapse text-left text-xs">
@@ -572,7 +575,7 @@ export function DashboardClient({
                   <th className="px-4 py-3 font-bold">事件</th>
                   <th className="px-4 py-3 font-bold">数据来源</th>
                   <th className="px-4 py-3 font-bold">平台</th>
-                  <th className="px-4 py-3 font-bold">数量 / 评分</th>
+                  <th className="px-4 py-3 font-bold">结果</th>
                   <th className="px-4 py-3 font-bold">Hook</th>
                 </tr>
               </thead>
@@ -584,9 +587,9 @@ export function DashboardClient({
                     <tr className="border-b border-[var(--color-line)] last:border-b-0 hover:bg-[#fafaf8]" key={event.id}>
                       <td className="whitespace-nowrap px-4 py-3 text-[var(--color-muted)]">{formatDate(event.timestamp)}</td>
                       <td className="px-4 py-3 font-bold">{formatEventType(event.type)}</td>
-                      <td className="px-4 py-3 text-[var(--color-graphite)]">{formatOrigin(event.dataOrigin)}</td>
+                      <td className="px-4 py-3 text-[var(--color-graphite)]">{formatDataOrigin(event.dataOrigin)}</td>
                       <td className="px-4 py-3 text-[var(--color-graphite)]">{String(event.payload?.platform ?? "-")}</td>
-                      <td className="px-4 py-3 text-[var(--color-graphite)]">{String(event.payload?.hookCount ?? event.payload?.rating ?? event.payload?.avgScore ?? "-")}</td>
+                      <td className="px-4 py-3 text-[var(--color-graphite)]">{formatEventResult(event)}</td>
                       <td className="max-w-48 truncate px-4 py-3 text-[var(--color-muted)]">{String(event.payload?.hookId ?? "-")}</td>
                     </tr>
                   ))

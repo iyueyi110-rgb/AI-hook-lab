@@ -6,9 +6,27 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 
 本人把它作为 AI 产品经理作品集：重点展示问题定义、产品规则、指标口径、安全边界与版本决策，而不是把模型输出或模拟数据包装成真实业务结果。
 
-## 快速入口
+## 30 秒结论
+
+- **目标用户**：有稳定发布任务、需要快速比较多个开头方案的中文内容创作者，以及负责 Prompt 质量复盘的内容运营团队。
+- **核心任务**：把一个真实主题转化为 10 条可比较候选，由创作者完成选择、改写或放弃，并把人工反馈接入后续复盘。
+- **当前结论**：仓库已经证明工作流、评测方法、安全边界和工程实现；尚未证明真实用户采用、发布或传播效果。
+
+```text
+真实主题 → 结构化简报 → 10 条候选 → 人工比较与选择
+→ 使用方式与失败原因 → 来源隔离 → 离线评测与下一版决策
+```
+
+| 证据状态 | 当前可以陈述的内容 | 当前不能陈述的内容 |
+| --- | --- | --- |
+| 已验证事实 | 60 个固定案例、来源隔离、Agent 状态与权限规则、自动化测试和安全门禁 | 真实用户采用率、发布率或传播效果 |
+| 方法已实现 | 双人盲评、第三人裁决、Bad Case 护栏、Prompt 升级门槛 | candidate 已经改善质量或应当升级 |
+| 待真实验证 | 5–8 名目标创作者、至少 30 个真实任务的研究计划 | 用户人数、收藏率、选择率和提升值 |
+
+## 一分钟阅读路径
 
 - 在线 Demo 状态：公网自动请求返回 200，但手机流量、无痕浏览器与桌面交互尚未完成人工验收，因此暂不作为公开入口。详见 [Demo 验证记录](docs/portfolio/demo-verification.md)。
+- [产品决策简报](docs/portfolio/product-decision-brief.md)：先看目标用户、关键取舍、被否决方案和当前 P0。
 - [创作 Agent](docs/creative-agent.md)：查看简报补全、候选生成、人工确认、状态恢复与安全约束。
 - [运营分析 Agent](docs/portfolio/operations-agent.md)：查看只读工具、证据引用和人工升级门槛。
 - [受治理策略桥接层](docs/strategy-governance.md)：查看策略版本、证据门禁、创作绑定和观察性分析边界。
@@ -16,6 +34,9 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 - [数据存储与安全边界](SECURITY.md)：查看生产存储、权限、配额、密钥扫描和依赖审计说明。
 - [一页产品策略](docs/product/product-strategy.md)：查看北极星指标、竞品事实矩阵与分阶段路线图。
 - [作品集验收与简历对齐记录](docs/portfolio/acceptance-and-resume-alignment.md)：查看证据分级、门禁结果字段和未验证主张的同步规则。
+- [产品经理 HR 最终评分卡](docs/portfolio/pm-hr-final-scorecard.md)：查看实习面试结论、分项评分、90 秒演示顺序与诚实边界。
+- [真实创作者研究执行包](docs/product/real-user-research-kit.md)：查看招募、知情同意、主持、观察、退出和脱敏流程；材料已就绪，研究尚未执行。
+- [产品经理面试交付包](docs/portfolio/interview-delivery-kit.md)：查看 90 秒逐字稿、5 分钟展开版、简历表述、问答与演示兜底。
 
 ## 本人与 AI 的分工
 
@@ -318,9 +339,12 @@ docs/portfolio/         招聘方入口、AI 协作边界与 Demo 记录
 - [策略卡故障 Runbook](docs/strategy-runbook.md)
 - [公开证据索引](docs/evidence/README.md)
 - [真实创作者验证计划](docs/product/real-user-validation-plan.md)
+- [真实创作者研究执行包](docs/product/real-user-research-kit.md)
+- [产品经理面试交付包](docs/portfolio/interview-delivery-kit.md)
 - [AI 治理说明](docs/product/ai-governance.md)
 - [证据指标字典](docs/evidence/metrics-dictionary.md)
 - [业务闭环](docs/product/business-chain.md)
+- [产品决策简报](docs/portfolio/product-decision-brief.md)
 
 ## 说明
 

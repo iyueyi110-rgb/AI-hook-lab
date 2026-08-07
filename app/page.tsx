@@ -356,7 +356,7 @@ export default function Home() {
       if (!res.ok) {
         setError({ title: data.error ?? "生成失败", message: data.message ?? "未知错误" });
         setStatus("error");
-        track("generation_error", { anonymousCreatorId, taskId, error: data.error ?? "生成失败" });
+        track("generation_error", { anonymousCreatorId, taskId, error: "生成失败" });
         return;
       }
 

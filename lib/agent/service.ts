@@ -353,7 +353,7 @@ function applyClarification(
     addedMessages.push({ id: makeId("message"), role: "assistant", content: questionFor(normalized.missing[0] ?? "topic"), createdAt: timestamp });
   } else {
     run.requiresFormCompletion = true;
-    addedMessages.push({ id: makeId("message"), role: "assistant", content: "Please complete the structured brief form.", createdAt: timestamp });
+    addedMessages.push({ id: makeId("message"), role: "assistant", content: "请先补全创作简报，再继续生成。", createdAt: timestamp });
   }
   run.messages.push(...addedMessages);
   run.updatedAt = timestamp;

@@ -5,12 +5,12 @@ import { cookies } from "next/headers";
 import { getEvaluationRepository } from "./repository";
 import { EvaluationService } from "./service";
 import type { EvaluationRunRecord, EvaluationUser } from "./types";
+import { isSameOriginRequest } from "../sameOrigin";
 
 export const EVALUATION_SESSION_COOKIE = "ai_hook_eval_session";
 
 export function assertSameOrigin(request: Request): void {
-  const origin = request.headers.get("origin");
-  if (origin && new URL(origin).host !== new URL(request.url).host) throw new Error("Cross-origin mutation rejected");
+  if (!isSameOriginRequest(request)) throw new Error("Cross-origin mutation rejected");
 }
 
 let service: EvaluationService | undefined;
@@ -54,6 +54,7 @@ export function runSummary(run: EvaluationRunRecord) {
     selectedCount: run.formalResults.length,
     primaryReviewCount: run.rawReviews.length,
     pairwiseReviewCount: run.rawPairwiseEvaluations.length,
+    pairwiseDecisionCount: run.pairwiseDecisions.filter((item) => item.winnerRole).length,
     adjudicationCount: run.adjudications.length,
     createdAt: run.createdAt,
     updatedAt: run.updatedAt,

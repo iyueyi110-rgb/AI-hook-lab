@@ -459,6 +459,8 @@ test("clarifies one required field at a time and stops after two questions", asy
   const invalid2 = await coach.submitTurn(exhausted.sessionToken, exhausted.response.run.id, 1, { type: "message", text: "still-invalid" });
   assert.equal(invalid2.run.requiresFormCompletion, true);
   assert.equal(invalid2.needsInput, true);
+  assert.equal(invalid2.messages.at(-1)?.content, "请先补全创作简报，再继续生成。");
+  assert.doesNotMatch(invalid2.messages.at(-1)?.content ?? "", /Please|structured brief/i);
   assert.equal(invalid1.run.clarificationAttempts, 2);
   assert.equal(invalid2.run.clarificationAttempts, 2);
   const structured = await coach.submitTurn(exhausted.sessionToken, exhausted.response.run.id, invalid2.run.revision, {

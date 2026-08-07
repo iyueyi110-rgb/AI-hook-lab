@@ -29,11 +29,14 @@ test("canonical evaluation seed contains exactly twenty topics across three plat
   }
 });
 
-test("mock and incomplete runs never produce an upgrade recommendation", () => {
-  const run = emptyRun({ executionMode: "mock", caseCount: 60 });
-  const report = buildEvaluationReport(run);
-  assert.equal(report.recommendation, "needs_more_evaluation");
-  assert.match(report.recommendationReason, /模拟/);
+test("mock and incomplete live runs never produce an upgrade recommendation", () => {
+  const mockReport = buildEvaluationReport(emptyRun({ executionMode: "mock", caseCount: 60 }));
+  assert.equal(mockReport.recommendation, "needs_more_evaluation");
+  assert.match(mockReport.recommendationReason, /模拟/);
+
+  const incompleteLiveReport = buildEvaluationReport(emptyRun({ executionMode: "live", caseCount: 60 }));
+  assert.equal(incompleteLiveReport.recommendation, "needs_more_evaluation");
+  assert.match(incompleteLiveReport.recommendationReason, /尚未完成/);
 });
 
 test("paired reviewer results aggregate by formal result instead of raw votes", () => {

@@ -88,6 +88,14 @@ test("home cancels stale image requests and keeps image data out of persistence"
   assert.doesNotMatch(home, /addToHistory\([^)]*imageAnalysis/s);
 });
 
+test("home records generation failures with accepted analytics categories", async () => {
+  const home = await source("app/page.tsx");
+
+  assert.match(home, /track\("generation_error", \{ anonymousCreatorId, taskId, error: "生成失败" \}\)/);
+  assert.match(home, /track\("generation_error", \{ anonymousCreatorId, taskId, error: "网络错误" \}\)/);
+  assert.doesNotMatch(home, /track\("generation_error", \{ anonymousCreatorId, taskId, error: data\.error/);
+});
+
 test("dashboard groups metrics around operational decisions", async () => {
   const dashboard = await source("app/admin/dashboard/DashboardClient.tsx");
 
@@ -114,7 +122,7 @@ test("creator feedback uses an accessible skippable dialog and explicit rejectio
   assert.match(home, /sampled_before_regenerate/);
   assert.match(home, /low_satisfaction/);
   assert.match(home, /creator_feedback/);
-  assert.match(dashboard, /创作者真实反馈/);
+  assert.match(dashboard, /创作者明确反馈/);
   assert.match(dashboard, /模型判断 × 人工原因/);
   assert.match(dashboard, /URLSearchParams/);
   assert.match(dashboard, /void loadSummary\(\{ platform:/);

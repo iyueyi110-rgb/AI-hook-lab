@@ -12,15 +12,14 @@ export function mapGenerationError(
   switch (error.code) {
     case "missing_key":
       return {
-        error: "API Key 未配置",
-        message:
-          "请在项目根目录的 .env.local 文件中添加 DEEPSEEK_API_KEY=你的Key。\n获取 Key：https://platform.deepseek.com",
-        status: 401,
+        error: "生成服务暂不可用",
+        message: "生成服务尚未完成配置，请稍后重试或联系维护者。",
+        status: 503,
       };
     case "auth":
       return {
-        error: "API Key 无效",
-        message: "DEEPSEEK_API_KEY 无效，请检查 .env.local 中的 Key 是否正确",
+        error: "生成服务暂不可用",
+        message: "生成服务认证失败，请稍后重试或联系维护者。",
         status: 502,
       };
     case "rate_limit":
@@ -32,33 +31,31 @@ export function mapGenerationError(
     case "timeout":
       return {
         error: "请求超时",
-        message: "模型响应超时（30秒），请重试或缩短主题描述",
+        message: "生成等待时间较长，请重试；你的主题和选项已保留。",
         status: 504,
       };
     case "empty_response":
       return {
-        error: "AI 返回为空",
-        message: "模型未返回有效内容，请重试",
+        error: "生成结果异常",
+        message: "本次没有获得有效结果，请重试。",
         status: 500,
       };
     case "invalid_json":
       return {
-        error: "JSON 解析失败",
-        message: "AI 返回的不是有效 JSON，请重试",
+        error: "生成结果异常",
+        message: "本次结果未能正确处理，请重试。",
         status: 500,
       };
     case "invalid_count":
       return {
-        error: "生成数量异常",
-        message: "AI 未返回要求数量的 Hook，请重试",
+        error: "生成结果不完整",
+        message: "本次未生成完整的 10 条候选，请重试。",
         status: 500,
       };
     case "upstream":
       return {
-        error: "AI 服务异常",
-        message: error.status
-          ? `模型服务返回错误（${error.status}），请稍后重试`
-          : "模型服务暂时不可用，请稍后重试",
+        error: "生成服务繁忙",
+        message: "模型服务暂时不可用，请稍后重试。",
         status: 502,
       };
     case "internal":
