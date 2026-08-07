@@ -10,6 +10,12 @@ export function isPublicDashboardEnabled(
   return value === "true";
 }
 
+export function isPublicWorkspaceReadEnabled(
+  value = process.env.PUBLIC_DASHBOARD_ENABLED,
+): boolean {
+  return isPublicDashboardEnabled(value);
+}
+
 export function classifyAdminAccess(user: RoleOnlyUser | null): AdminAccess {
   if (!user) return "unauthenticated";
   return user.role === "admin" ? "authorized" : "forbidden";

@@ -83,7 +83,7 @@ test("public dashboard switch is documented in environment templates", async () 
   const readme = await source("README.md");
   assert.match(template, /^PUBLIC_DASHBOARD_ENABLED=false$/m);
   assert.match(readme, /PUBLIC_DASHBOARD_ENABLED/);
-  assert.match(readme, /仅公开只读数据看板/);
+  assert.match(readme, /策略治理、运营 Agent 概览与评测工作台的只读视图/);
 });
 
 test("dashboard APIs return 503 when production persistence is unavailable", async () => {

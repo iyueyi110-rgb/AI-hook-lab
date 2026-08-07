@@ -61,6 +61,18 @@ export function runSummary(run: EvaluationRunRecord) {
   };
 }
 
+export function runForPublic(run: EvaluationRunRecord): unknown {
+  return {
+    ...runSummary(run),
+    generationTasks: [],
+    candidates: [],
+    formalResults: [],
+    cases: [],
+    pairwiseDecisions: [],
+    badCases: [],
+  };
+}
+
 export function runForUser(run: EvaluationRunRecord, user: EvaluationUser): unknown {
   if (user.role === "admin") return run;
   if (user.role === "evaluator") {

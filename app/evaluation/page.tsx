@@ -4,6 +4,7 @@ import { getCurrentEvaluationUser, getEvaluationService, publicUser, runSummary 
 import { getEvaluationRepository } from "@/lib/evaluation/repository";
 import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
 import { isStrategyCardsEnabled } from "@/lib/strategy/http";
+import { isPublicWorkspaceReadEnabled } from "@/lib/adminAccess";
 import { EvaluationClient } from "./EvaluationClient";
 
 export const dynamic = "force-dynamic";
@@ -14,7 +15,8 @@ export default async function EvaluationPage({
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const user = await getCurrentEvaluationUser();
-  if (!user) redirect("/evaluation/login");
+  const publicRead = isPublicWorkspaceReadEnabled();
+  if (!user && !publicRead) redirect("/evaluation/login");
   const query = await searchParams;
   const strategyTarget = (
     typeof query.strategyCardId === "string"
@@ -28,14 +30,15 @@ export default async function EvaluationPage({
     contentType: query.contentType,
   } : undefined;
   const state = await getEvaluationService().getState();
-  const runs = user.role === "admin" ? state.runs : state.runs.filter((run) => run.evaluatorIds.includes(user.id) || run.adjudicatorId === user.id);
+  const canManage = user?.role === "admin";
+  const runs = !user || canManage ? state.runs : state.runs.filter((run) => run.evaluatorIds.includes(user.id) || run.adjudicatorId === user.id);
   return <EvaluationClient strategyTarget={strategyTarget} initial={{
-    user: publicUser(user), storageMode: getEvaluationRepository().mode,
-    cases: user.role === "admin" ? state.cases : [],
-    promptVersions: user.role === "admin" ? state.promptVersions : [],
-    users: user.role === "admin" ? state.users.map(publicUser) : [publicUser(user)],
+    user: user ? publicUser(user) : null, storageMode: getEvaluationRepository().mode,
+    cases: canManage ? state.cases : [],
+    promptVersions: canManage ? state.promptVersions : [],
+    users: canManage ? state.users.map(publicUser) : user ? [publicUser(user)] : [],
     runs: runs.map(runSummary),
-  }} adminNavigation={user.role === "admin" ? {
+  }} adminNavigation={canManage || publicRead ? {
     opsAgentEnabled: isOpsAgentEnabled(),
     strategyCardsEnabled: isStrategyCardsEnabled(),
   } : undefined} />;

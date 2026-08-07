@@ -191,9 +191,10 @@ chmod +x tools/start-ai-hook-mac.command
 | --- | --- | --- |
 | `/` | Hook 创作工作台 | 公开 |
 | `/evaluation/login` | 评测系统登录与首次管理员初始化 | 公开 |
-| `/evaluation` | Prompt 离线评测工作台 | 已登录评测用户 |
-| `/admin/dashboard` | 运营数据看板 | 管理员 |
-| `/admin/dashboard/agent` | 运营分析 Agent | 管理员且功能已开启 |
+| `/evaluation` | Prompt 离线评测工作台 | 可配置为公开只读；写操作需登录 |
+| `/admin` | 运营数据看板 | 可配置为公开只读 |
+| `/admin/dashboard/strategies` | 策略治理 | 可配置为公开只读；治理操作需管理员登录 |
+| `/admin/dashboard/agent` | 运营分析 Agent | 可配置为公开只读；发起分析需管理员登录 |
 
 首次使用评测系统时，打开 `/evaluation/login` 创建第一个管理员。管理员可以继续创建 `admin`、`evaluator` 和 `adjudicator` 角色账号。
 
@@ -207,7 +208,7 @@ chmod +x tools/start-ai-hook-mac.command
 | `DATABASE_URL` | 生产必需 | PostgreSQL 连接串；本地留空时使用 JSON 存储，生产环境留空会拒绝提供相关服务 |
 | `EVALUATION_STORE_PATH` | 否 | 覆盖本地评测 JSON 文件路径 |
 | `CANDIDATE_ANALYTICS_STORE_PATH` | 否 | 覆盖本地候选级分析 JSON 文件路径；生产环境仍使用 PostgreSQL |
-| `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时仅公开只读数据看板；其他后台、Agent 和写入接口仍需原权限 |
+| `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时公开数据看板、策略治理、运营 Agent 概览与评测工作台的只读视图；所有写入和治理操作仍需原权限 |
 | `AGENT_STORE_PATH` | 否 | 覆盖本地创作 Agent JSON 文件路径 |
 | `EVAL_INGEST_TOKEN` | 按需 | 评测脚本写入 `evaluation_set` 来源事件时使用 |
 | `ARK_API_KEY` | 图片理解必需 | 火山引擎 Ark API Key |

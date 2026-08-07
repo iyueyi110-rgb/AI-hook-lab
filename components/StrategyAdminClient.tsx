@@ -36,7 +36,7 @@ async function responseJson(response: Response) {
   return body;
 }
 
-export function StrategyAdminClient() {
+export function StrategyAdminClient({ readOnly = false }: { readOnly?: boolean }) {
   const [items, setItems] = useState<StrategyListItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -133,9 +133,9 @@ export function StrategyAdminClient() {
   }
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[20rem_minmax(0,1fr)]">
+    <div className={`grid gap-6 ${readOnly ? "" : "lg:grid-cols-[20rem_minmax(0,1fr)]"}`}>
       <aside className="editorial-panel p-5 lg:sticky lg:top-20 lg:self-start">
-        <h2 className="text-sm font-black">新建人工草稿</h2>
+        {readOnly ? <><h2 className="text-sm font-black">公开只读模式</h2><p className="mt-3 text-xs leading-5 text-[var(--color-muted)]">无需登录即可查看策略版本、适用范围与评测门禁。新建、审核、激活和归档仍需管理员登录。</p></> : <><h2 className="text-sm font-black">新建人工草稿</h2>
         <form className="mt-4 space-y-3" onSubmit={create}>
           <label className="block text-xs font-bold">标题<input className="control-base mt-1 w-full px-3 py-2" maxLength={80} name="title" required /></label>
           <label className="block text-xs font-bold">平台<select className="control-base mt-1 w-full px-3 py-2" name="platform"><option value="douyin">抖音</option><option value="xiaohongshu">小红书</option><option value="bilibili">B站</option><option value="youtube">YouTube</option><option value="x">X</option></select></label>
@@ -145,7 +145,7 @@ export function StrategyAdminClient() {
           <label className="block text-xs font-bold">应该避免<input className="control-base mt-1 w-full px-3 py-2" maxLength={160} name="avoid" /></label>
           <label className="block text-xs font-bold">验证假设<textarea className="control-base mt-1 min-h-20 w-full px-3 py-2" maxLength={300} name="hypothesis" required /></label>
           <button className="button-primary w-full" type="submit">保存草稿</button>
-        </form>
+        </form></>}
       </aside>
 
       <section>
@@ -182,9 +182,9 @@ export function StrategyAdminClient() {
                     </p>
                   </div>
                   <div className="mt-4 flex flex-wrap gap-2">
-                    {version.status === "draft" && <button className="button-secondary" onClick={() => void action(version, "submit_review")} type="button">提交审核</button>}
-                    {version.status === "pending_review" && <><button className="button-primary" onClick={() => void action(version, "approve_experiment")} type="button">批准离线评测</button><button className="button-secondary" onClick={() => void action(version, "reject")} type="button">拒绝</button></>}
-                    {version.status === "approved_experiment" && version.scopePairs.map((pair) => (
+                    {!readOnly && version.status === "draft" && <button className="button-secondary" onClick={() => void action(version, "submit_review")} type="button">提交审核</button>}
+                    {!readOnly && version.status === "pending_review" && <><button className="button-primary" onClick={() => void action(version, "approve_experiment")} type="button">批准离线评测</button><button className="button-secondary" onClick={() => void action(version, "reject")} type="button">拒绝</button></>}
+                    {!readOnly && version.status === "approved_experiment" && version.scopePairs.map((pair) => (
                       <a
                         className="button-secondary"
                         href={`/evaluation?strategyCardId=${encodeURIComponent(version.cardId)}&strategyCardVersion=${version.version}&platform=${encodeURIComponent(pair.platform)}&contentType=${encodeURIComponent(pair.contentType)}`}
@@ -193,9 +193,9 @@ export function StrategyAdminClient() {
                         创建 {pair.platform}/{pair.contentType} 20 主题 Live 盲评
                       </a>
                     ))}
-                    {version.status === "approved_experiment" && <button className="button-primary" disabled={!gate?.ready} onClick={() => void action(version, "activate")} type="button">验证门禁并激活</button>}
-                    {(version.status === "approved_experiment" || version.status === "active") && <button className="button-secondary" onClick={() => void action(version, "archive")} type="button">归档</button>}
-                    <button className="button-secondary" onClick={() => void clone(version)} type="button">克隆新版本</button>
+                    {!readOnly && version.status === "approved_experiment" && <button className="button-primary" disabled={!gate?.ready} onClick={() => void action(version, "activate")} type="button">验证门禁并激活</button>}
+                    {!readOnly && (version.status === "approved_experiment" || version.status === "active") && <button className="button-secondary" onClick={() => void action(version, "archive")} type="button">归档</button>}
+                    {!readOnly && <button className="button-secondary" onClick={() => void clone(version)} type="button">克隆新版本</button>}
                     {versions.length > 1 && <button className="button-secondary" onClick={() => void showDiff(version, versions[1]!.version)} type="button">版本差异</button>}
                   </div>
                 </article>

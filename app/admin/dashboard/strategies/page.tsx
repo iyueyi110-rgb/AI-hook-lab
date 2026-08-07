@@ -5,7 +5,7 @@ import { AdminBackLink } from "@/components/AdminBackLink";
 import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
 import { DatabaseUnavailablePanel } from "@/components/DatabaseUnavailablePanel";
 import { StrategyAdminClient } from "@/components/StrategyAdminClient";
-import { classifyAdminAccess } from "@/lib/adminAccess";
+import { classifyAdminAccess, isPublicWorkspaceReadEnabled } from "@/lib/adminAccess";
 import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
 import { getCurrentEvaluationUser } from "@/lib/evaluation/server";
 import { getPersistenceMode } from "@/lib/persistence";
@@ -21,9 +21,13 @@ export const metadata: Metadata = {
 export default async function StrategyAdminPage() {
   if (!isStrategyCardsEnabled()) notFound();
   if (getPersistenceMode() === "unavailable") return <DatabaseUnavailablePanel />;
+  const publicRead = isPublicWorkspaceReadEnabled();
   const access = classifyAdminAccess(await getCurrentEvaluationUser());
-  if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard%2Fstrategies");
-  if (access === "forbidden") forbidden();
+  if (!publicRead) {
+    if (access === "unauthenticated") redirect("/evaluation/login?next=%2Fadmin%2Fdashboard%2Fstrategies");
+    if (access === "forbidden") forbidden();
+  }
+  const readOnly = access !== "authorized";
   return (
     <div className="min-h-screen">
       <AdminWorkspaceHeader
@@ -33,13 +37,13 @@ export default async function StrategyAdminPage() {
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-20 md:px-6 md:py-8">
         <AdminBackLink href="/admin" label="返回数据看板" />
         <header className="mb-6 mt-5 border-b border-[var(--color-line-strong)] pb-6">
-          <p className="text-xs font-extrabold text-[var(--color-accent)]">仅管理员可见 · 人工批准</p>
+          <p className="text-xs font-extrabold text-[var(--color-accent)]">{readOnly ? "公开只读" : "管理员模式 · 人工批准"}</p>
           <h1 className="mt-3 text-3xl font-black tracking-[-0.04em] sm:text-4xl">策略治理</h1>
           <p className="mt-3 max-w-[76ch] text-sm leading-6 text-[var(--color-graphite)]">
             运营洞察先形成不可变草稿，经过人工审核和每个适用范围的固定盲评后，才允许进入创作 Agent。
           </p>
         </header>
-        <StrategyAdminClient />
+        <StrategyAdminClient readOnly={readOnly} />
       </main>
     </div>
   );

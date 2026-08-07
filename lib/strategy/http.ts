@@ -16,6 +16,7 @@ import {
   type StrategyFromOpsService,
 } from "./from-ops.ts";
 import { OpsProviderError } from "../agent/ops-provider.ts";
+import { isPublicWorkspaceReadEnabled } from "../adminAccess.ts";
 
 const MAX_JSON_BYTES = 32 * 1024;
 const PLATFORMS = new Set<Platform>(["xiaohongshu", "douyin", "bilibili", "youtube", "x"]);
@@ -37,6 +38,7 @@ interface Options {
   env?: NodeJS.ProcessEnv;
   currentUser?: () => Promise<EvaluationUser | null>;
   fromOpsService?: StrategyFromOpsService;
+  publicReadEnabled?: boolean;
 }
 
 export function isStrategyCardsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
@@ -116,6 +118,7 @@ function safeError(error: unknown): Response {
 export function createStrategyHttpHandlers(options: Options = {}) {
   const env = options.env ?? process.env;
   const enabled = options.enabled ?? isStrategyCardsEnabled(env);
+  const publicReadEnabled = options.publicReadEnabled ?? isPublicWorkspaceReadEnabled(env.PUBLIC_DASHBOARD_ENABLED);
   const currentUser = options.currentUser ?? (async () => (await import("../evaluation/server.ts")).getCurrentEvaluationUser());
   let service = options.service;
   let fromOpsService = options.fromOpsService;
@@ -127,6 +130,10 @@ export function createStrategyHttpHandlers(options: Options = {}) {
     if (!user) throw new HttpError(401, "unauthorized");
     if (user.role !== "admin") throw new HttpError(403, "forbidden");
     return user;
+  };
+
+  const authorizeRead = async (): Promise<void> => {
+    if (!publicReadEnabled) await authorize();
   };
 
   const adminMutation = async <T>(request: Request, operation: (actor: EvaluationUser, body: Record<string, unknown>) => Promise<T>): Promise<Response> => {
@@ -145,7 +152,7 @@ export function createStrategyHttpHandlers(options: Options = {}) {
     async listAdmin(): Promise<Response> {
       try {
         if (!enabled) return json({ error: "not_found", message: "not_found" }, 404);
-        await authorize();
+        await authorizeRead();
         return json({ strategies: await getService().list() });
       } catch (error) {
         return safeError(error);
@@ -194,7 +201,7 @@ export function createStrategyHttpHandlers(options: Options = {}) {
     async getVersion(_request: Request, cardId: string, version: number): Promise<Response> {
       try {
         if (!enabled) return json({ error: "not_found", message: "not_found" }, 404);
-        await authorize();
+        await authorizeRead();
         return json(await getService().get(cardId, version));
       } catch (error) {
         return safeError(error);
@@ -237,7 +244,7 @@ export function createStrategyHttpHandlers(options: Options = {}) {
     async diffVersion(request: Request, cardId: string, version: number): Promise<Response> {
       try {
         if (!enabled) return json({ error: "not_found", message: "not_found" }, 404);
-        await authorize();
+        await authorizeRead();
         const against = Number(new URL(request.url).searchParams.get("against"));
         if (!Number.isInteger(against) || against < 1) throw new HttpError(400, "invalid_compare_version");
         return json({ diff: await getService().diff(cardId, version, against) });

@@ -53,12 +53,14 @@ function AnswerCard({
   messageId,
   draftStates,
   onCreateStrategyDraft,
+  readOnly,
 }: {
   answer: OpsAgentAnswer;
   timestamp: string;
   messageId: string;
   draftStates: Record<string, "loading" | "created" | "error">;
   onCreateStrategyDraft: (messageId: string, recommendationIndex: number) => void;
+  readOnly: boolean;
 }) {
   const sourceNumber = new Map(answer.sources.map((source, index) => [source.id, index + 1]));
   const statusLabel = answer.status === "complete" ? "分析完成" : answer.status === "partial" ? "部分结果" : "需要确认";
@@ -110,7 +112,7 @@ function AnswerCard({
                     <p className="text-sm font-bold">{item.action}</p>
                     <p className="mt-1 text-xs leading-5 text-[var(--color-graphite)]">{item.rationale}</p>
                     {item.sourceIds.length > 0 && <p className="mt-1 text-[10px] font-bold text-[var(--color-accent)]">证据 {item.sourceIds.map((id) => sourceNumber.get(id)).filter(Boolean).join("、")}</p>}
-                    {item.kind === "strategy_candidate" && (
+                    {!readOnly && item.kind === "strategy_candidate" && (
                       <div className="mt-2 flex items-center gap-2">
                         <button
                           className="button-secondary min-h-9"
@@ -141,7 +143,7 @@ function AnswerCard({
   );
 }
 
-export function OpsAgentChat() {
+export function OpsAgentChat({ readOnly = false }: { readOnly?: boolean }) {
   const [pointer, setPointer] = useState<SessionPointer | null>(null);
   const [messages, setMessages] = useState<OpsAgentMessage[]>([]);
   const [input, setInput] = useState("");
@@ -156,6 +158,7 @@ export function OpsAgentChat() {
 
   useEffect(() => {
     const finish = () => setRestoring(false);
+    if (readOnly) { queueMicrotask(finish); return; }
     const raw = sessionStorage.getItem(STORAGE_KEY);
     if (!raw) { queueMicrotask(finish); return; }
     let saved: SessionPointer;
@@ -166,13 +169,13 @@ export function OpsAgentChat() {
       const next = { sessionId: data.sessionId, revision: data.revision };
       setPointer(next); setMessages(data.messages); sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
     }).catch(() => sessionStorage.removeItem(STORAGE_KEY)).finally(finish);
-  }, []);
+  }, [readOnly]);
 
   useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages, loading]);
 
   const sendMessage = useCallback(async (text: string) => {
     const value = text.trim();
-    if (!value || loading) return;
+    if (!value || loading || readOnly) return;
     const optimistic: OpsAgentMessage = { id: `local-${Date.now()}`, role: "user", content: value, createdAt: new Date().toISOString() };
     setMessages((current) => [...current, optimistic]); setInput(""); setLoading(true); setError(""); setFailedText("");
     const controller = new AbortController(); abortRef.current = controller;
@@ -207,7 +210,7 @@ export function OpsAgentChat() {
         }
       } else { setError(caught instanceof Error ? caught.message : "请求失败"); setFailedText(value); }
     } finally { abortRef.current = null; setLoading(false); inputRef.current?.focus(); }
-  }, [loading, pointer]);
+  }, [loading, pointer, readOnly]);
 
   const createStrategyDraft = useCallback(async (
     assistantMessageId: string,
@@ -244,7 +247,7 @@ export function OpsAgentChat() {
           {!restoring && messages.length === 0 && (
             <section className="editorial-panel overflow-hidden">
               <div className="grid gap-5 px-5 py-6 sm:grid-cols-[1fr_auto] sm:items-end">
-                <div><p className="text-xs font-black text-[var(--color-accent)]">只读分析</p><h2 className="mt-2 text-2xl font-black tracking-[-0.035em]">从问题开始，结论回到证据。</h2><p className="mt-3 max-w-[64ch] text-sm leading-6 text-[var(--color-graphite)]">Agent 会查询看板与离线评测数据。它不会修改 Prompt、发布版本或写入业务数据。</p></div>
+                <div><p className="text-xs font-black text-[var(--color-accent)]">只读分析</p><h2 className="mt-2 text-2xl font-black tracking-[-0.035em]">从问题开始，结论回到证据。</h2><p className="mt-3 max-w-[64ch] text-sm leading-6 text-[var(--color-graphite)]">Agent 会查询看板与离线评测数据。它不会修改 Prompt、发布版本或写入业务数据。</p>{readOnly && <p className="mt-3 rounded-[8px] bg-[var(--color-surface-subtle)] px-3 py-2 text-xs font-bold text-[var(--color-muted)]">当前为公开只读模式；登录管理员账号后可发起新的分析对话。</p>}</div>
                 <Database aria-hidden="true" className="text-[var(--color-line-strong)]" size={56} weight="thin" />
               </div>
             </section>
@@ -256,6 +259,7 @@ export function OpsAgentChat() {
               key={message.id}
               messageId={message.id}
               onCreateStrategyDraft={createStrategyDraft}
+              readOnly={readOnly}
               timestamp={message.createdAt}
             />
           ) : <div className="ml-auto max-w-[80%] rounded-[10px] bg-[var(--color-ink)] px-4 py-3 text-sm leading-6 text-white" key={message.id}>{message.content}</div>)}
@@ -266,15 +270,15 @@ export function OpsAgentChat() {
 
         <form className="sticky bottom-0 mt-5 border-t border-[var(--color-line-strong)] bg-[color:rgb(245_245_243_/_0.96)] py-4 backdrop-blur-md" onSubmit={submit}>
           <div className="flex gap-2">
-            <textarea aria-label="运营分析问题" className="control-base min-h-12 flex-1 resize-none px-4 py-3 text-sm leading-6" disabled={loading || restoring} maxLength={4000} onChange={(event) => setInput(event.target.value)} onKeyDown={keyDown} placeholder="输入分析问题；Enter 发送，Shift+Enter 换行" ref={inputRef} rows={1} value={input} />
-            {loading ? <button aria-label="取消请求" className="button-secondary h-12 min-h-12 w-12 p-0" onClick={() => abortRef.current?.abort()} type="button"><Stop aria-hidden="true" size={18} weight="fill" /></button> : <button aria-label="发送消息" className="button-primary h-12 min-h-12 w-12 p-0" disabled={!input.trim() || restoring} type="submit"><ArrowUp aria-hidden="true" size={19} weight="bold" /></button>}
+            <textarea aria-label="运营分析问题" className="control-base min-h-12 flex-1 resize-none px-4 py-3 text-sm leading-6" disabled={loading || restoring || readOnly} maxLength={4000} onChange={(event) => setInput(event.target.value)} onKeyDown={keyDown} placeholder={readOnly ? "公开只读模式" : "输入分析问题；Enter 发送，Shift+Enter 换行"} ref={inputRef} rows={1} value={input} />
+            {loading ? <button aria-label="取消请求" className="button-secondary h-12 min-h-12 w-12 p-0" onClick={() => abortRef.current?.abort()} type="button"><Stop aria-hidden="true" size={18} weight="fill" /></button> : <button aria-label="发送消息" className="button-primary h-12 min-h-12 w-12 p-0" disabled={!input.trim() || restoring || readOnly} type="submit"><ArrowUp aria-hidden="true" size={19} weight="bold" /></button>}
           </div>
         </form>
       </div>
 
       <aside className="space-y-4 lg:sticky lg:top-20 lg:self-start">
-        <button className="button-secondary w-full" disabled={restoring} onClick={newConversation} type="button"><Plus aria-hidden="true" size={15} weight="bold" />新建对话</button>
-        {!restoring && messages.length === 0 && <section className="border-t border-[var(--color-line-strong)] pt-4"><h2 className="text-xs font-black">快捷问题</h2><div className="mt-3 space-y-2">{quickPrompts.map((prompt) => <button className="control-base w-full px-3 py-3 text-left text-xs font-bold leading-5" key={prompt} onClick={() => void sendMessage(prompt)} type="button">{prompt}</button>)}</div></section>}
+        <button className="button-secondary w-full" disabled={restoring || readOnly} onClick={newConversation} type="button"><Plus aria-hidden="true" size={15} weight="bold" />新建对话</button>
+        {!restoring && messages.length === 0 && <section className="border-t border-[var(--color-line-strong)] pt-4"><h2 className="text-xs font-black">快捷问题</h2><div className="mt-3 space-y-2">{quickPrompts.map((prompt) => <button className="control-base w-full px-3 py-3 text-left text-xs font-bold leading-5" disabled={readOnly} key={prompt} onClick={() => void sendMessage(prompt)} type="button">{prompt}</button>)}</div></section>}
         <section className="border-t border-[var(--color-line)] pt-4 text-[11px] leading-5 text-[var(--color-muted)]"><p className="font-bold text-[var(--color-ink)]">数据边界</p><p className="mt-1">模拟数据不会形成升级结论。Prompt 建议必须经过现有离线评测后再采用。</p></section>
       </aside>
     </div>

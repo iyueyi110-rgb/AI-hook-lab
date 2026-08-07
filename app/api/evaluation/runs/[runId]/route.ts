@@ -1,19 +1,20 @@
 import { NextResponse } from "next/server";
 
-import { assertSameOrigin, getCurrentEvaluationUser, getEvaluationService, runForUser } from "@/lib/evaluation/server";
+import { assertSameOrigin, getCurrentEvaluationUser, getEvaluationService, runForPublic, runForUser } from "@/lib/evaluation/server";
+import { isPublicWorkspaceReadEnabled } from "@/lib/adminAccess";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(_request: Request, { params }: { params: Promise<{ runId: string }> }) {
   const actor = await getCurrentEvaluationUser();
-  if (!actor) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!actor && !isPublicWorkspaceReadEnabled()) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   try {
     const { runId } = await params;
     const state = await getEvaluationService().getState();
     const run = state.runs.find((item) => item.id === runId);
     if (!run) return NextResponse.json({ error: "Not found" }, { status: 404 });
-    return NextResponse.json({ run: runForUser(run, actor) });
+    return NextResponse.json({ run: actor ? runForUser(run, actor) : runForPublic(run) });
   } catch (error) {
     return NextResponse.json({ error: error instanceof Error ? error.message : "读取失败" }, { status: 403 });
   }

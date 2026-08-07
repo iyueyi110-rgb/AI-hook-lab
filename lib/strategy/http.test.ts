@@ -31,7 +31,7 @@ const draft = {
 async function setup(currentUser: () => Promise<typeof admin | null> = async () => admin) {
   const file = path.join(await mkdtemp(path.join(os.tmpdir(), "strategy-http-")), "state.json");
   const service = new StrategyService(new JsonStrategyRepository(file), () => new Date("2026-07-28T00:00:00.000Z"));
-  const handlers = createStrategyHttpHandlers({ service, currentUser, enabled: true });
+  const handlers = createStrategyHttpHandlers({ service, currentUser, enabled: true, publicReadEnabled: false });
   return { service, handlers };
 }
 
@@ -51,6 +51,28 @@ test("strategy admin writes require admin authentication and same origin", async
     body: JSON.stringify(draft),
   }));
   assert.equal(crossOrigin.status, 403);
+});
+
+test("public workspace allows strategy reads but keeps writes authenticated", async () => {
+  const { service, handlers: adminHandlers } = await setup();
+  await adminHandlers.createDraft(new Request("https://app.test/api/admin/strategies", {
+    method: "POST",
+    headers: { origin: "https://app.test", "content-type": "application/json" },
+    body: JSON.stringify(draft),
+  }));
+  const publicHandlers = createStrategyHttpHandlers({
+    service,
+    currentUser: async () => null,
+    enabled: true,
+    publicReadEnabled: true,
+  });
+  assert.equal((await publicHandlers.listAdmin()).status, 200);
+  const denied = await publicHandlers.createDraft(new Request("https://app.test/api/admin/strategies", {
+    method: "POST",
+    headers: { origin: "https://app.test", "content-type": "application/json" },
+    body: JSON.stringify(draft),
+  }));
+  assert.equal(denied.status, 401);
 });
 
 test("strategy admin APIs reject unknown fields and stale revisions", async () => {
