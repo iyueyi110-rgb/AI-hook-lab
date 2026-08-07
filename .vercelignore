@@ -1,0 +1,7 @@
+.playwright-cli/
+output/
+outputs/
+data/*.json
+.git/
+.next/
+node_modules/
