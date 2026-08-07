@@ -89,6 +89,7 @@ AI Hook Lab 面向中文内容创作者与内容运营团队，把结构化创�
 - 每次严格返回 10 条候选，并展示模型判断与推荐理由
 - 历史记录、收藏和采用状态保存在当前浏览器的 `localStorage`
 - 创作者反馈以聚合、白名单字段写入看板，不把模型分数当作真实点击率
+- 生成成功后，服务端把不含主题、Hook 文案、推荐理由和自由文本的候选级元数据写入 PostgreSQL；管理员可从看板导出匿名漏斗 CSV
 
 ### 创作 Agent
 
@@ -205,6 +206,7 @@ chmod +x tools/start-ai-hook-mac.command
 | `DEEPSEEK_API_KEY` | 实时生成必需 | Hook 生成、创作 Agent 和运营分析 Agent 使用的 DeepSeek Key |
 | `DATABASE_URL` | 生产必需 | PostgreSQL 连接串；本地留空时使用 JSON 存储，生产环境留空会拒绝提供相关服务 |
 | `EVALUATION_STORE_PATH` | 否 | 覆盖本地评测 JSON 文件路径 |
+| `CANDIDATE_ANALYTICS_STORE_PATH` | 否 | 覆盖本地候选级分析 JSON 文件路径；生产环境仍使用 PostgreSQL |
 | `PUBLIC_DASHBOARD_ENABLED` | 否 | 设为 `true` 时仅公开只读数据看板；其他后台、Agent 和写入接口仍需原权限 |
 | `AGENT_STORE_PATH` | 否 | 覆盖本地创作 Agent JSON 文件路径 |
 | `EVAL_INGEST_TOKEN` | 按需 | 评测脚本写入 `evaluation_set` 来源事件时使用 |
@@ -224,7 +226,8 @@ chmod +x tools/start-ai-hook-mac.command
 
 - 本地开发：看板、评测、创作 Agent 和运营 Agent 可分别使用 `data/` 下的 JSON 文件。
 - 生产环境：必须配置 PostgreSQL；系统不会回退到本地 JSON，以避免多实例下的数据丢失和不一致。
-- 经典历史与收藏：只保存在当前浏览器，不会自动跨设备同步。
+- 经典历史与收藏界面状态：保存在当前浏览器，不会自动跨设备同步；候选匿名元数据与收藏/采用埋点会进入服务端分析链路。
+- 候选级分析：不存储原始主题、Hook 文案、推荐理由、图片或自由文本，只保留任务、候选 ID、平台、版本、模型分数、Bad Case 和行为状态。
 - 数据来源：严格区分 `real_user`、`evaluation_set` 和 `simulation`，避免把模拟或离线数据解释为真实用户行为。
 - Agent 所有权：创作 Agent 使用 HttpOnly 匿名会话 Cookie，服务端只保存摘要；运营 Agent 会话按管理员隔离。
 - 数据保留：创作 Agent 非活跃任务最长保留 30 天，匿名会话最长 180 天；生产环境应定时调用受保护的清理接口。

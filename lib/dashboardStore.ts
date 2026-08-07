@@ -134,7 +134,7 @@ export interface DashboardSummary {
   recentEvents: DashboardEvent[];
 }
 
-const DATA_DIR = path.join(process.cwd(), "data");
+const DATA_DIR = path.join(/* turbopackIgnore: true */ process.cwd(), "data");
 const EVENTS_FILE = path.join(DATA_DIR, "dashboard-events.json");
 const MAX_EVENTS = 5000;
 const databaseUrl = getConfiguredDatabaseUrl();

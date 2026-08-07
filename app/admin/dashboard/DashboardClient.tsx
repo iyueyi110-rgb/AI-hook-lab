@@ -17,6 +17,7 @@ import {
 import { AdminBackLink } from "@/components/AdminBackLink";
 import { AppHeader } from "@/components/AppHeader";
 import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
+import type { CandidateAnalyticsSummary } from "@/lib/candidateAnalytics";
 import type { DashboardSummary } from "@/lib/dashboardStore";
 import {
   formatDataOrigin,
@@ -234,11 +235,13 @@ function Distribution({ title, description, items, formatKey }: {
 export function DashboardClient({
   adminNavigation = false,
   initialSummary,
+  initialCandidateSummary,
   opsAgentEnabled = false,
   strategyCardsEnabled = false,
 }: {
   adminNavigation?: boolean;
   initialSummary?: DashboardSummary;
+  initialCandidateSummary?: CandidateAnalyticsSummary;
   opsAgentEnabled?: boolean;
   strategyCardsEnabled?: boolean;
 }) {
@@ -252,6 +255,7 @@ export function DashboardClient({
   );
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [candidateSummary, setCandidateSummary] = useState<CandidateAnalyticsSummary | null>(initialCandidateSummary ?? null);
 
   const loadSummary = useCallback(async (overrides: {
     origin?: DataOrigin;
@@ -277,12 +281,18 @@ export function DashboardClient({
       setKnownPromptVersions((current) => [
         ...new Set([...current, ...Object.keys(next.promptVersionDistribution)]),
       ]);
+      if (adminNavigation) {
+        const candidateResponse = await fetch("/api/analytics/summary", { cache: "no-store" });
+        if (candidateResponse.ok) {
+          setCandidateSummary((await candidateResponse.json()) as CandidateAnalyticsSummary);
+        }
+      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [feedbackPlatform, feedbackPromptVersion, feedbackTrigger, origin]);
+  }, [adminNavigation, feedbackPlatform, feedbackPromptVersion, feedbackTrigger, origin]);
 
   const metricGroups = useMemo(
     () => [
@@ -396,6 +406,12 @@ export function DashboardClient({
               </Link>
             )}
             {adminNavigation && (
+              <a className="button-secondary" download href="/api/analytics/export">
+                <Database aria-hidden="true" size={16} weight="bold" />
+                导出候选明细
+              </a>
+            )}
+            {adminNavigation && (
               <Link className="button-secondary" href="/evaluation">
                 <Flask aria-hidden="true" size={16} weight="bold" />
                 离线评测
@@ -425,6 +441,34 @@ export function DashboardClient({
           <Distribution description="用户操作、评测集和模拟事件严格隔离。" formatKey={formatDataOrigin} items={summary.dataOriginDistribution} title="数据来源" />
           <Distribution description="比较 baseline 与 candidate 的运行覆盖。" items={summary.promptVersionDistribution} title="Prompt 版本" />
         </div>
+
+        {adminNavigation && candidateSummary && (
+          <section className="editorial-panel mt-6 overflow-hidden" aria-labelledby="candidate-analytics-heading">
+            <div className="border-b border-[var(--color-line)] px-4 py-4 sm:px-5">
+              <h2 className="text-sm font-black" id="candidate-analytics-heading">候选级行为漏斗</h2>
+              <p className="mt-1 text-[11px] leading-4 text-[var(--color-muted)]">仅统计服务端已入库的 real_user 候选；候选共享任务上下文，不能替代独立用户样本。</p>
+            </div>
+            <div className="grid divide-y divide-[var(--color-line)] sm:grid-cols-4 sm:divide-x sm:divide-y-0">
+              {[
+                ["任务", candidateSummary.totals.tasks],
+                ["候选", candidateSummary.totals.candidates],
+                ["收藏候选", candidateSummary.totals.favoritedCandidates],
+                ["最终确认任务", candidateSummary.totals.finalConfirmedTasks],
+              ].map(([label, value]) => (
+                <div className="p-4 sm:p-5" key={String(label)}>
+                  <p className="text-[11px] font-bold text-[var(--color-muted)]">{label}</p>
+                  <p className="mt-2 text-2xl font-black tabular-nums">{String(value)}</p>
+                </div>
+              ))}
+            </div>
+            <div className="grid gap-4 border-t border-[var(--color-line)] p-4 sm:p-5 lg:grid-cols-3">
+              <Distribution description="候选数与任务数同时展示，避免把候选误当成用户样本。" items={Object.fromEntries(Object.entries(candidateSummary.byPlatform).map(([key, value]) => [key, value.candidates]))} title="候选平台分布" />
+              <Distribution description="版本比较必须同时查看任务数，单版本只作为基线。" items={Object.fromEntries(Object.entries(candidateSummary.byPromptVersion).map(([key, value]) => [key, value.candidates]))} title="候选版本分布" />
+              <Distribution description="多标签 Bad Case 按候选去重计数。" items={candidateSummary.byBadcaseType} title="候选 Bad Case" />
+            </div>
+            <p className="border-t border-[var(--color-line)] px-4 py-3 text-xs text-[var(--color-muted)]">{candidateSummary.limitation}</p>
+          </section>
+        )}
 
         <section className="editorial-panel mt-6 overflow-hidden" aria-labelledby="strategy-observational-heading">
           <div className="border-b border-[var(--color-line)] p-4 sm:p-5">

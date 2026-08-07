@@ -109,6 +109,7 @@ export function normalizeClassicRequest(input: GenerateRequest): GenerateRequest
   }
 
   return {
+    taskId: input.taskId,
     topic,
     platform: input.platform,
     contentType: input.contentType,
@@ -207,6 +208,7 @@ export async function generateClassicHooks(
       : undefined;
 
   return {
+    taskId: request.taskId,
     hooks,
     generatedAt: new Date().toISOString(),
     topic: request.topic,

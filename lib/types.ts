@@ -64,6 +64,7 @@ export interface HistoryItem extends GenerateResponse {
 }
 
 export interface GenerateRequest {
+  taskId?: string;
   topic: string;
   platform: Platform;
   contentType: ContentType;

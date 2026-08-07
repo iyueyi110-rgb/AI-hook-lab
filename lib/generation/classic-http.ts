@@ -5,6 +5,12 @@ import {
 } from "../agent/repository.ts";
 import { DatabaseNotConfiguredError } from "../persistence.ts";
 import {
+  normalizeAnalyticsTaskId,
+  persistGenerationComplete,
+  persistGenerationFailure,
+  persistGenerationStart,
+} from "../candidateAnalytics.ts";
+import {
   digestTrustedClientIp,
   RequestIdentityConfigError,
 } from "../requestIdentity.ts";
@@ -38,6 +44,11 @@ function providerError(error: GenerationError): Response {
   );
 }
 
+function createTaskId(): string {
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
+  return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function unavailablePersistence(error: unknown): boolean {
   if (error instanceof DatabaseNotConfiguredError) return true;
   const code = error && typeof error === "object" && "code" in error
@@ -54,6 +65,7 @@ export function createClassicGenerateHandler(options: ClassicGenerateHandlerOpti
   const now = options.now ?? (() => new Date());
   const generate = options.generate ?? generateClassicHooks;
   const quota = classicGenerationQuotaFromEnv(env);
+  const candidateAnalyticsEnabled = env.NODE_ENV !== "test" || Boolean(env.CANDIDATE_ANALYTICS_STORE_PATH?.trim());
   let repository = options.repository;
   let ready: Promise<void> | undefined;
 
@@ -91,9 +103,41 @@ export function createClassicGenerateHandler(options: ClassicGenerateHandlerOpti
     }
 
     try {
-      const normalized = normalizeClassicRequest(body);
+      const normalized = normalizeClassicRequest({
+        ...body,
+        taskId: normalizeAnalyticsTaskId(body.taskId) ?? createTaskId(),
+      });
       await reserveQuota(request);
-      return json(await generate({ request: normalized, apiKey }));
+      const taskId = normalized.taskId as string;
+      const startedAt = new Date().toISOString();
+      if (candidateAnalyticsEnabled) {
+        await persistGenerationStart({ taskId, request: normalized, startedAt, env }).catch((error) => {
+          console.error("[candidate-analytics] generation start persistence failed", error);
+        });
+      }
+      try {
+        const response = await generate({ request: normalized, apiKey });
+        const responseWithTask = { ...response, taskId };
+        if (candidateAnalyticsEnabled) {
+          await persistGenerationComplete({
+            taskId,
+            request: normalized,
+            response: responseWithTask,
+            startedAt,
+            env,
+          }).catch((error) => {
+            console.error("[candidate-analytics] generation completion persistence failed", error);
+          });
+        }
+        return json(responseWithTask);
+      } catch (error) {
+        if (candidateAnalyticsEnabled) {
+          await persistGenerationFailure({ taskId, request: normalized, startedAt, env }).catch((persistenceError) => {
+            console.error("[candidate-analytics] generation failure persistence failed", persistenceError);
+          });
+        }
+        throw error;
+      }
     } catch (error) {
       if (error instanceof ClassicRequestError) {
         return json({ error: error.title, message: error.message }, 400);

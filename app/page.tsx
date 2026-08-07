@@ -341,6 +341,7 @@ export default function Home() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          taskId,
           topic: topic.trim(),
           platform: generationPlatform,
           contentType: generationContentType,
@@ -361,7 +362,7 @@ export default function Home() {
       }
 
       const response = data as GenerateResponse;
-      const responseWithTask: GenerateResponse = { ...response, taskId };
+      const responseWithTask: GenerateResponse = { ...response, taskId: response.taskId ?? taskId };
       setHooks(response.hooks);
       setAnalysis(response.analysis ?? null);
       setCurrentBatchContext({

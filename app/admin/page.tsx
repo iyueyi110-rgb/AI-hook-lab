@@ -7,6 +7,7 @@ import {
   isPublicDashboardEnabled,
 } from "@/lib/adminAccess";
 import { isOpsAgentEnabled } from "@/lib/agent/ops-http";
+import { listCandidateFunnelRows, summarizeCandidateFunnel } from "@/lib/candidateAnalytics";
 import { getDashboardSummary } from "@/lib/dashboardStore";
 import { getCurrentEvaluationUser } from "@/lib/evaluation/server";
 import { getPersistenceMode } from "@/lib/persistence";
@@ -34,9 +35,14 @@ export default async function AdminPage() {
     if (access === "forbidden") forbidden();
   }
 
+  const initialCandidateSummary = access === "authorized"
+    ? summarizeCandidateFunnel(await listCandidateFunnelRows({ limit: 50_000 }))
+    : undefined;
+
   return (
     <DashboardClient
       adminNavigation={access === "authorized"}
+      initialCandidateSummary={initialCandidateSummary}
       initialSummary={await getDashboardSummary()}
       opsAgentEnabled={isOpsAgentEnabled()}
       strategyCardsEnabled={isStrategyCardsEnabled()}
