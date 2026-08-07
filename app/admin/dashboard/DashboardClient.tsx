@@ -15,7 +15,6 @@ import {
   WarningCircle,
 } from "@phosphor-icons/react";
 import { AdminBackLink } from "@/components/AdminBackLink";
-import { AppHeader } from "@/components/AppHeader";
 import { AdminWorkspaceHeader } from "@/components/AdminWorkspaceHeader";
 import type { CandidateAnalyticsSummary } from "@/lib/candidateAnalytics";
 import type { DashboardSummary } from "@/lib/dashboardStore";
@@ -366,14 +365,10 @@ export function DashboardClient({
 
   return (
     <div className="min-h-screen">
-      {adminNavigation ? (
-        <AdminWorkspaceHeader
-          opsAgentEnabled={opsAgentEnabled}
-          strategyCardsEnabled={strategyCardsEnabled}
-        />
-      ) : (
-        <AppHeader />
-      )}
+      <AdminWorkspaceHeader
+        opsAgentEnabled={opsAgentEnabled}
+        strategyCardsEnabled={strategyCardsEnabled}
+      />
       <main className="mx-auto w-full max-w-7xl px-4 py-6 pb-20 md:px-6 md:py-8">
         <AdminBackLink href="/" label="返回创作台" />
         <header className="flex flex-col gap-5 border-b border-[var(--color-line-strong)] pb-6 md:flex-row md:items-end md:justify-between">

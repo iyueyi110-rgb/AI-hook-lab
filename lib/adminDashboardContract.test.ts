@@ -27,15 +27,12 @@ test("admin is the canonical dashboard and the legacy route redirects", async ()
   assert.doesNotMatch(legacyPage, /getDashboardSummary|DashboardClient/);
 });
 
-test("dashboard client gives public and administrator dashboards the appropriate header", async () => {
+test("dashboard client gives public and administrator dashboards the full workspace header", async () => {
   const client = await source("app/admin/dashboard/DashboardClient.tsx");
-  assert.match(client, /import \{ AppHeader \} from "@\/components\/AppHeader"/);
   assert.match(client, /AdminWorkspaceHeader/);
   assert.match(client, /strategyCardsEnabled/);
-  assert.match(
-    client,
-    /adminNavigation\s*\?\s*\(?\s*<AdminWorkspaceHeader[\s\S]*:\s*\(?\s*<AppHeader\s*\/?>/,
-  );
+  assert.doesNotMatch(client, /<AppHeader/);
+  assert.match(client, /<AdminWorkspaceHeader[\s\S]*opsAgentEnabled=\{opsAgentEnabled\}[\s\S]*strategyCardsEnabled=\{strategyCardsEnabled\}/);
   assert.match(client, /AdminBackLink/);
   assert.match(client, /href="\/"/);
   assert.match(client, /返回创作台/);
@@ -71,11 +68,12 @@ test("public dashboard renders anonymous candidate aggregates without exposing e
   assert.match(client, /adminNavigation && \(\s*<a[^>]+href="\/api\/analytics\/export"/s);
 });
 
-test("public dashboard hides links to protected internal tools", async () => {
+test("public dashboard shows workspace links while protected actions remain gated", async () => {
   const page = await source("app/admin/page.tsx");
   const client = await source("app/admin/dashboard/DashboardClient.tsx");
   assert.match(page, /adminNavigation=\{access === "authorized"\}/);
   assert.match(client, /adminNavigation = false/);
+  assert.match(client, /<AdminWorkspaceHeader/);
   assert.match(client, /adminNavigation && opsAgentEnabled/);
   assert.match(client, /adminNavigation && \(\s*<Link[^>]+href="\/evaluation"/s);
 });

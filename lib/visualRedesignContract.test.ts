@@ -29,7 +29,8 @@ test("editorial workbench exposes shared tokens and navigation", async () => {
   assert.match(evaluation, /adminNavigation/);
   assert.match(evaluation, /adminNavigation \?/);
   assert.doesNotMatch(evaluation, /href="\/admin\/dashboard"/);
-  assert.match(dashboard, /<AppHeader/);
+  assert.match(dashboard, /<AdminWorkspaceHeader/);
+  assert.doesNotMatch(dashboard, /<AppHeader/);
   assert.match(dashboard, /href="\/evaluation"/);
 });
 
