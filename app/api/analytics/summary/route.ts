@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 
+import { classifyAdminAccess, isPublicDashboardEnabled } from "@/lib/adminAccess";
 import {
   listCandidateFunnelRows,
   summarizeCandidateFunnel,
@@ -11,9 +12,16 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
-  const user = await getCurrentEvaluationUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  if (user.role !== "admin") return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  const publicDashboard = isPublicDashboardEnabled();
+  if (!publicDashboard) {
+    const access = classifyAdminAccess(await getCurrentEvaluationUser());
+    if (access === "unauthenticated") {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    if (access === "forbidden") {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+    }
+  }
 
   try {
     const rows = await listCandidateFunnelRows({ limit: 50_000 });

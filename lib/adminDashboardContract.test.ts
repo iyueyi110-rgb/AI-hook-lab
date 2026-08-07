@@ -56,10 +56,19 @@ test("dashboard summary API independently returns 401 and 403", async () => {
 test("dashboard page and read API share the public dashboard policy", async () => {
   const page = await source("app/admin/page.tsx");
   const route = await source("app/api/dashboard/summary/route.ts");
-  for (const entry of [page, route]) {
+  const candidateRoute = await source("app/api/analytics/summary/route.ts");
+  for (const entry of [page, route, candidateRoute]) {
     assert.match(entry, /isPublicDashboardEnabled/);
     assert.match(entry, /if \(!publicDashboard\)/);
   }
+});
+
+test("public dashboard renders anonymous candidate aggregates without exposing export", async () => {
+  const page = await source("app/admin/page.tsx");
+  const client = await source("app/admin/dashboard/DashboardClient.tsx");
+  assert.match(page, /publicDashboard \|\| access === "authorized"/);
+  assert.match(client, /\{candidateSummary && \(/);
+  assert.match(client, /adminNavigation && \(\s*<a[^>]+href="\/api\/analytics\/export"/s);
 });
 
 test("public dashboard hides links to protected internal tools", async () => {

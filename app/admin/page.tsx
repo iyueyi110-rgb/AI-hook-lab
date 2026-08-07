@@ -35,7 +35,7 @@ export default async function AdminPage() {
     if (access === "forbidden") forbidden();
   }
 
-  const initialCandidateSummary = access === "authorized"
+  const initialCandidateSummary = publicDashboard || access === "authorized"
     ? summarizeCandidateFunnel(await listCandidateFunnelRows({ limit: 50_000 }))
     : undefined;
 

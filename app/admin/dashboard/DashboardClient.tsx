@@ -281,18 +281,16 @@ export function DashboardClient({
       setKnownPromptVersions((current) => [
         ...new Set([...current, ...Object.keys(next.promptVersionDistribution)]),
       ]);
-      if (adminNavigation) {
-        const candidateResponse = await fetch("/api/analytics/summary", { cache: "no-store" });
-        if (candidateResponse.ok) {
-          setCandidateSummary((await candidateResponse.json()) as CandidateAnalyticsSummary);
-        }
+      const candidateResponse = await fetch("/api/analytics/summary", { cache: "no-store" });
+      if (candidateResponse.ok) {
+        setCandidateSummary((await candidateResponse.json()) as CandidateAnalyticsSummary);
       }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "加载失败");
     } finally {
       setLoading(false);
     }
-  }, [adminNavigation, feedbackPlatform, feedbackPromptVersion, feedbackTrigger, origin]);
+  }, [feedbackPlatform, feedbackPromptVersion, feedbackTrigger, origin]);
 
   const metricGroups = useMemo(
     () => [
@@ -442,11 +440,11 @@ export function DashboardClient({
           <Distribution description="比较 baseline 与 candidate 的运行覆盖。" items={summary.promptVersionDistribution} title="Prompt 版本" />
         </div>
 
-        {adminNavigation && candidateSummary && (
+        {candidateSummary && (
           <section className="editorial-panel mt-6 overflow-hidden" aria-labelledby="candidate-analytics-heading">
             <div className="border-b border-[var(--color-line)] px-4 py-4 sm:px-5">
               <h2 className="text-sm font-black" id="candidate-analytics-heading">候选级行为漏斗</h2>
-              <p className="mt-1 text-[11px] leading-4 text-[var(--color-muted)]">仅统计服务端已入库的 real_user 候选；候选共享任务上下文，不能替代独立用户样本。</p>
+              <p className="mt-1 text-[11px] leading-4 text-[var(--color-muted)]">仅统计候选级链路上线后服务端已入库的 real_user 候选；候选共享任务上下文，不能替代独立用户样本。</p>
             </div>
             <div className="grid divide-y divide-[var(--color-line)] sm:grid-cols-4 sm:divide-x sm:divide-y-0">
               {[

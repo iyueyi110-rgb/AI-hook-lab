@@ -80,6 +80,8 @@ WHERE task_status = 'completed' AND data_origin = 'real_user';
 
 如需回滚，先停止候选写入，再执行 `db/migrations/002_candidate_analytics.down.sql`。回滚只删除候选表和视图，不删除既有 `dashboard_event`，因此原有看板仍可恢复使用。
 
+启用 `PUBLIC_DASHBOARD_ENABLED=true` 时，候选级聚合漏斗可随只读看板公开查看；逐行 CSV 仍要求管理员身份，避免公开可关联的任务和候选 ID。
+
 ## 验收
 
 1. 同一 `task_id` 重试不会产生重复任务或候选。
